@@ -5,7 +5,7 @@ enum class TokenType {
     MULT_OP, // MULTIPLY, DIVIDE, MODULO
     LOGIC_OP, //AND, OR, EQUAL, NOT_EQUAL, GREATER, LESS, GREATER_EQUAL, LESS_EQUAL
     NOT,
-    IF, ACTION,
+    IF, ELSE, ACTION,
     IDENTIFIER, BUILTIN,
     NUMBER, STRING,
     EOF
@@ -91,6 +91,7 @@ class Tokenizer(private val input: String) {
                     } while (currentChar.isLetterOrDigit() && index < input.length)
                     when (val value = input.substring(start, index)) {
                         "if" -> tokens.add(Token(TokenType.IF, "if"))
+                        "else" -> tokens.add(Token(TokenType.ELSE, "else"))
                         "say" -> tokens.add(Token(TokenType.ACTION, "say"))
                         "split" -> tokens.add(Token(TokenType.BUILTIN, "split"))
                         "join" -> tokens.add(Token(TokenType.BUILTIN, "join"))
@@ -498,16 +499,19 @@ class StmtActionNode(private val action: Token, private val expr: ExprNode) : No
     }
 }
 
-class StmtIfNode(private val condition: Node, private val ifBody: StmtListNode) : Node {
+class StmtIfNode(private val condition: Node, private val ifBody: StmtListNode, private val elseBody: StmtListNode? = null) : Node {
     override fun exec(): NodeValue {
         if (condition.exec().toBoolean()) {
             ifBody.exec()
+        } else {
+            elseBody?.exec()
         }
         return NullValue()
     }
 
     override fun toString(): String {
-        return "if($condition, body($ifBody))"
+        val elseText = if(elseBody == null) "" else ", else($elseBody)"
+        return "if($condition, body($ifBody)$elseText)"
     }
 }
 
@@ -578,12 +582,31 @@ class Parser(private val tokens: List<Token>, definedSymbols: List<String>) {
                 consume(TokenType.PAREN_OPEN)
                 val condition = parseExpr()
                 consume(TokenType.PAREN_CLOSE)
-                consume(TokenType.BRACE_OPEN)
-                val ifBody = parseStmtList()
-                consume(TokenType.BRACE_CLOSE)
+                val ifBody = parseIfBody()
+                if (peek().type == TokenType.ELSE) {
+                    consume(TokenType.ELSE)
+                    val elseBody = parseIfBody()
+                    return StmtIfNode(condition, ifBody, elseBody)
+                }
                 return StmtIfNode(condition, ifBody)
             }
             else -> throw IllegalStateException("Unexpected token ${token.value}")
+        }
+    }
+
+    private fun parseIfBody(): StmtListNode {
+        val token = peek()
+        return when(token.type) {
+            TokenType.BRACE_CLOSE -> {
+                consume(TokenType.BRACE_OPEN)
+                val stmts = parseStmtList()
+                consume(TokenType.BRACE_CLOSE)
+                stmts
+            }
+            else -> {
+                val stmt = parseStmt()
+                StmtListNode(listOf(stmt))
+            }
         }
     }
 
@@ -690,8 +713,11 @@ class Parser(private val tokens: List<Token>, definedSymbols: List<String>) {
     }
 
     private fun parseUnit(): Node {
-        val unitHead = parseUnitHead()
-        return parseUnitTail(unitHead)
+        var unit = parseUnitHead()
+        while (peek().type == TokenType.DOT || peek().type == TokenType.BRACKET_OPEN) {
+            unit = parseUnitTail(unit)
+        }
+        return unit
     }
 
     fun parse(): Node {
