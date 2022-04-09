@@ -34,6 +34,7 @@ class Tokenizer(private val input: String) {
             tokens.add(token)
             advance()
         }
+
         fun handleTwoCharOp(type: TokenType, value: String, single: TokenType? = null) {
             if (index < input.length - 1 && input[index + 1] == value[1]) {
                 tokens.add((Token(type, value)))
@@ -68,12 +69,30 @@ class Tokenizer(private val input: String) {
                 currentChar == '>' -> handleTwoCharOp(TokenType.LOGIC_OP, ">=", TokenType.LOGIC_OP)
                 currentChar == '<' -> handleTwoCharOp(TokenType.LOGIC_OP, "<=", TokenType.LOGIC_OP)
                 currentChar == '"' -> {
-                    val start = index
-                    do {
+                    var str = ""
+                    var escape = false
+                    advance()
+                    while (index < input.length) {
+                        if (escape) {
+                            escape = false
+                            when (currentChar) {
+                                'n' -> str += '\n'
+                                'r' -> str += '\r'
+                                't' -> str += '\t'
+                                '\\' -> str += '\\'
+                                '"' -> str += '"'
+                                else -> str += "\\$currentChar"
+                            }
+                        } else if (currentChar == '\\') {
+                            escape = true
+                        } else if (currentChar == '"') {
+                            break
+                        } else {
+                            str += currentChar
+                        }
                         advance()
-                    } while (currentChar != '"' && index < input.length)
-                    val value = input.substring(start + 1, index)
-                    tokens.add(Token(TokenType.STRING, value))
+                    }
+                    tokens.add(Token(TokenType.STRING, str))
                     advance()
                 }
                 currentChar.isDigit() -> {
@@ -95,6 +114,10 @@ class Tokenizer(private val input: String) {
                         "say" -> tokens.add(Token(TokenType.ACTION, "say"))
                         "split" -> tokens.add(Token(TokenType.BUILTIN, "split"))
                         "join" -> tokens.add(Token(TokenType.BUILTIN, "join"))
+                        "slice" -> tokens.add(Token(TokenType.BUILTIN, "slice"))
+                        "toList" -> tokens.add(Token(TokenType.BUILTIN, "toList"))
+                        "find" -> tokens.add(Token(TokenType.BUILTIN, "find"))
+                        "contains" -> tokens.add(Token(TokenType.BUILTIN, "contains"))
                         "len" -> tokens.add(Token(TokenType.BUILTIN, "len"))
                         "defined" -> tokens.add(Token(TokenType.BUILTIN, "defined"))
                         "text" -> tokens.add(Token(TokenType.IDENTIFIER, "text")) // events are special identifiers
@@ -245,11 +268,34 @@ class UnitCallNode(private val expr: Node, func: Token, private val args: ParamL
             "join" -> {
                 StringValue((expr.exec() as ListValue).value.joinToString((args.params[0].exec() as StringValue).value))
             }
+            "slice" -> {
+                val col = expr.exec()
+                val start = args.params[0].exec() as NumberValue
+                val end = args.params[1].exec() as NumberValue
+                when (col) {
+                    is StringValue -> StringValue(col.value.slice(start.value until end.value))
+                    is ListValue -> ListValue(col.value.slice(start.value until end.value))
+                    else -> throw IllegalArgumentException("Expected StringValue or ListValue, got ${col.javaClass.simpleName}")
+                }
+            }
+            "toList" -> {
+                when (val what = expr.exec()) {
+                    is StringValue -> ListValue(listOf(what.value))
+                    is NumberValue -> ListValue(listOf(what.value.toString()))
+                    else -> throw IllegalArgumentException("Expected StringValue or NumberValue, got ${what.javaClass.simpleName}")
+                }
+            }
+            "find" -> {
+                NumberValue((expr.exec() as StringValue).value.indexOf((args.params[0].exec() as StringValue).value))
+            }
+            "contains" -> {
+                NumberValue(if ((expr.exec() as ListValue).value.contains((args.params[0].exec() as StringValue).value)) 1 else 0)
+            }
             "len" -> {
                 NumberValue((expr.exec() as ListValue).value.size)
             }
             "defined" -> {
-                NumberValue(if((expr as IdentifierNode).hasDefinition()) 1 else 0)
+                NumberValue(if ((expr as IdentifierNode).hasDefinition()) 1 else 0)
             }
             else -> throw IllegalArgumentException("Unknown builtin function $func")
         }
@@ -285,12 +331,14 @@ class UnitSubscriptNode(private val unit: Node, private val subscript: ExprNode)
     }
 }
 
-class FactorNode(private val units: List<Node>, private val ops: List<String>, private val prefix: FactorPrefix): Node {
+class FactorNode(private val units: List<Node>, private val ops: List<String>, private val prefix: FactorPrefix) :
+    Node {
     enum class FactorPrefix {
         NONE,
         NOT,
         NEGATIVE
     }
+
     override fun exec(): NodeValue {
         val values = units.map { it.exec() }.toMutableList()
         val ops = ops.toMutableList()
@@ -298,20 +346,25 @@ class FactorNode(private val units: List<Node>, private val ops: List<String>, p
         while (values.size > 0) {
             val next = values.removeAt(0)
             val op = ops.removeAt(0)
-            if(res is NumberValue && next is NumberValue) {
-                res = when (op) {
+            res = if (res is NumberValue && next is NumberValue) {
+                when (op) {
                     "*" -> NumberValue(res.value * next.value)
                     "/" -> NumberValue(res.value / next.value)
                     "%" -> NumberValue(res.value % next.value)
                     else -> throw IllegalArgumentException("Unknown operator $op")
                 }
+            } else if (res is StringValue && next is NumberValue && op == "*") {
+                StringValue(res.value.repeat(next.value))
+            } else if (res is ListValue && next is NumberValue && op == "*") {
+                val sz = res.value.size
+                ListValue(List(next.value * sz) { index -> (res as ListValue).value[index % sz] })
             } else {
                 throw IllegalArgumentException("Invalid operation: $res $op $next")
             }
         }
-        when(prefix) {
+        when (prefix) {
             FactorPrefix.NONE -> return res
-            FactorPrefix.NOT -> return NumberValue(if(res.toBoolean()) 0 else 1)
+            FactorPrefix.NOT -> return NumberValue(if (res.toBoolean()) 0 else 1)
             FactorPrefix.NEGATIVE -> {
                 if (res is NumberValue) {
                     res = NumberValue(-res.value)
@@ -340,11 +393,11 @@ class TermNode(private val factors: List<FactorNode>, private val ops: List<Stri
         val values = factors.map { it.exec() }.toMutableList()
         val ops = ops.toMutableList()
         var res = values.removeAt(0)
-        while(values.size > 0) {
+        while (values.size > 0) {
             val next = values.removeAt(0)
             val op = ops.removeAt(0)
-            if(res is NumberValue && next is NumberValue) {
-                res = when(op) {
+            if (res is NumberValue && next is NumberValue) {
+                res = when (op) {
                     "+" -> NumberValue(res.value + next.value)
                     "-" -> NumberValue(res.value - next.value)
                     else -> throw IllegalArgumentException("Unknown operator $op")
@@ -395,57 +448,57 @@ class TermNode(private val factors: List<FactorNode>, private val ops: List<Stri
     }
 }
 
-class ExprNode(private val terms: List<TermNode>, private val ops: List<String>): Node {
+class ExprNode(private val terms: List<TermNode>, private val ops: List<String>) : Node {
     override fun exec(): NodeValue {
         val values = terms.map { it.exec() }.toMutableList()
         val ops = ops.toMutableList()
         var res = values.removeAt(0)
-        while(values.size > 0) {
-            if(res is NullValue) res = NumberValue(0)
+        while (values.size > 0) {
+            if (res is NullValue) res = NumberValue(0)
             var next = values.removeAt(0)
-            next = if(next is NullValue) NumberValue(0) else next
-            when(val op = ops.removeAt(0)) {
+            next = if (next is NullValue) NumberValue(0) else next
+            when (val op = ops.removeAt(0)) {
                 "==" -> {
-                    res = if(res is NumberValue && next is NumberValue) {
-                        NumberValue(if(res.value == next.value) 1 else 0)
+                    res = if (res is NumberValue && next is NumberValue) {
+                        NumberValue(if (res.value == next.value) 1 else 0)
                     } else if (res is StringValue && next is StringValue) {
-                        NumberValue(if(res.value == next.value) 1 else 0)
+                        NumberValue(if (res.value == next.value) 1 else 0)
                     } else if (res is ListValue && next is ListValue) {
-                        NumberValue(if(res.value == next.value) 1 else 0)
+                        NumberValue(if (res.value == next.value) 1 else 0)
                     } else {
                         throw IllegalArgumentException("Invalid operation: $res == $next")
                     }
                 }
                 "!=" -> {
-                    res = if(res is NumberValue && next is NumberValue) {
-                        NumberValue(if(res.value != next.value) 1 else 0)
+                    res = if (res is NumberValue && next is NumberValue) {
+                        NumberValue(if (res.value != next.value) 1 else 0)
                     } else if (res is StringValue && next is StringValue) {
-                        NumberValue(if(res.value != next.value) 1 else 0)
+                        NumberValue(if (res.value != next.value) 1 else 0)
                     } else if (res is ListValue && next is ListValue) {
-                        NumberValue(if(res.value != next.value) 1 else 0)
+                        NumberValue(if (res.value != next.value) 1 else 0)
                     } else {
                         NumberValue(1)
                     }
                 }
-                "&&" -> res = NumberValue(if(res.toBoolean() && next.toBoolean()) 1 else 0)
-                "||" -> res = NumberValue(if(res.toBoolean() || next.toBoolean()) 1 else 0)
-                ">" -> res = if(res is NumberValue && next is NumberValue) {
-                    NumberValue(if(res.value > next.value) 1 else 0)
+                "&&" -> res = NumberValue(if (res.toBoolean() && next.toBoolean()) 1 else 0)
+                "||" -> res = NumberValue(if (res.toBoolean() || next.toBoolean()) 1 else 0)
+                ">" -> res = if (res is NumberValue && next is NumberValue) {
+                    NumberValue(if (res.value > next.value) 1 else 0)
                 } else {
                     throw IllegalArgumentException("Invalid operation: $res > $next")
                 }
-                "<" -> res = if(res is NumberValue && next is NumberValue) {
-                    NumberValue(if(res.value < next.value) 1 else 0)
+                "<" -> res = if (res is NumberValue && next is NumberValue) {
+                    NumberValue(if (res.value < next.value) 1 else 0)
                 } else {
                     throw IllegalArgumentException("Invalid operation: $res < $next")
                 }
-                ">=" -> res = if(res is NumberValue && next is NumberValue) {
-                    NumberValue(if(res.value >= next.value) 1 else 0)
+                ">=" -> res = if (res is NumberValue && next is NumberValue) {
+                    NumberValue(if (res.value >= next.value) 1 else 0)
                 } else {
                     throw IllegalArgumentException("Invalid operation: $res >= $next")
                 }
-                "<=" -> res = if(res is NumberValue && next is NumberValue) {
-                    NumberValue(if(res.value <= next.value) 1 else 0)
+                "<=" -> res = if (res is NumberValue && next is NumberValue) {
+                    NumberValue(if (res.value <= next.value) 1 else 0)
                 } else {
                     throw IllegalArgumentException("Invalid operation: $res <= $next")
                 }
@@ -481,7 +534,7 @@ class StmtAssignNode(private val identifier: IdentifierNode, private val expr: E
 
 class StmtActionNode(private val action: Token, private val expr: ExprNode) : Node {
     override fun exec(): NodeValue {
-        if(action.type != TokenType.ACTION) {
+        if (action.type != TokenType.ACTION) {
             throw IllegalArgumentException("Expected ACTION, got ${action.type}")
         }
         val value = expr.exec()
@@ -499,7 +552,11 @@ class StmtActionNode(private val action: Token, private val expr: ExprNode) : No
     }
 }
 
-class StmtIfNode(private val condition: Node, private val ifBody: StmtListNode, private val elseBody: StmtListNode? = null) : Node {
+class StmtIfNode(
+    private val condition: Node,
+    private val ifBody: StmtListNode,
+    private val elseBody: StmtListNode? = null
+) : Node {
     override fun exec(): NodeValue {
         if (condition.exec().toBoolean()) {
             ifBody.exec()
@@ -510,7 +567,7 @@ class StmtIfNode(private val condition: Node, private val ifBody: StmtListNode, 
     }
 
     override fun toString(): String {
-        val elseText = if(elseBody == null) "" else ", else($elseBody)"
+        val elseText = if (elseBody == null) "" else ", else($elseBody)"
         return "if($condition, body($ifBody)$elseText)"
     }
 }
@@ -528,12 +585,12 @@ class StmtListNode(private val stmts: List<Node>) : Node {
     }
 }
 
-class Parser(private val tokens: List<Token>, definedSymbols: List<String>) {
+class Parser(private val tokens: List<Token>, definedSymbols: Map<String, NodeValue>) {
     private var current = 0
     private var symbolTable = SymbolTable()
 
     init {
-        definedSymbols.map { symbolTable.set(it, StringValue("this is a whole new world the world of parsing")) }
+        definedSymbols.map { symbolTable.set(it.key, it.value) }
     }
 
     private fun consume(type: TokenType): Token {
@@ -545,6 +602,7 @@ class Parser(private val tokens: List<Token>, definedSymbols: List<String>) {
         }
         return tokens[current++]
     }
+
     private fun isAtEnd() = current >= tokens.size
     private fun peek() = tokens[current]
 //    private fun peekNext() = tokens[current + 1]
@@ -596,8 +654,8 @@ class Parser(private val tokens: List<Token>, definedSymbols: List<String>) {
 
     private fun parseIfBody(): StmtListNode {
         val token = peek()
-        return when(token.type) {
-            TokenType.BRACE_CLOSE -> {
+        return when (token.type) {
+            TokenType.BRACE_OPEN -> {
                 consume(TokenType.BRACE_OPEN)
                 val stmts = parseStmtList()
                 consume(TokenType.BRACE_CLOSE)
@@ -628,9 +686,9 @@ class Parser(private val tokens: List<Token>, definedSymbols: List<String>) {
     private fun parseTerm(): TermNode {
         val factors = mutableListOf(parseFactor())
         val ops = mutableListOf<String>()
-        while(true) {
+        while (true) {
             val token = peek()
-            when(token.type) {
+            when (token.type) {
                 TokenType.ADD_OP -> {
                     ops.add(consume(TokenType.ADD_OP).value)
                     factors.add(parseFactor())
@@ -642,7 +700,7 @@ class Parser(private val tokens: List<Token>, definedSymbols: List<String>) {
 
     private fun parseFactor(): FactorNode {
         var prefix = FactorNode.FactorPrefix.NONE
-        if(peek().type == TokenType.ADD_OP && peek().value == "-") {
+        if (peek().type == TokenType.ADD_OP && peek().value == "-") {
             consume(TokenType.ADD_OP)
             prefix = FactorNode.FactorPrefix.NEGATIVE
         } else if (peek().type == TokenType.NOT) {
@@ -681,7 +739,7 @@ class Parser(private val tokens: List<Token>, definedSymbols: List<String>) {
 
     private fun parseParamList(): ParamListNode {
         val params = mutableListOf<ExprNode>()
-        if(peek().type != TokenType.PAREN_CLOSE) {
+        if (peek().type != TokenType.PAREN_CLOSE) {
             params.add(parseExpr())
             while (peek().type != TokenType.PAREN_CLOSE) {
                 consume(TokenType.COMMA)
@@ -744,7 +802,7 @@ fun main() {
     val tokens = Tokenizer(input).scan()
     println(tokens.joinToString(", "))
     println("\nParsing...")
-    val ast = Parser(tokens, listOf("text")).parse()
+    val ast = Parser(tokens, mapOf("text" to StringValue("this is a brand new world the world of parsing"))).parse()
     println(ast)
     println("\nExecuting...")
     ast.exec()
