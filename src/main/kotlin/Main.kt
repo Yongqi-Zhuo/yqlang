@@ -152,7 +152,7 @@ class IdentifierNode(token: Token, private val table: SymbolTable) : Node {
 }
 
 class NumberNode(token: Token) : Node {
-    val value: Int
+    private val value: Int
 
     init {
         if (token.type != TokenType.NUMBER) {
@@ -189,12 +189,10 @@ class StringNode(token: Token) : Node {
     }
 }
 
-class TermCallNode(identifier: IdentifierNode, func: Token, private val args: List<Node>) : Node {
-    private val identifier: IdentifierNode
+class TermCallNode(private val expr: Node, func: Token, private val args: List<ExprNode>) : Node {
     private val func: String
 
     init {
-        this.identifier = identifier
         if (func.type != TokenType.BUILTIN) {
             throw IllegalArgumentException("Expected BUILTIN, got ${func.type}")
         }
@@ -204,23 +202,23 @@ class TermCallNode(identifier: IdentifierNode, func: Token, private val args: Li
     override fun exec(): NodeValue {
         return when (func) {
             "split" -> {
-                ListValue((identifier.exec() as StringValue).value.split((args[0].exec() as StringValue).value))
+                ListValue((expr.exec() as StringValue).value.split((args[0].exec() as StringValue).value))
             }
             "join" -> {
-                StringValue((identifier.exec() as ListValue).value.joinToString((args[0].exec() as StringValue).value))
+                StringValue((expr.exec() as ListValue).value.joinToString((args[0].exec() as StringValue).value))
             }
             else -> throw IllegalArgumentException("Unknown builtin function $func")
         }
     }
 
     override fun toString(): String {
-        return "func($func, $identifier, args(${args.joinToString(", ")}))"
+        return "func($func, $expr, args(${args.joinToString(", ")}))"
     }
 }
 
-class TermSubscriptNode(private val identifier: IdentifierNode, private val subscript: ExprNode) : Node {
+class TermSubscriptNode(private val term: Node, private val subscript: ExprNode) : Node {
     override fun exec(): NodeValue {
-        val value = identifier.exec()
+        val value = term.exec()
         val index = (subscript.exec() as NumberValue).value
         return when (value) {
             is ListValue -> {
@@ -239,7 +237,7 @@ class TermSubscriptNode(private val identifier: IdentifierNode, private val subs
     }
 
     override fun toString(): String {
-        return "subscript($identifier, $subscript)"
+        return "subscript($term, $subscript)"
     }
 }
 
@@ -420,40 +418,54 @@ class Parser(private val tokens: List<Token>, definedSymbols: List<String>) {
         }
     }
 
-    private fun parseTerm(): Node {
+    private fun parseTermHead(): Node {
         val token = peek()
-        when (token.type) {
-            TokenType.IDENTIFIER -> {
-                val identifier = parseIdentifier()
-                val next = peek()
-                when (next.type) {
-                    TokenType.DOT -> {
-                        consume(TokenType.DOT)
-                        val func = consume(TokenType.BUILTIN)
-                        consume(TokenType.PAREN_OPEN)
-                        // this should be ParamList.
-                        val params = parseExpr()
-                        consume(TokenType.PAREN_CLOSE)
-                        return TermCallNode(identifier, func, listOf(params))
-                    }
-                    TokenType.BRACKET_OPEN -> {
-                        consume(TokenType.BRACKET_OPEN)
-                        val subscript = parseExpr()
-                        consume(TokenType.BRACKET_CLOSE)
-                        return TermSubscriptNode(identifier, subscript)
-                    }
-                    else -> return identifier
-                }
-            }
-            TokenType.NUMBER -> {
-                return parseNumber()
-            }
-            TokenType.STRING -> {
-                return parseString()
-            }
+        return when (token.type) {
+            TokenType.IDENTIFIER -> parseIdentifier()
+            TokenType.NUMBER -> parseNumber()
+            TokenType.STRING -> parseString()
             else -> throw IllegalStateException("Unexpected token ${token.value}")
         }
     }
+
+    private fun parseTermTail(termHead: Node): Node {
+        val token = peek()
+        return when (token.type) {
+            TokenType.DOT -> {
+                consume(TokenType.DOT)
+                val func = consume(TokenType.BUILTIN)
+                consume(TokenType.PAREN_OPEN)
+                // this should be ParamList.
+                val params = parseExpr()
+                consume(TokenType.PAREN_CLOSE)
+                TermCallNode(termHead, func, listOf(params))
+            }
+            TokenType.BRACKET_OPEN -> {
+                consume(TokenType.BRACKET_OPEN)
+                val subscript = parseExpr()
+                consume(TokenType.BRACKET_CLOSE)
+                TermSubscriptNode(termHead, subscript)
+            }
+            else -> termHead
+        }
+    }
+
+    private fun parseTerm(): Node {
+        val token = peek()
+        return when (token.type) {
+            TokenType.PAREN_OPEN -> {
+                consume(TokenType.PAREN_OPEN)
+                val expr = parseExpr()
+                consume(TokenType.PAREN_CLOSE)
+                parseTermTail(expr)
+            }
+            else -> {
+                val termHead = parseTermHead()
+                parseTermTail(termHead)
+            }
+        }
+    }
+
     fun parse(): Node {
         return parseStmtList()
     }
