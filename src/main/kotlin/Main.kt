@@ -1,6 +1,6 @@
 enum class TokenType {
     BRACE_OPEN, BRACE_CLOSE, PAREN_OPEN, PAREN_CLOSE, BRACKET_OPEN, BRACKET_CLOSE, SEMICOLON,
-    ASSIGN, DOT, PLUS,
+    ASSIGN, DOT, COMMA, PLUS,
     IF, ACTION,
     IDENTIFIER, BUILTIN,
     NUMBER, STRING,
@@ -41,6 +41,7 @@ class Tokenizer(private val input: String) {
                 currentChar == ';' -> pushAndAdvance(Token(TokenType.SEMICOLON, ";"))
                 currentChar == '=' -> pushAndAdvance(Token(TokenType.ASSIGN, "="))
                 currentChar == '.' -> pushAndAdvance(Token(TokenType.DOT, "."))
+                currentChar == ',' -> pushAndAdvance(Token(TokenType.COMMA, ","))
                 currentChar == '+' -> pushAndAdvance(Token(TokenType.PLUS, "+"))
                 currentChar == '"' -> {
                     val start = index
@@ -84,27 +85,27 @@ class Tokenizer(private val input: String) {
 }
 
 interface NodeValue {
-    val representation: String
+    fun toBoolean(): Boolean
 }
 
 class StringValue(val value: String) : NodeValue {
-    override val representation: String
-        get() = value
+    override fun toString() = value
+    override fun toBoolean(): Boolean = value.isNotEmpty()
 }
 
 class ListValue(val value: List<String>) : NodeValue {
-    override val representation: String
-        get() = "[${value.joinToString(", ")}]"
+    override fun toString() = "[${value.joinToString(", ")}]"
+    override fun toBoolean(): Boolean = value.isNotEmpty()
 }
 
 class NumberValue(val value: Int) : NodeValue {
-    override val representation: String
-        get() = value.toString()
+    override fun toString() = value.toString()
+    override fun toBoolean(): Boolean = value != 0
 }
 
 class NullValue : NodeValue {
-    override val representation: String
-        get() = "null"
+    override fun toString() = "null"
+    override fun toBoolean(): Boolean = false
 }
 
 class SymbolTable {
@@ -134,7 +135,7 @@ class IdentifierNode(token: Token, private val table: SymbolTable) : Node {
     }
 
     override fun exec(): NodeValue {
-        return table.get(name) ?: throw IllegalArgumentException("Unknown identifier: $name")
+        return table.get(name) ?: NullValue()
     }
 
     fun hasDefinition(): Boolean {
@@ -189,7 +190,17 @@ class StringNode(token: Token) : Node {
     }
 }
 
-class TermCallNode(private val expr: Node, func: Token, private val args: List<ExprNode>) : Node {
+class ParamListNode(val params: List<ExprNode>) : Node {
+    override fun exec(): NodeValue {
+        return NullValue()
+    }
+
+    override fun toString(): String {
+        return "params(${params.joinToString(", ")})"
+    }
+}
+
+class TermCallNode(private val expr: Node, func: Token, private val args: ParamListNode) : Node {
     private val func: String
 
     init {
@@ -202,17 +213,23 @@ class TermCallNode(private val expr: Node, func: Token, private val args: List<E
     override fun exec(): NodeValue {
         return when (func) {
             "split" -> {
-                ListValue((expr.exec() as StringValue).value.split((args[0].exec() as StringValue).value))
+                ListValue((expr.exec() as StringValue).value.split((args.params[0].exec() as StringValue).value))
             }
             "join" -> {
-                StringValue((expr.exec() as ListValue).value.joinToString((args[0].exec() as StringValue).value))
+                StringValue((expr.exec() as ListValue).value.joinToString((args.params[0].exec() as StringValue).value))
+            }
+            "len" -> {
+                NumberValue((expr.exec() as ListValue).value.size)
+            }
+            "defined" -> {
+                NumberValue(if((expr as IdentifierNode).hasDefinition()) 1 else 0)
             }
             else -> throw IllegalArgumentException("Unknown builtin function $func")
         }
     }
 
     override fun toString(): String {
-        return "func($func, $expr, args(${args.joinToString(", ")}))"
+        return "func($func, $expr, $args)"
     }
 }
 
@@ -253,7 +270,7 @@ class ExprNode(private val terms: List<Node>) : Node {
                         is NumberValue -> NumberValue(res.value + next.value)
                         is StringValue -> StringValue(res.value.toString() + next.value)
                         is ListValue -> ListValue(listOf(res.value.toString())+next.value)
-                        else -> throw IllegalArgumentException("Invalid operation: ${res.representation} + ${next.representation}")
+                        else -> throw IllegalArgumentException("Invalid operation: $res + $next")
                     }
                 }
                 is StringValue -> {
@@ -261,7 +278,7 @@ class ExprNode(private val terms: List<Node>) : Node {
                         is NumberValue -> StringValue(res.value + next.value.toString())
                         is StringValue -> StringValue(res.value + next.value)
                         is ListValue -> ListValue(listOf(res.value) + next.value)
-                        else -> throw IllegalArgumentException("Invalid operation: ${res.representation} + ${next.representation}")
+                        else -> throw IllegalArgumentException("Invalid operation: $res + $next")
                     }
                 }
                 is ListValue -> {
@@ -269,10 +286,10 @@ class ExprNode(private val terms: List<Node>) : Node {
                         is NumberValue -> ListValue(res.value + listOf(next.value.toString()))
                         is StringValue -> ListValue(res.value + listOf(next.value))
                         is ListValue -> ListValue(res.value + next.value)
-                        else -> throw IllegalArgumentException("Invalid operation: ${res.representation} + ${next.representation}")
+                        else -> throw IllegalArgumentException("Invalid operation: $res + $next")
                     }
                 }
-                else -> throw IllegalArgumentException("Invalid operation: ${res.representation} + ${next.representation}")
+                else -> throw IllegalArgumentException("Invalid operation: $res + $next")
             }
         }
         return res
@@ -303,7 +320,7 @@ class StmtActionNode(private val action: Token, private val expr: ExprNode) : No
         val value = expr.exec()
         when (action.value) {
             "say" -> {
-                println(value.representation)
+                println(value)
             }
             else -> throw IllegalArgumentException("Unknown action ${action.value}")
         }
@@ -315,9 +332,9 @@ class StmtActionNode(private val action: Token, private val expr: ExprNode) : No
     }
 }
 
-class StmtIfNode(private val condition: IdentifierNode, private val ifBody: StmtListNode) : Node {
+class StmtIfNode(private val condition: Node, private val ifBody: StmtListNode) : Node {
     override fun exec(): NodeValue {
-        if (condition.hasDefinition()) {
+        if (condition.exec().toBoolean()) {
             ifBody.exec()
         }
         return NullValue()
@@ -428,6 +445,18 @@ class Parser(private val tokens: List<Token>, definedSymbols: List<String>) {
         }
     }
 
+    private fun parseParamList(): ParamListNode {
+        val params = mutableListOf<ExprNode>()
+        if(peek().type != TokenType.PAREN_CLOSE) {
+            params.add(parseExpr())
+            while (peek().type != TokenType.PAREN_CLOSE) {
+                consume(TokenType.COMMA)
+                params.add(parseExpr())
+            }
+        }
+        return ParamListNode(params)
+    }
+
     private fun parseTermTail(termHead: Node): Node {
         val token = peek()
         return when (token.type) {
@@ -435,10 +464,9 @@ class Parser(private val tokens: List<Token>, definedSymbols: List<String>) {
                 consume(TokenType.DOT)
                 val func = consume(TokenType.BUILTIN)
                 consume(TokenType.PAREN_OPEN)
-                // this should be ParamList.
-                val params = parseExpr()
+                val params = parseParamList()
                 consume(TokenType.PAREN_CLOSE)
-                TermCallNode(termHead, func, listOf(params))
+                TermCallNode(termHead, func, params)
             }
             TokenType.BRACKET_OPEN -> {
                 consume(TokenType.BRACKET_OPEN)
