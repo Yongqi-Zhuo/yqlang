@@ -1,6 +1,10 @@
 enum class TokenType {
     BRACE_OPEN, BRACE_CLOSE, PAREN_OPEN, PAREN_CLOSE, BRACKET_OPEN, BRACKET_CLOSE, SEMICOLON,
-    ASSIGN, DOT, COMMA, PLUS, MINUS, MULTIPLY, DIVIDE, AND, OR, EQUAL, NOT_EQUAL,
+    ASSIGN, DOT, COMMA,
+    ADD_OP, // PLUS, MINUS,
+    MULT_OP, // MULTIPLY, DIVIDE, MODULO
+    LOGIC_OP, //AND, OR, EQUAL, NOT_EQUAL, GREATER, LESS, GREATER_EQUAL, LESS_EQUAL
+    NOT,
     IF, ACTION,
     IDENTIFIER, BUILTIN,
     NUMBER, STRING,
@@ -30,6 +34,17 @@ class Tokenizer(private val input: String) {
             tokens.add(token)
             advance()
         }
+        fun handleTwoCharOp(type: TokenType, value: String, single: TokenType? = null) {
+            if (index < input.length - 1 && input[index + 1] == value[1]) {
+                tokens.add((Token(type, value)))
+                advance()
+                advance()
+            } else if (single != null) {
+                pushAndAdvance(Token(single, value[0].toString()))
+            } else {
+                throw IllegalArgumentException("Unexpected character: $currentChar")
+            }
+        }
         while (index < input.length) {
             when {
                 currentChar == '{' -> pushAndAdvance(Token(TokenType.BRACE_OPEN, "{"))
@@ -41,46 +56,17 @@ class Tokenizer(private val input: String) {
                 currentChar == ';' -> pushAndAdvance(Token(TokenType.SEMICOLON, ";"))
                 currentChar == '.' -> pushAndAdvance(Token(TokenType.DOT, "."))
                 currentChar == ',' -> pushAndAdvance(Token(TokenType.COMMA, ","))
-                currentChar == '+' -> pushAndAdvance(Token(TokenType.PLUS, "+"))
-                currentChar == '-' -> pushAndAdvance(Token(TokenType.MINUS, "-"))
-                currentChar == '*' -> pushAndAdvance(Token(TokenType.MULTIPLY, "*"))
-                currentChar == '/' -> pushAndAdvance(Token(TokenType.DIVIDE, "/"))
-                currentChar == '&' -> {
-                    if (index < input.length - 1 && input[index + 1] == '&') {
-                        tokens.add(Token(TokenType.AND, "&&"))
-                        advance()
-                        advance()
-                    } else {
-                        throw IllegalArgumentException("Unexpected character: $currentChar")
-                    }
-                }
-                currentChar == '|' -> {
-                    if (index < input.length - 1 && input[index + 1] == '|') {
-                        tokens.add(Token(TokenType.OR, "||"))
-                        advance()
-                        advance()
-                    } else {
-                        throw IllegalArgumentException("Unexpected character: $currentChar")
-                    }
-                }
-                currentChar == '=' -> {
-                    if (index < input.length - 1 && input[index + 1] == '=') {
-                        tokens.add(Token(TokenType.EQUAL, "=="))
-                        advance()
-                        advance()
-                    } else {
-                        pushAndAdvance(Token(TokenType.ASSIGN, "="))
-                    }
-                }
-                currentChar == '!' -> {
-                    if (index < input.length - 1 && input[index + 1] == '=') {
-                        tokens.add(Token(TokenType.NOT_EQUAL, "!="))
-                        advance()
-                        advance()
-                    } else {
-                        throw IllegalArgumentException("Unexpected character: $currentChar")
-                    }
-                }
+                currentChar == '+' -> pushAndAdvance(Token(TokenType.ADD_OP, "+"))
+                currentChar == '-' -> pushAndAdvance(Token(TokenType.ADD_OP, "-"))
+                currentChar == '*' -> pushAndAdvance(Token(TokenType.MULT_OP, "*"))
+                currentChar == '/' -> pushAndAdvance(Token(TokenType.MULT_OP, "/"))
+                currentChar == '%' -> pushAndAdvance(Token(TokenType.MULT_OP, "%"))
+                currentChar == '&' -> handleTwoCharOp(TokenType.LOGIC_OP, "&&")
+                currentChar == '|' -> handleTwoCharOp(TokenType.LOGIC_OP, "||")
+                currentChar == '=' -> handleTwoCharOp(TokenType.LOGIC_OP, "==", TokenType.ASSIGN)
+                currentChar == '!' -> handleTwoCharOp(TokenType.LOGIC_OP, "!=", TokenType.NOT)
+                currentChar == '>' -> handleTwoCharOp(TokenType.LOGIC_OP, ">=", TokenType.LOGIC_OP)
+                currentChar == '<' -> handleTwoCharOp(TokenType.LOGIC_OP, "<=", TokenType.LOGIC_OP)
                 currentChar == '"' -> {
                     val start = index
                     do {
@@ -108,6 +94,8 @@ class Tokenizer(private val input: String) {
                         "say" -> tokens.add(Token(TokenType.ACTION, "say"))
                         "split" -> tokens.add(Token(TokenType.BUILTIN, "split"))
                         "join" -> tokens.add(Token(TokenType.BUILTIN, "join"))
+                        "len" -> tokens.add(Token(TokenType.BUILTIN, "len"))
+                        "defined" -> tokens.add(Token(TokenType.BUILTIN, "defined"))
                         "text" -> tokens.add(Token(TokenType.IDENTIFIER, "text")) // events are special identifiers
                         else -> tokens.add(Token(TokenType.IDENTIFIER, value))
                     }
@@ -296,22 +284,39 @@ class UnitSubscriptNode(private val unit: Node, private val subscript: ExprNode)
     }
 }
 
-class FactorNode(private val units: List<Node>, private val ops: List<Token>): Node {
+class FactorNode(private val units: List<Node>, private val ops: List<String>, private val prefix: FactorPrefix): Node {
+    enum class FactorPrefix {
+        NONE,
+        NOT,
+        NEGATIVE
+    }
     override fun exec(): NodeValue {
         val values = units.map { it.exec() }.toMutableList()
-        val ops = ops.map { it.type }.toMutableList()
+        val ops = ops.toMutableList()
         var res = values.removeAt(0)
         while (values.size > 0) {
             val next = values.removeAt(0)
             val op = ops.removeAt(0)
             if(res is NumberValue && next is NumberValue) {
                 res = when (op) {
-                    TokenType.MULTIPLY -> NumberValue(res.value * next.value)
-                    TokenType.DIVIDE -> NumberValue(res.value / next.value)
+                    "*" -> NumberValue(res.value * next.value)
+                    "/" -> NumberValue(res.value / next.value)
+                    "%" -> NumberValue(res.value % next.value)
                     else -> throw IllegalArgumentException("Unknown operator $op")
                 }
             } else {
                 throw IllegalArgumentException("Invalid operation: $res $op $next")
+            }
+        }
+        when(prefix) {
+            FactorPrefix.NONE -> return res
+            FactorPrefix.NOT -> return NumberValue(if(res.toBoolean()) 0 else 1)
+            FactorPrefix.NEGATIVE -> {
+                if (res is NumberValue) {
+                    res = NumberValue(-res.value)
+                } else {
+                    throw IllegalArgumentException("Invalid operation: -$res")
+                }
             }
         }
         return res
@@ -322,28 +327,28 @@ class FactorNode(private val units: List<Node>, private val ops: List<Token>): N
         for (i in units.indices) {
             str += units[i].toString()
             if (i < ops.size) {
-                str += ops[i].value
+                str += ops[i]
             }
         }
         return "factor($str)"
     }
 }
 
-class TermNode(private val factors: List<FactorNode>, private val ops: List<Token>) : Node {
+class TermNode(private val factors: List<FactorNode>, private val ops: List<String>) : Node {
     override fun exec(): NodeValue {
         val values = factors.map { it.exec() }.toMutableList()
-        val ops = ops.map { it.type }.toMutableList()
+        val ops = ops.toMutableList()
         var res = values.removeAt(0)
         while(values.size > 0) {
             val next = values.removeAt(0)
             val op = ops.removeAt(0)
             if(res is NumberValue && next is NumberValue) {
                 res = when(op) {
-                    TokenType.PLUS -> NumberValue(res.value + next.value)
-                    TokenType.MINUS -> NumberValue(res.value - next.value)
+                    "+" -> NumberValue(res.value + next.value)
+                    "-" -> NumberValue(res.value - next.value)
                     else -> throw IllegalArgumentException("Unknown operator $op")
                 }
-            } else if (op == TokenType.PLUS) {
+            } else if (op == "+") {
                 res = when (res) {
                     is NumberValue -> {
                         when (next) {
@@ -382,24 +387,24 @@ class TermNode(private val factors: List<FactorNode>, private val ops: List<Toke
         for (i in factors.indices) {
             str += factors[i].toString()
             if (i < ops.size) {
-                str += ops[i].value
+                str += ops[i]
             }
         }
         return "term($str)"
     }
 }
 
-class ExprNode(private val terms: List<TermNode>, private val ops: List<Token>): Node {
+class ExprNode(private val terms: List<TermNode>, private val ops: List<String>): Node {
     override fun exec(): NodeValue {
         val values = terms.map { it.exec() }.toMutableList()
-        val ops = ops.map { it.type }.toMutableList()
+        val ops = ops.toMutableList()
         var res = values.removeAt(0)
         while(values.size > 0) {
             if(res is NullValue) res = NumberValue(0)
             var next = values.removeAt(0)
             next = if(next is NullValue) NumberValue(0) else next
             when(val op = ops.removeAt(0)) {
-                TokenType.EQUAL -> {
+                "==" -> {
                     res = if(res is NumberValue && next is NumberValue) {
                         NumberValue(if(res.value == next.value) 1 else 0)
                     } else if (res is StringValue && next is StringValue) {
@@ -410,7 +415,7 @@ class ExprNode(private val terms: List<TermNode>, private val ops: List<Token>):
                         throw IllegalArgumentException("Invalid operation: $res == $next")
                     }
                 }
-                TokenType.NOT_EQUAL -> {
+                "!=" -> {
                     res = if(res is NumberValue && next is NumberValue) {
                         NumberValue(if(res.value != next.value) 1 else 0)
                     } else if (res is StringValue && next is StringValue) {
@@ -421,8 +426,28 @@ class ExprNode(private val terms: List<TermNode>, private val ops: List<Token>):
                         NumberValue(1)
                     }
                 }
-                TokenType.AND -> res = NumberValue(if(res.toBoolean() && next.toBoolean()) 1 else 0)
-                TokenType.OR -> res = NumberValue(if(res.toBoolean() || next.toBoolean()) 1 else 0)
+                "&&" -> res = NumberValue(if(res.toBoolean() && next.toBoolean()) 1 else 0)
+                "||" -> res = NumberValue(if(res.toBoolean() || next.toBoolean()) 1 else 0)
+                ">" -> res = if(res is NumberValue && next is NumberValue) {
+                    NumberValue(if(res.value > next.value) 1 else 0)
+                } else {
+                    throw IllegalArgumentException("Invalid operation: $res > $next")
+                }
+                "<" -> res = if(res is NumberValue && next is NumberValue) {
+                    NumberValue(if(res.value < next.value) 1 else 0)
+                } else {
+                    throw IllegalArgumentException("Invalid operation: $res < $next")
+                }
+                ">=" -> res = if(res is NumberValue && next is NumberValue) {
+                    NumberValue(if(res.value >= next.value) 1 else 0)
+                } else {
+                    throw IllegalArgumentException("Invalid operation: $res >= $next")
+                }
+                "<=" -> res = if(res is NumberValue && next is NumberValue) {
+                    NumberValue(if(res.value <= next.value) 1 else 0)
+                } else {
+                    throw IllegalArgumentException("Invalid operation: $res <= $next")
+                }
                 else -> throw IllegalArgumentException("Invalid operation: $res $op $next")
             }
         }
@@ -434,7 +459,7 @@ class ExprNode(private val terms: List<TermNode>, private val ops: List<Token>):
         for (i in terms.indices) {
             str += terms[i].toString()
             if (i < ops.size) {
-                str += ops[i].value
+                str += ops[i]
             }
         }
         return "expr($str)"
@@ -564,24 +589,12 @@ class Parser(private val tokens: List<Token>, definedSymbols: List<String>) {
 
     private fun parseExpr(): ExprNode {
         val terms = mutableListOf(parseTerm())
-        val ops = mutableListOf<Token>()
+        val ops = mutableListOf<String>()
         while (true) {
             val token = peek()
             when (token.type) {
-                TokenType.EQUAL -> {
-                    ops.add(consume(TokenType.EQUAL))
-                    terms.add(parseTerm())
-                }
-                TokenType.NOT_EQUAL -> {
-                    ops.add(consume(TokenType.NOT_EQUAL))
-                    terms.add(parseTerm())
-                }
-                TokenType.AND -> {
-                    ops.add(consume(TokenType.AND))
-                    terms.add(parseTerm())
-                }
-                TokenType.OR -> {
-                    ops.add(consume(TokenType.OR))
+                TokenType.LOGIC_OP -> {
+                    ops.add(consume(TokenType.LOGIC_OP).value)
                     terms.add(parseTerm())
                 }
                 else -> return ExprNode(terms, ops)
@@ -591,16 +604,12 @@ class Parser(private val tokens: List<Token>, definedSymbols: List<String>) {
 
     private fun parseTerm(): TermNode {
         val factors = mutableListOf(parseFactor())
-        val ops = mutableListOf<Token>()
+        val ops = mutableListOf<String>()
         while(true) {
             val token = peek()
             when(token.type) {
-                TokenType.PLUS -> {
-                    ops.add(consume(TokenType.PLUS))
-                    factors.add(parseFactor())
-                }
-                TokenType.MINUS -> {
-                    ops.add(consume(TokenType.MINUS))
+                TokenType.ADD_OP -> {
+                    ops.add(consume(TokenType.ADD_OP).value)
                     factors.add(parseFactor())
                 }
                 else -> return TermNode(factors, ops)
@@ -609,20 +618,24 @@ class Parser(private val tokens: List<Token>, definedSymbols: List<String>) {
     }
 
     private fun parseFactor(): FactorNode {
+        var prefix = FactorNode.FactorPrefix.NONE
+        if(peek().type == TokenType.ADD_OP && peek().value == "-") {
+            consume(TokenType.ADD_OP)
+            prefix = FactorNode.FactorPrefix.NEGATIVE
+        } else if (peek().type == TokenType.NOT) {
+            consume(TokenType.NOT)
+            prefix = FactorNode.FactorPrefix.NOT
+        }
         val units = mutableListOf(parseUnit())
-        val ops = mutableListOf<Token>()
+        val ops = mutableListOf<String>()
         while (true) {
             val token = peek()
             when (token.type) {
-                TokenType.MULTIPLY -> {
-                    ops.add(consume(TokenType.MULTIPLY))
+                TokenType.MULT_OP -> {
+                    ops.add(consume(TokenType.MULT_OP).value)
                     units.add(parseUnit())
                 }
-                TokenType.DIVIDE -> {
-                    ops.add(consume(TokenType.DIVIDE))
-                    units.add(parseUnit())
-                }
-                else -> return FactorNode(units, ops)
+                else -> return FactorNode(units, ops, prefix)
             }
         }
     }
@@ -633,6 +646,12 @@ class Parser(private val tokens: List<Token>, definedSymbols: List<String>) {
             TokenType.IDENTIFIER -> parseIdentifier()
             TokenType.NUMBER -> parseNumber()
             TokenType.STRING -> parseString()
+            TokenType.PAREN_OPEN -> {
+                consume(TokenType.PAREN_OPEN)
+                val expr = parseExpr()
+                consume(TokenType.PAREN_CLOSE)
+                expr
+            }
             else -> throw IllegalStateException("Unexpected token ${token.value}")
         }
     }
@@ -671,19 +690,8 @@ class Parser(private val tokens: List<Token>, definedSymbols: List<String>) {
     }
 
     private fun parseUnit(): Node {
-        val token = peek()
-        return when (token.type) {
-            TokenType.PAREN_OPEN -> {
-                consume(TokenType.PAREN_OPEN)
-                val expr = parseExpr()
-                consume(TokenType.PAREN_CLOSE)
-                parseUnitTail(expr)
-            }
-            else -> {
-                val unitHead = parseUnitHead()
-                parseUnitTail(unitHead)
-            }
-        }
+        val unitHead = parseUnitHead()
+        return parseUnitTail(unitHead)
     }
 
     fun parse(): Node {
