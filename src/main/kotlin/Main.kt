@@ -57,11 +57,11 @@ class Tokenizer(private val input: String) {
                 currentChar == ';' -> pushAndAdvance(Token(TokenType.SEMICOLON, ";"))
                 currentChar == '.' -> pushAndAdvance(Token(TokenType.DOT, "."))
                 currentChar == ',' -> pushAndAdvance(Token(TokenType.COMMA, ","))
-                currentChar == '+' -> pushAndAdvance(Token(TokenType.ADD_OP, "+"))
-                currentChar == '-' -> pushAndAdvance(Token(TokenType.ADD_OP, "-"))
-                currentChar == '*' -> pushAndAdvance(Token(TokenType.MULT_OP, "*"))
-                currentChar == '/' -> pushAndAdvance(Token(TokenType.MULT_OP, "/"))
-                currentChar == '%' -> pushAndAdvance(Token(TokenType.MULT_OP, "%"))
+                currentChar == '+' -> handleTwoCharOp(TokenType.ASSIGN, "+=", TokenType.ADD_OP)
+                currentChar == '-' -> handleTwoCharOp(TokenType.ASSIGN, "-=", TokenType.ADD_OP)
+                currentChar == '*' -> handleTwoCharOp(TokenType.ASSIGN, "*=", TokenType.MULT_OP)
+                currentChar == '/' -> handleTwoCharOp(TokenType.ASSIGN, "/=", TokenType.MULT_OP)
+                currentChar == '%' -> handleTwoCharOp(TokenType.ASSIGN, "%=", TokenType.MULT_OP)
                 currentChar == '&' -> handleTwoCharOp(TokenType.LOGIC_OP, "&&")
                 currentChar == '|' -> handleTwoCharOp(TokenType.LOGIC_OP, "||")
                 currentChar == '=' -> handleTwoCharOp(TokenType.LOGIC_OP, "==", TokenType.ASSIGN)
@@ -118,7 +118,7 @@ class Tokenizer(private val input: String) {
                         "toList" -> tokens.add(Token(TokenType.BUILTIN, "toList"))
                         "find" -> tokens.add(Token(TokenType.BUILTIN, "find"))
                         "contains" -> tokens.add(Token(TokenType.BUILTIN, "contains"))
-                        "len" -> tokens.add(Token(TokenType.BUILTIN, "len"))
+                        "length" -> tokens.add(Token(TokenType.BUILTIN, "length"))
                         "defined" -> tokens.add(Token(TokenType.BUILTIN, "defined"))
                         "text" -> tokens.add(Token(TokenType.IDENTIFIER, "text")) // events are special identifiers
                         else -> tokens.add(Token(TokenType.IDENTIFIER, value))
@@ -158,28 +158,32 @@ class NullValue : NodeValue {
     override fun toBoolean(): Boolean = false
 }
 
-class SymbolTable(definedSymbols: Map<String, NodeValue>?) {
+class SymbolTable(definedSymbols: Map<String, NodeValue>? = null) {
     private val table = mutableMapOf<String, NodeValue>()
+
     init {
         definedSymbols?.forEach { table[it.key] = it.value }
     }
+
     fun get(name: String): NodeValue? {
         return table[name]
     }
+
     fun set(name: String, value: NodeValue) {
         table[name] = value
     }
+
     fun unset(name: String) {
         table.remove(name)
     }
 }
 
 interface Node {
-    fun exec(context: Interpreter.ActionContext): NodeValue
+    fun exec(context: ExecutionContext): NodeValue
 }
 
-class IdentifierNode(token: Token, private val table: SymbolTable) : Node {
-    private val name: String
+class IdentifierNode(token: Token) : Node {
+    val name: String
 
     init {
         if (token.type != TokenType.IDENTIFIER) {
@@ -188,16 +192,8 @@ class IdentifierNode(token: Token, private val table: SymbolTable) : Node {
         name = token.value
     }
 
-    override fun exec(context: Interpreter.ActionContext): NodeValue {
-        return table.get(name) ?: NullValue()
-    }
-
-    fun hasDefinition(): Boolean {
-        return table.get(name) != null
-    }
-
-    fun assign(value: NodeValue) {
-        table.set(name, value)
+    override fun exec(context: ExecutionContext): NodeValue {
+        return context.table.get(name) ?: NullValue()
     }
 
     override fun toString(): String {
@@ -216,7 +212,7 @@ class NumberNode(token: Token) : Node {
         value = token.value.toInt()
     }
 
-    override fun exec(context: Interpreter.ActionContext): NodeValue {
+    override fun exec(context: ExecutionContext): NodeValue {
         return NumberValue(value)
     }
 
@@ -235,7 +231,7 @@ class StringNode(token: Token) : Node {
         value = token.value
     }
 
-    override fun exec(context: Interpreter.ActionContext): NodeValue {
+    override fun exec(context: ExecutionContext): NodeValue {
         return StringValue(value)
     }
 
@@ -245,7 +241,7 @@ class StringNode(token: Token) : Node {
 }
 
 class ParamListNode(val params: List<ExprNode>) : Node {
-    override fun exec(context: Interpreter.ActionContext): NodeValue {
+    override fun exec(context: ExecutionContext): NodeValue {
         return NullValue()
     }
 
@@ -264,7 +260,7 @@ class UnitCallNode(private val expr: Node, func: Token, private val args: ParamL
         this.func = func.value
     }
 
-    override fun exec(context: Interpreter.ActionContext): NodeValue {
+    override fun exec(context: ExecutionContext): NodeValue {
         return when (func) {
             "split" -> {
                 ListValue((expr.exec(context) as StringValue).value.split((args.params[0].exec(context) as StringValue).value))
@@ -295,11 +291,16 @@ class UnitCallNode(private val expr: Node, func: Token, private val args: ParamL
             "contains" -> {
                 NumberValue(if ((expr.exec(context) as ListValue).value.contains((args.params[0].exec(context) as StringValue).value)) 1 else 0)
             }
-            "len" -> {
-                NumberValue((expr.exec(context) as ListValue).value.size)
+            "length" -> {
+                when (val what = expr.exec(context)) {
+                    is StringValue -> NumberValue(what.value.length)
+                    is ListValue -> NumberValue(what.value.size)
+                    else -> throw IllegalArgumentException("Expected StringValue or ListValue, got ${what.javaClass.simpleName}")
+                }
             }
             "defined" -> {
-                NumberValue(if ((expr as IdentifierNode).hasDefinition()) 1 else 0)
+                val idName = (expr as IdentifierNode).name
+                NumberValue(if (context.table.get(idName) != null) 1 else 0)
             }
             else -> throw IllegalArgumentException("Unknown builtin function $func")
         }
@@ -311,7 +312,7 @@ class UnitCallNode(private val expr: Node, func: Token, private val args: ParamL
 }
 
 class UnitSubscriptNode(private val unit: Node, private val subscript: ExprNode) : Node {
-    override fun exec(context: Interpreter.ActionContext): NodeValue {
+    override fun exec(context: ExecutionContext): NodeValue {
         val value = unit.exec(context)
         val index = (subscript.exec(context) as NumberValue).value
         return when (value) {
@@ -343,12 +344,12 @@ class FactorNode(private val units: List<Node>, private val ops: List<String>, p
         NEGATIVE
     }
 
-    override fun exec(context: Interpreter.ActionContext): NodeValue {
-        val values = units.map { it.exec(context) }.toMutableList()
+    override fun exec(context: ExecutionContext): NodeValue {
+        val values = units.toMutableList()
         val ops = ops.toMutableList()
-        var res = values.removeAt(0)
+        var res = values.removeAt(0).exec(context)
         while (values.size > 0) {
-            val next = values.removeAt(0)
+            val next = values.removeAt(0).exec(context)
             val op = ops.removeAt(0)
             res = if (res is NumberValue && next is NumberValue) {
                 when (op) {
@@ -392,13 +393,13 @@ class FactorNode(private val units: List<Node>, private val ops: List<String>, p
     }
 }
 
-class TermNode(private val factors: List<FactorNode>, private val ops: List<String>) : Node {
-    override fun exec(context: Interpreter.ActionContext): NodeValue {
-        val values = factors.map { it.exec(context) }.toMutableList()
+class TermNode(private val factors: List<Node>, private val ops: List<String>) : Node {
+    override fun exec(context: ExecutionContext): NodeValue {
+        val values = factors.toMutableList()
         val ops = ops.toMutableList()
-        var res = values.removeAt(0)
+        var res = values.removeAt(0).exec(context)
         while (values.size > 0) {
-            val next = values.removeAt(0)
+            val next = values.removeAt(0).exec(context)
             val op = ops.removeAt(0)
             if (res is NumberValue && next is NumberValue) {
                 res = when (op) {
@@ -452,14 +453,14 @@ class TermNode(private val factors: List<FactorNode>, private val ops: List<Stri
     }
 }
 
-class ExprNode(private val terms: List<TermNode>, private val ops: List<String>) : Node {
-    override fun exec(context: Interpreter.ActionContext): NodeValue {
-        val values = terms.map { it.exec(context) }.toMutableList()
+class ExprNode(private val terms: List<Node>, private val ops: List<String>) : Node {
+    override fun exec(context: ExecutionContext): NodeValue {
+        val values = terms.toMutableList()
         val ops = ops.toMutableList()
-        var res = values.removeAt(0)
+        var res = values.removeAt(0).exec(context)
         while (values.size > 0) {
             if (res is NullValue) res = NumberValue(0)
-            var next = values.removeAt(0)
+            var next = values.removeAt(0).exec(context)
             next = if (next is NullValue) NumberValue(0) else next
             when (val op = ops.removeAt(0)) {
                 "==" -> {
@@ -524,10 +525,10 @@ class ExprNode(private val terms: List<TermNode>, private val ops: List<String>)
     }
 }
 
-class StmtAssignNode(private val identifier: IdentifierNode, private val expr: ExprNode) : Node {
-    override fun exec(context: Interpreter.ActionContext): NodeValue {
+class StmtAssignNode(private val identifier: IdentifierNode, private val expr: Node) : Node {
+    override fun exec(context: ExecutionContext): NodeValue {
         val value = expr.exec(context)
-        identifier.assign(value)
+        context.table.set(identifier.name, value)
         return NullValue()
     }
 
@@ -537,7 +538,7 @@ class StmtAssignNode(private val identifier: IdentifierNode, private val expr: E
 }
 
 class StmtActionNode(private val action: Token, private val expr: ExprNode) : Node {
-    override fun exec(context: Interpreter.ActionContext): NodeValue {
+    override fun exec(context: ExecutionContext): NodeValue {
         if (action.type != TokenType.ACTION) {
             throw IllegalArgumentException("Expected ACTION, got ${action.type}")
         }
@@ -556,12 +557,12 @@ class StmtActionNode(private val action: Token, private val expr: ExprNode) : No
     }
 }
 
-class StmtIfNode (
+class StmtIfNode(
     private val condition: Node,
     private val ifBody: StmtListNode,
     private val elseBody: StmtListNode? = null
 ) : Node {
-    override fun exec(context: Interpreter.ActionContext): NodeValue {
+    override fun exec(context: ExecutionContext): NodeValue {
         if (condition.exec(context).toBoolean()) {
             ifBody.exec(context)
         } else {
@@ -577,7 +578,7 @@ class StmtIfNode (
 }
 
 class StmtListNode(private val stmts: List<Node>) : Node {
-    override fun exec(context: Interpreter.ActionContext): NodeValue {
+    override fun exec(context: ExecutionContext): NodeValue {
         for (node in stmts) {
             node.exec(context)
         }
@@ -589,7 +590,7 @@ class StmtListNode(private val stmts: List<Node>) : Node {
     }
 }
 
-class Parser(private val tokens: List<Token>, private val symbolTable: SymbolTable) {
+class Parser(private val tokens: List<Token>) {
     private var current = 0
 
     private fun consume(type: TokenType): Token {
@@ -606,7 +607,7 @@ class Parser(private val tokens: List<Token>, private val symbolTable: SymbolTab
     private fun peek() = tokens[current]
 //    private fun peekNext() = tokens[current + 1]
 
-    private fun parseIdentifier() = IdentifierNode(consume(TokenType.IDENTIFIER), symbolTable)
+    private fun parseIdentifier() = IdentifierNode(consume(TokenType.IDENTIFIER))
     private fun parseNumber() = NumberNode(consume(TokenType.NUMBER))
     private fun parseString() = StringNode(consume(TokenType.STRING))
 
@@ -623,10 +624,27 @@ class Parser(private val tokens: List<Token>, private val symbolTable: SymbolTab
         when (token.type) {
             TokenType.IDENTIFIER -> {
                 val identifier = parseIdentifier()
-                consume(TokenType.ASSIGN)
-                val expr = parseExpr()
+                val assignToken = consume(TokenType.ASSIGN)
+                val stmt = when (assignToken.value) {
+                    "=" -> StmtAssignNode(identifier, parseExpr())
+                    "+=" -> StmtAssignNode(identifier, TermNode(listOf(identifier, parseExpr()), listOf("+")))
+                    "-=" -> StmtAssignNode(identifier, TermNode(listOf(identifier, parseExpr()), listOf("-")))
+                    "*=" -> StmtAssignNode(
+                        identifier,
+                        FactorNode(listOf(identifier, parseExpr()), listOf("*"), FactorNode.FactorPrefix.NONE)
+                    )
+                    "/=" -> StmtAssignNode(
+                        identifier,
+                        FactorNode(listOf(identifier, parseExpr()), listOf("/"), FactorNode.FactorPrefix.NONE)
+                    )
+                    "%=" -> StmtAssignNode(
+                        identifier,
+                        FactorNode(listOf(identifier, parseExpr()), listOf("%"), FactorNode.FactorPrefix.NONE)
+                    )
+                    else -> throw IllegalStateException("Unexpected token $assignToken")
+                }
                 consume(TokenType.SEMICOLON)
-                return StmtAssignNode(identifier, expr)
+                return stmt
             }
             TokenType.ACTION -> {
                 val action = consume(TokenType.ACTION)
@@ -782,22 +800,34 @@ class Parser(private val tokens: List<Token>, private val symbolTable: SymbolTab
     }
 }
 
-class Interpreter {
-    interface ActionContext {
-        fun say(text: String)
+interface ExecutionContext {
+    val table: SymbolTable
+    fun say(text: String)
+}
+
+class ConsoleContext(st: SymbolTable? = null) : ExecutionContext {
+    override val table: SymbolTable
+
+    init {
+        this.table = st ?: SymbolTable()
     }
-    class ConsoleContext: ActionContext {
-        override fun say(text: String) {
-            println(text)
-        }
+
+    override fun say(text: String) {
+        println(text)
     }
-    companion object {
-        fun interpret(source: String, symbolTable: SymbolTable, actionContext: ActionContext) {
-            val tokens = Tokenizer(source).scan()
-            val parser = Parser(tokens, symbolTable)
-            val ast = parser.parse()
-            ast.exec(actionContext)
-        }
+}
+
+class Interpreter(source: String) {
+    private val ast: Node
+
+    init {
+        val tokens = Tokenizer(source).scan()
+        val parser = Parser(tokens)
+        ast = parser.parse()
+    }
+
+    fun run(context: ExecutionContext) {
+        ast.exec(context)
     }
 }
 
@@ -810,13 +840,16 @@ fun main() {
     }
     val input = inputs.joinToString("\n")
     println(input)
-    println("\nTokenizing...")
-    val tokens = Tokenizer(input).scan()
-    println(tokens.joinToString(", "))
-    println("\nParsing...")
-    val ast = Parser(tokens, SymbolTable(mapOf("text" to StringValue("this is a brand new world the world of parsing")))).parse()
-    println(ast)
-    println("\nExecuting...")
-    ast.exec(Interpreter.ConsoleContext())
+    val context = ConsoleContext(SymbolTable(mapOf("text" to StringValue("this is a brand new world the world of parsing"))))
+//    println("\nTokenizing...")
+//    val tokens = Tokenizer(input).scan()
+//    println(tokens.joinToString(", "))
+//    println("\nParsing...")
+//    val ast = Parser(tokens).parse()
+//    println(ast)
+//    println("\nExecuting...")
+//    ast.exec(context)
+    val interpreter = Interpreter(input)
+    interpreter.run(context)
     println("\nDone!")
 }
