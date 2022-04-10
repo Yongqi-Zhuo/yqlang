@@ -1,9 +1,10 @@
 enum class TokenType {
-    BRACE_OPEN, BRACE_CLOSE, PAREN_OPEN, PAREN_CLOSE, BRACKET_OPEN, BRACKET_CLOSE, SEMICOLON,
-    ASSIGN, DOT, COMMA,
-    ADD_OP, // PLUS, MINUS,
+    BRACE_OPEN, BRACE_CLOSE, PAREN_OPEN, PAREN_CLOSE, BRACKET_OPEN, BRACKET_CLOSE, SEMICOLON, COLON,
+    ASSIGN, DOT, COMMA, INIT,
     MULT_OP, // MULTIPLY, DIVIDE, MODULO
-    LOGIC_OP, //AND, OR, EQUAL, NOT_EQUAL, GREATER, LESS, GREATER_EQUAL, LESS_EQUAL
+    ADD_OP, // PLUS, MINUS,
+    COMP_OP, // EQUAL, NOT_EQUAL, GREATER, LESS, GREATER_EQUAL, LESS_EQUAL
+    LOGIC_OP, //AND, OR
     NOT,
     IF, ELSE, ACTION,
     IDENTIFIER, BUILTIN,
@@ -55,6 +56,7 @@ class Tokenizer(private val input: String) {
                 currentChar == '[' -> pushAndAdvance(Token(TokenType.BRACKET_OPEN, "["))
                 currentChar == ']' -> pushAndAdvance(Token(TokenType.BRACKET_CLOSE, "]"))
                 currentChar == ';' -> pushAndAdvance(Token(TokenType.SEMICOLON, ";"))
+                currentChar == ':' -> pushAndAdvance(Token(TokenType.COLON, ":"))
                 currentChar == '.' -> pushAndAdvance(Token(TokenType.DOT, "."))
                 currentChar == ',' -> pushAndAdvance(Token(TokenType.COMMA, ","))
                 currentChar == '+' -> handleTwoCharOp(TokenType.ASSIGN, "+=", TokenType.ADD_OP)
@@ -64,10 +66,10 @@ class Tokenizer(private val input: String) {
                 currentChar == '%' -> handleTwoCharOp(TokenType.ASSIGN, "%=", TokenType.MULT_OP)
                 currentChar == '&' -> handleTwoCharOp(TokenType.LOGIC_OP, "&&")
                 currentChar == '|' -> handleTwoCharOp(TokenType.LOGIC_OP, "||")
-                currentChar == '=' -> handleTwoCharOp(TokenType.LOGIC_OP, "==", TokenType.ASSIGN)
-                currentChar == '!' -> handleTwoCharOp(TokenType.LOGIC_OP, "!=", TokenType.NOT)
-                currentChar == '>' -> handleTwoCharOp(TokenType.LOGIC_OP, ">=", TokenType.LOGIC_OP)
-                currentChar == '<' -> handleTwoCharOp(TokenType.LOGIC_OP, "<=", TokenType.LOGIC_OP)
+                currentChar == '=' -> handleTwoCharOp(TokenType.COMP_OP, "==", TokenType.ASSIGN)
+                currentChar == '!' -> handleTwoCharOp(TokenType.COMP_OP, "!=", TokenType.NOT)
+                currentChar == '>' -> handleTwoCharOp(TokenType.COMP_OP, ">=", TokenType.COMP_OP)
+                currentChar == '<' -> handleTwoCharOp(TokenType.COMP_OP, "<=", TokenType.COMP_OP)
                 currentChar == '"' -> {
                     var str = ""
                     var escape = false
@@ -111,6 +113,7 @@ class Tokenizer(private val input: String) {
                     when (val value = input.substring(start, index)) {
                         "if" -> tokens.add(Token(TokenType.IF, "if"))
                         "else" -> tokens.add(Token(TokenType.ELSE, "else"))
+                        "init" -> tokens.add(Token(TokenType.INIT, "init"))
                         "say" -> tokens.add(Token(TokenType.ACTION, "say"))
                         "split" -> tokens.add(Token(TokenType.BUILTIN, "split"))
                         "join" -> tokens.add(Token(TokenType.BUILTIN, "join"))
@@ -120,7 +123,7 @@ class Tokenizer(private val input: String) {
                         "contains" -> tokens.add(Token(TokenType.BUILTIN, "contains"))
                         "length" -> tokens.add(Token(TokenType.BUILTIN, "length"))
                         "defined" -> tokens.add(Token(TokenType.BUILTIN, "defined"))
-                        "text" -> tokens.add(Token(TokenType.IDENTIFIER, "text")) // events are special identifiers
+                        // "text" -> tokens.add(Token(TokenType.IDENTIFIER, "text")) // events are special identifiers
                         else -> tokens.add(Token(TokenType.IDENTIFIER, value))
                     }
                 }
@@ -311,23 +314,40 @@ class UnitCallNode(private val expr: Node, func: Token, private val args: ParamL
     }
 }
 
-class UnitSubscriptNode(private val unit: Node, private val subscript: ExprNode) : Node {
+class SubscriptNode(val begin: ExprNode, val extended: Boolean, val end: ExprNode? = null) : Node {
+    override fun exec(context: ExecutionContext): NodeValue {
+        return begin.exec(context)
+    }
+
+    override fun toString(): String {
+        return if (end != null) "subscript($begin, $end)" else "subscript($begin)"
+    }
+}
+
+class UnitSubscriptNode(private val unit: Node, private val subscript: SubscriptNode) : Node {
     override fun exec(context: ExecutionContext): NodeValue {
         val value = unit.exec(context)
-        val index = (subscript.exec(context) as NumberValue).value
-        return when (value) {
-            is ListValue -> {
-                val list = value.value
-                if (index < 0 || index >= list.size) {
-                    throw IllegalArgumentException("Index out of bounds: $index")
-                }
-                StringValue(list[index])
+        val size = when(value) {
+            is StringValue -> value.value.length
+            is ListValue -> value.value.size
+            else -> throw IllegalArgumentException("Expected StringValue or ListValue, got ${value.javaClass.simpleName}")
+        }
+        var begin = (subscript.begin.exec(context) as NumberValue).value
+        begin = if (begin < 0) size + begin else begin
+        return if (subscript.extended) {
+            var end = if(subscript.end == null) size else (subscript.end.exec(context) as NumberValue).value
+            end = if (end < 0) size + end else end
+            when (value) {
+                is StringValue -> StringValue(value.value.slice(begin until end))
+                is ListValue -> ListValue(value.value.slice(begin until end))
+                else -> throw IllegalArgumentException("Expected StringValue or ListValue, got ${value.javaClass.simpleName}")
             }
-            is StringValue -> {
-                val str = value.value
-                StringValue(str[index].toString())
+        } else {
+            when (value) {
+                is StringValue -> StringValue(value.value[begin].toString())
+                is ListValue -> StringValue(value.value[begin])
+                else -> throw IllegalArgumentException("Expected StringValue or ListValue, got ${value.javaClass.simpleName}")
             }
-            else -> throw IllegalArgumentException("Expected list or string, got ${value.javaClass}")
         }
     }
 
@@ -453,7 +473,7 @@ class TermNode(private val factors: List<Node>, private val ops: List<String>) :
     }
 }
 
-class ExprNode(private val terms: List<Node>, private val ops: List<String>) : Node {
+class CompNode(private val terms: List<Node>, private val ops: List<String>) : Node {
     override fun exec(context: ExecutionContext): NodeValue {
         val values = terms.toMutableList()
         val ops = ops.toMutableList()
@@ -485,8 +505,6 @@ class ExprNode(private val terms: List<Node>, private val ops: List<String>) : N
                         NumberValue(1)
                     }
                 }
-                "&&" -> res = NumberValue(if (res.toBoolean() && next.toBoolean()) 1 else 0)
-                "||" -> res = NumberValue(if (res.toBoolean() || next.toBoolean()) 1 else 0)
                 ">" -> res = if (res is NumberValue && next is NumberValue) {
                     NumberValue(if (res.value > next.value) 1 else 0)
                 } else {
@@ -517,6 +535,36 @@ class ExprNode(private val terms: List<Node>, private val ops: List<String>) : N
         var str = ""
         for (i in terms.indices) {
             str += terms[i].toString()
+            if (i < ops.size) {
+                str += ops[i]
+            }
+        }
+        return "comp($str)"
+    }
+}
+
+class ExprNode(private val comps: List<Node>, private val ops: List<String>) : Node {
+    override fun exec(context: ExecutionContext): NodeValue {
+        val values = comps.toMutableList()
+        val ops = ops.toMutableList()
+        var res = values.removeAt(0).exec(context)
+        while (values.size > 0) {
+            if (res is NullValue) res = NumberValue(0)
+            var next = values.removeAt(0).exec(context)
+            next = if (next is NullValue) NumberValue(0) else next
+            res = when (val op = ops.removeAt(0)) {
+                "&&" -> NumberValue(if (res.toBoolean() && next.toBoolean()) 1 else 0)
+                "||" -> NumberValue(if (res.toBoolean() || next.toBoolean()) 1 else 0)
+                else -> throw IllegalArgumentException("Invalid operation: $res $op $next")
+            }
+        }
+        return res
+    }
+
+    override fun toString(): String {
+        var str = ""
+        for (i in comps.indices) {
+            str += comps[i].toString()
             if (i < ops.size) {
                 str += ops[i]
             }
@@ -559,8 +607,8 @@ class StmtActionNode(private val action: Token, private val expr: ExprNode) : No
 
 class StmtIfNode(
     private val condition: Node,
-    private val ifBody: StmtListNode,
-    private val elseBody: StmtListNode? = null
+    private val ifBody: Node,
+    private val elseBody: Node? = null
 ) : Node {
     override fun exec(context: ExecutionContext): NodeValue {
         if (condition.exec(context).toBoolean()) {
@@ -574,6 +622,19 @@ class StmtIfNode(
     override fun toString(): String {
         val elseText = if (elseBody == null) "" else ", else($elseBody)"
         return "if($condition, body($ifBody)$elseText)"
+    }
+}
+
+class StmtInitNode(private val stmt: Node) : Node {
+    override fun exec(context: ExecutionContext): NodeValue {
+        if (context.firstRun) {
+            stmt.exec(context)
+        }
+        return NullValue()
+    }
+
+    override fun toString(): String {
+        return "init($stmt)"
     }
 }
 
@@ -621,81 +682,110 @@ class Parser(private val tokens: List<Token>) {
 
     private fun parseStmt(): Node {
         val token = peek()
-        when (token.type) {
+        return when (token.type) {
             TokenType.IDENTIFIER -> {
-                val identifier = parseIdentifier()
-                val assignToken = consume(TokenType.ASSIGN)
-                val stmt = when (assignToken.value) {
-                    "=" -> StmtAssignNode(identifier, parseExpr())
-                    "+=" -> StmtAssignNode(identifier, TermNode(listOf(identifier, parseExpr()), listOf("+")))
-                    "-=" -> StmtAssignNode(identifier, TermNode(listOf(identifier, parseExpr()), listOf("-")))
-                    "*=" -> StmtAssignNode(
-                        identifier,
-                        FactorNode(listOf(identifier, parseExpr()), listOf("*"), FactorNode.FactorPrefix.NONE)
-                    )
-                    "/=" -> StmtAssignNode(
-                        identifier,
-                        FactorNode(listOf(identifier, parseExpr()), listOf("/"), FactorNode.FactorPrefix.NONE)
-                    )
-                    "%=" -> StmtAssignNode(
-                        identifier,
-                        FactorNode(listOf(identifier, parseExpr()), listOf("%"), FactorNode.FactorPrefix.NONE)
-                    )
-                    else -> throw IllegalStateException("Unexpected token $assignToken")
-                }
-                consume(TokenType.SEMICOLON)
-                return stmt
+                parseStmtAssign()
             }
             TokenType.ACTION -> {
-                val action = consume(TokenType.ACTION)
-                val expr = parseExpr()
-                consume(TokenType.SEMICOLON)
-                return StmtActionNode(action, expr)
+                parseStmtAction()
             }
             TokenType.IF -> {
-                consume(TokenType.IF)
-                consume(TokenType.PAREN_OPEN)
-                val condition = parseExpr()
-                consume(TokenType.PAREN_CLOSE)
-                val ifBody = parseIfBody()
-                if (peek().type == TokenType.ELSE) {
-                    consume(TokenType.ELSE)
-                    val elseBody = parseIfBody()
-                    return StmtIfNode(condition, ifBody, elseBody)
-                }
-                return StmtIfNode(condition, ifBody)
+                parseStmtIf()
+            }
+            TokenType.INIT -> {
+                consume(TokenType.INIT)
+                StmtInitNode(parseStmt())
+            }
+            TokenType.BRACE_OPEN -> {
+                consume(TokenType.BRACE_OPEN)
+                val stmtList = parseStmtList()
+                consume(TokenType.BRACE_CLOSE)
+                stmtList
             }
             else -> throw IllegalStateException("Unexpected token ${token.value}")
         }
     }
 
-    private fun parseIfBody(): StmtListNode {
-        val token = peek()
-        return when (token.type) {
-            TokenType.BRACE_OPEN -> {
-                consume(TokenType.BRACE_OPEN)
-                val stmts = parseStmtList()
-                consume(TokenType.BRACE_CLOSE)
-                stmts
-            }
-            else -> {
-                val stmt = parseStmt()
-                StmtListNode(listOf(stmt))
-            }
+    private fun parseStmtAssign(): Node {
+        val identifier = parseIdentifier()
+        val assignToken = consume(TokenType.ASSIGN)
+        val stmt = when (assignToken.value) {
+            "=" -> StmtAssignNode(identifier, parseExpr())
+            "+=" -> StmtAssignNode(identifier, TermNode(listOf(identifier, parseExpr()), listOf("+")))
+            "-=" -> StmtAssignNode(identifier, TermNode(listOf(identifier, parseExpr()), listOf("-")))
+            "*=" -> StmtAssignNode(
+                identifier,
+                FactorNode(listOf(identifier, parseExpr()), listOf("*"), FactorNode.FactorPrefix.NONE)
+            )
+            "/=" -> StmtAssignNode(
+                identifier,
+                FactorNode(listOf(identifier, parseExpr()), listOf("/"), FactorNode.FactorPrefix.NONE)
+            )
+            "%=" -> StmtAssignNode(
+                identifier,
+                FactorNode(listOf(identifier, parseExpr()), listOf("%"), FactorNode.FactorPrefix.NONE)
+            )
+            else -> throw IllegalStateException("Unexpected token $assignToken")
         }
+        if (peek().type == TokenType.SEMICOLON) {
+            consume(TokenType.SEMICOLON)
+        }
+        return stmt
+    }
+
+    private fun parseStmtAction(): Node {
+        val action = consume(TokenType.ACTION)
+        val expr = parseExpr()
+        if (peek().type == TokenType.SEMICOLON) {
+            consume(TokenType.SEMICOLON)
+        }
+        return StmtActionNode(action, expr)
+    }
+
+    private fun parseStmtIf(): Node {
+        consume(TokenType.IF)
+        if (peek().type == TokenType.PAREN_OPEN) {
+            consume(TokenType.PAREN_OPEN)
+        }
+        val condition = parseExpr()
+        if (peek().type == TokenType.PAREN_CLOSE) {
+            consume(TokenType.PAREN_CLOSE)
+        }
+        val ifBody = parseStmt()
+        if (peek().type == TokenType.ELSE) {
+            consume(TokenType.ELSE)
+            val elseBody = parseStmt()
+            return StmtIfNode(condition, ifBody, elseBody)
+        }
+        return StmtIfNode(condition, ifBody)
     }
 
     private fun parseExpr(): ExprNode {
-        val terms = mutableListOf(parseTerm())
+        val comps = mutableListOf(parseComp())
         val ops = mutableListOf<String>()
         while (true) {
             val token = peek()
             when (token.type) {
                 TokenType.LOGIC_OP -> {
                     ops.add(consume(TokenType.LOGIC_OP).value)
+                    comps.add(parseComp())
+                }
+                else -> return ExprNode(comps, ops)
+            }
+        }
+    }
+
+    private fun parseComp(): CompNode {
+        val terms = mutableListOf(parseTerm())
+        val ops = mutableListOf<String>()
+        while (true) {
+            val token = peek()
+            when (token.type) {
+                TokenType.COMP_OP -> {
+                    ops.add(consume(TokenType.COMP_OP).value)
                     terms.add(parseTerm())
                 }
-                else -> return ExprNode(terms, ops)
+                else -> return CompNode(terms, ops)
             }
         }
     }
@@ -779,7 +869,17 @@ class Parser(private val tokens: List<Token>) {
             }
             TokenType.BRACKET_OPEN -> {
                 consume(TokenType.BRACKET_OPEN)
-                val subscript = parseExpr()
+                val begin = parseExpr()
+                val subscript = if (peek().type == TokenType.COLON) {
+                    consume(TokenType.COLON)
+                    if (peek().type == TokenType.BRACKET_CLOSE) {
+                        SubscriptNode(begin, true, null)
+                    } else {
+                        SubscriptNode(begin, true, parseExpr())
+                    }
+                } else {
+                    SubscriptNode(begin, false)
+                }
                 consume(TokenType.BRACKET_CLOSE)
                 UnitSubscriptNode(unitHead, subscript)
             }
@@ -802,11 +902,13 @@ class Parser(private val tokens: List<Token>) {
 
 interface ExecutionContext {
     val table: SymbolTable
+    val firstRun: Boolean
     fun say(text: String)
 }
 
 class ConsoleContext(st: SymbolTable? = null) : ExecutionContext {
     override val table: SymbolTable
+    override val firstRun: Boolean = true
 
     init {
         this.table = st ?: SymbolTable()
@@ -840,7 +942,8 @@ fun main() {
     }
     val input = inputs.joinToString("\n")
     println(input)
-    val context = ConsoleContext(SymbolTable(mapOf("text" to StringValue("this is a brand new world the world of parsing"))))
+    val context =
+        ConsoleContext(SymbolTable(mapOf("text" to StringValue("this is a brand new world the world of parsing"))))
 //    println("\nTokenizing...")
 //    val tokens = Tokenizer(input).scan()
 //    println(tokens.joinToString(", "))
