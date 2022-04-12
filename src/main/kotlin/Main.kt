@@ -1,4 +1,5 @@
 import java.util.regex.Pattern
+import kotlin.math.min
 
 enum class TokenType {
     BRACE_OPEN, BRACE_CLOSE, PAREN_OPEN, PAREN_CLOSE, BRACKET_OPEN, BRACKET_CLOSE, SEMICOLON, COLON,
@@ -134,7 +135,7 @@ class Tokenizer(private val input: String) {
                     val value = input.substring(start, index)
                     tokens.add(Token(TokenType.NUMBER, value))
                 }
-                currentChar.isLetter() -> {
+                currentChar.isLetter() || currentChar == '_' -> {
                     val start = index
                     do {
                         advance()
@@ -380,11 +381,13 @@ class SymbolTable(definedSymbols: Map<String, NodeValue>? = null) {
     }
 }
 
-interface Node {
-    fun exec(context: ExecutionContext): NodeValue
+abstract class Node {
+    abstract fun exec(context: ExecutionContext): NodeValue
+    open fun assign(context: ExecutionContext, value: NodeValue): Unit =
+        throw IllegalArgumentException("Not assignable: ${this.javaClass.simpleName}")
 }
 
-class IdentifierNode(token: Token) : Node {
+class IdentifierNode(token: Token) : Node() {
     val name: String
 
     init {
@@ -398,13 +401,17 @@ class IdentifierNode(token: Token) : Node {
         return context.table.get(name) ?: NullValue()
     }
 
+    override fun assign(context: ExecutionContext, value: NodeValue) {
+        context.table.set(name, value)
+    }
+
     override fun toString(): String {
         return "id($name)"
     }
 
 }
 
-class NumberNode(token: Token) : Node {
+class NumberNode(token: Token) : Node() {
     private val value: Int
 
     init {
@@ -423,7 +430,7 @@ class NumberNode(token: Token) : Node {
     }
 }
 
-class StringNode(token: Token) : Node {
+class StringNode(token: Token) : Node() {
     private val value: String
 
     init {
@@ -442,9 +449,30 @@ class StringNode(token: Token) : Node {
     }
 }
 
-class ParamListNode(private val params: List<ExprNode>) : Node {
+class ParamListNode(private val params: List<ExprNode>) : Node() {
     override fun exec(context: ExecutionContext): ListValue {
         return params.map { it.exec(context) }.toNodeValue()
+    }
+
+    fun subList(context: ExecutionContext, subscript: SubscriptNode): Node {
+        return if (subscript.extended) {
+            val begin = subscript.begin.exec(context).asNumber()!!
+            val end = subscript.end?.exec(context)?.asNumber()
+            ParamListNode(params.sliceSafe(begin, end))
+        } else {
+            val index = subscript.begin.exec(context).asNumber()!!
+            params.subscriptSafe(index)!!
+        }
+    }
+
+    override fun assign(context: ExecutionContext, value: NodeValue) {
+        val list = value.asList()
+        if (list != null) {
+            val cnt = min(params.size, list.size)
+            for (i in 0 until cnt) {
+                params[i].assign(context, list[i])
+            }
+        }
     }
 
     override fun toString(): String {
@@ -452,7 +480,7 @@ class ParamListNode(private val params: List<ExprNode>) : Node {
     }
 }
 
-class UnitCallNode(private val expr: Node, func: Token, private val args: ParamListNode) : Node {
+class UnitCallNode(private val expr: Node, func: Token, private val args: ParamListNode) : Node() {
     private val func: String
 
     init {
@@ -524,7 +552,7 @@ class UnitCallNode(private val expr: Node, func: Token, private val args: ParamL
     }
 }
 
-class SubscriptNode(val begin: ExprNode, val extended: Boolean, val end: ExprNode? = null) : Node {
+class SubscriptNode(val begin: ExprNode, val extended: Boolean, val end: ExprNode? = null) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
         return begin.exec(context)
     }
@@ -534,7 +562,7 @@ class SubscriptNode(val begin: ExprNode, val extended: Boolean, val end: ExprNod
     }
 }
 
-class UnitSubscriptNode(private val expr: Node, private val subscript: SubscriptNode) : Node {
+class UnitSubscriptNode(private val expr: Node, private val subscript: SubscriptNode) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
         val expr = expr.exec(context)
         return if (subscript.extended) {
@@ -544,13 +572,21 @@ class UnitSubscriptNode(private val expr: Node, private val subscript: Subscript
         }
     }
 
+    override fun assign(context: ExecutionContext, value: NodeValue) {
+        if (expr is ParamListNode) {
+            expr.subList(context, subscript).assign(context, value)
+        } else {
+            expr.assign(context, value)
+        }
+    }
+
     override fun toString(): String {
         return "subscript($expr, $subscript)"
     }
 }
 
 class FactorNode(private val units: List<Node>, private val ops: List<String>, private val prefix: FactorPrefix) :
-    Node {
+    Node() {
     enum class FactorPrefix {
         NONE,
         NOT,
@@ -585,6 +621,14 @@ class FactorNode(private val units: List<Node>, private val ops: List<String>, p
         return res
     }
 
+    override fun assign(context: ExecutionContext, value: NodeValue) {
+        if (prefix == FactorPrefix.NONE && units.size == 1) {
+            units[0].assign(context, value)
+        } else {
+            throw IllegalArgumentException("Invalid assignment: $this = $value")
+        }
+    }
+
     override fun toString(): String {
         var str = when (prefix) {
             FactorPrefix.NONE -> ""
@@ -601,7 +645,7 @@ class FactorNode(private val units: List<Node>, private val ops: List<String>, p
     }
 }
 
-class TermNode(private val factors: List<Node>, private val ops: List<String>) : Node {
+class TermNode(private val factors: List<Node>, private val ops: List<String>) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
         val values = factors.toMutableList()
         val ops = ops.toMutableList()
@@ -618,6 +662,14 @@ class TermNode(private val factors: List<Node>, private val ops: List<String>) :
         return res
     }
 
+    override fun assign(context: ExecutionContext, value: NodeValue) {
+        if (factors.size == 1) {
+            factors[0].assign(context, value)
+        } else {
+            throw IllegalArgumentException("Invalid assignment: $this = $value")
+        }
+    }
+
     override fun toString(): String {
         var str = ""
         for (i in factors.indices) {
@@ -630,7 +682,7 @@ class TermNode(private val factors: List<Node>, private val ops: List<String>) :
     }
 }
 
-class CompNode(private val terms: List<Node>, private val ops: List<String>) : Node {
+class CompNode(private val terms: List<Node>, private val ops: List<String>) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
         val values = terms.toMutableList()
         val ops = ops.toMutableList()
@@ -650,6 +702,14 @@ class CompNode(private val terms: List<Node>, private val ops: List<String>) : N
         return res
     }
 
+    override fun assign(context: ExecutionContext, value: NodeValue) {
+        if (terms.size == 1) {
+            terms[0].assign(context, value)
+        } else {
+            throw IllegalArgumentException("Invalid assignment: $this = $value")
+        }
+    }
+
     override fun toString(): String {
         var str = ""
         for (i in terms.indices) {
@@ -662,7 +722,7 @@ class CompNode(private val terms: List<Node>, private val ops: List<String>) : N
     }
 }
 
-class ExprNode(private val comps: List<Node>, private val ops: List<String>) : Node {
+class ExprNode(private val comps: List<Node>, private val ops: List<String>) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
         if (comps.size == 1) {
             return comps[0].exec(context)
@@ -681,6 +741,14 @@ class ExprNode(private val comps: List<Node>, private val ops: List<String>) : N
         return res.toNodeValue()
     }
 
+    override fun assign(context: ExecutionContext, value: NodeValue) {
+        if (comps.size == 1) {
+            comps[0].assign(context, value)
+        } else {
+            throw IllegalArgumentException("Invalid assignment: $this = $value")
+        }
+    }
+
     override fun toString(): String {
         var str = ""
         for (i in comps.indices) {
@@ -693,19 +761,19 @@ class ExprNode(private val comps: List<Node>, private val ops: List<String>) : N
     }
 }
 
-class StmtAssignNode(private val identifier: IdentifierNode, private val expr: Node) : Node {
+class StmtAssignNode(private val lvalue: Node, private val expr: Node) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
         val value = expr.exec(context)
-        context.table.set(identifier.name, value)
+        lvalue.assign(context, value)
         return NullValue()
     }
 
     override fun toString(): String {
-        return "assign($identifier, $expr)"
+        return "assign($lvalue, $expr)"
     }
 }
 
-class StmtActionNode(private val action: Token, private val expr: ExprNode) : Node {
+class StmtActionNode(private val action: Token, private val expr: ExprNode) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
         if (action.type != TokenType.ACTION) {
             throw IllegalArgumentException("Expected ACTION, got ${action.type}")
@@ -729,7 +797,7 @@ class StmtIfNode(
     private val condition: Node,
     private val ifBody: Node,
     private val elseBody: Node? = null
-) : Node {
+) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
         if (condition.exec(context).toBoolean()) {
             ifBody.exec(context)
@@ -745,7 +813,7 @@ class StmtIfNode(
     }
 }
 
-class StmtInitNode(private val stmt: Node) : Node {
+class StmtInitNode(private val stmt: Node) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
         if (context.firstRun) {
             stmt.exec(context)
@@ -758,7 +826,7 @@ class StmtInitNode(private val stmt: Node) : Node {
     }
 }
 
-class StmtListNode(private val stmts: List<Node>) : Node {
+class StmtListNode(private val stmts: List<Node>) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
         for (node in stmts) {
             node.exec(context)
@@ -806,6 +874,9 @@ class Parser(private val tokens: List<Token>) {
             TokenType.IDENTIFIER -> {
                 parseStmtAssign()
             }
+            TokenType.BRACKET_OPEN -> {
+                parseStmtAssign()
+            }
             TokenType.ACTION -> {
                 parseStmtAction()
             }
@@ -827,23 +898,23 @@ class Parser(private val tokens: List<Token>) {
     }
 
     private fun parseStmtAssign(): Node {
-        val identifier = parseIdentifier()
+        val lvalue = parseExpr()
         val assignToken = consume(TokenType.ASSIGN)
         val stmt = when (assignToken.value) {
-            "=" -> StmtAssignNode(identifier, parseExpr())
-            "+=" -> StmtAssignNode(identifier, TermNode(listOf(identifier, parseExpr()), listOf("+")))
-            "-=" -> StmtAssignNode(identifier, TermNode(listOf(identifier, parseExpr()), listOf("-")))
+            "=" -> StmtAssignNode(lvalue, parseExpr())
+            "+=" -> StmtAssignNode(lvalue, TermNode(listOf(lvalue, parseExpr()), listOf("+")))
+            "-=" -> StmtAssignNode(lvalue, TermNode(listOf(lvalue, parseExpr()), listOf("-")))
             "*=" -> StmtAssignNode(
-                identifier,
-                FactorNode(listOf(identifier, parseExpr()), listOf("*"), FactorNode.FactorPrefix.NONE)
+                lvalue,
+                FactorNode(listOf(lvalue, parseExpr()), listOf("*"), FactorNode.FactorPrefix.NONE)
             )
             "/=" -> StmtAssignNode(
-                identifier,
-                FactorNode(listOf(identifier, parseExpr()), listOf("/"), FactorNode.FactorPrefix.NONE)
+                lvalue,
+                FactorNode(listOf(lvalue, parseExpr()), listOf("/"), FactorNode.FactorPrefix.NONE)
             )
             "%=" -> StmtAssignNode(
-                identifier,
-                FactorNode(listOf(identifier, parseExpr()), listOf("%"), FactorNode.FactorPrefix.NONE)
+                lvalue,
+                FactorNode(listOf(lvalue, parseExpr()), listOf("%"), FactorNode.FactorPrefix.NONE)
             )
             else -> throw IllegalStateException("Unexpected token $assignToken")
         }
