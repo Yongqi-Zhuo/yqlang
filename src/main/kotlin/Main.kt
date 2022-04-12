@@ -1,3 +1,5 @@
+import java.util.regex.Pattern
+
 enum class TokenType {
     BRACE_OPEN, BRACE_CLOSE, PAREN_OPEN, PAREN_CLOSE, BRACKET_OPEN, BRACKET_CLOSE, SEMICOLON, COLON,
     ASSIGN, DOT, COMMA, INIT,
@@ -10,6 +12,35 @@ enum class TokenType {
     IDENTIFIER, BUILTIN,
     NUMBER, STRING,
     EOF
+}
+
+fun <E> List<E>.subscriptSafe(index: Int): E? {
+    val i = if (index < 0) size + index else index
+    if(i < 0 || i >= size) return null
+    return this[i]
+}
+
+fun <E> List<E>.sliceSafe(start: Int, end: Int): List<E> {
+    val b = if (start < 0) size + start else start
+    var e = if (end < 0) size + end else end
+    if (b >= e) return emptyList()
+    e = if (e > size) size else e
+    return this.subList(b, e).toList()
+}
+
+fun String.subscriptSafe(index: Int): Char? {
+    val i = if (index < 0) length + index else index
+    if (i < 0 || i >= length) return null
+    return this[i]
+}
+
+fun String.sliceSafe(start: Int, end: Int): String {
+    val size = this.length
+    val b = if (start < 0) size + start else start
+    var e = if (end < 0) size + end else end
+    if (b >= e) return ""
+    e = if (e > size) size else e
+    return this.substring(b, e)
 }
 
 data class Token(val type: TokenType, val value: String) {
@@ -123,6 +154,8 @@ class Tokenizer(private val input: String) {
                         "contains" -> tokens.add(Token(TokenType.BUILTIN, "contains"))
                         "length" -> tokens.add(Token(TokenType.BUILTIN, "length"))
                         "defined" -> tokens.add(Token(TokenType.BUILTIN, "defined"))
+                        "time" -> tokens.add(Token(TokenType.BUILTIN, "time"))
+                        "random" -> tokens.add(Token(TokenType.BUILTIN, "random"))
                         // "text" -> tokens.add(Token(TokenType.IDENTIFIER, "text")) // events are special identifiers
                         else -> tokens.add(Token(TokenType.IDENTIFIER, value))
                     }
@@ -137,26 +170,35 @@ class Tokenizer(private val input: String) {
     }
 }
 
-interface NodeValue {
-    fun toBoolean(): Boolean
+abstract class NodeValue {
+    abstract fun toBoolean(): Boolean
+    fun asString() = (this as? StringValue)?.value
+    fun asNumber() = (this as? NumberValue)?.value
+    fun asList() = (this as? ListValue)?.value
 }
 
-class StringValue(val value: String) : NodeValue {
+class StringValue(val value: String) : NodeValue() {
     override fun toString() = value
     override fun toBoolean(): Boolean = value.isNotEmpty()
 }
+fun String.toNodeValue(): NodeValue = StringValue(this)
 
-class ListValue(val value: List<String>) : NodeValue {
+class ListValue(val value: List<String>) : NodeValue() {
     override fun toString() = "[${value.joinToString(", ")}]"
     override fun toBoolean(): Boolean = value.isNotEmpty()
 }
+fun List<String>.toNodeValue(): NodeValue = ListValue(this)
 
-class NumberValue(val value: Int) : NodeValue {
+class NumberValue(val value: Int) : NodeValue() {
     override fun toString() = value.toString()
     override fun toBoolean(): Boolean = value != 0
 }
+fun Int.toNodeValue(): NodeValue = NumberValue(this)
 
-class NullValue : NodeValue {
+// TODO: implement BooleanValue
+fun Boolean.toNodeValue(): NodeValue = NumberValue(if (this) 1 else 0)
+
+class NullValue : NodeValue() {
     override fun toString() = "null"
     override fun toBoolean(): Boolean = false
 }
@@ -216,7 +258,7 @@ class NumberNode(token: Token) : Node {
     }
 
     override fun exec(context: ExecutionContext): NodeValue {
-        return NumberValue(value)
+        return value.toNodeValue()
     }
 
     override fun toString(): String {
@@ -235,7 +277,7 @@ class StringNode(token: Token) : Node {
     }
 
     override fun exec(context: ExecutionContext): NodeValue {
-        return StringValue(value)
+        return value.toNodeValue()
     }
 
     override fun toString(): String {
@@ -263,47 +305,66 @@ class UnitCallNode(private val expr: Node, func: Token, private val args: ParamL
         this.func = func.value
     }
 
+    private val whiteSpace = Pattern.compile("\\s+")
+
     override fun exec(context: ExecutionContext): NodeValue {
+        val args = args.params.map { it.exec(context) }
         return when (func) {
             "split" -> {
-                ListValue((expr.exec(context) as StringValue).value.split((args.params[0].exec(context) as StringValue).value))
+                val str = expr.exec(context).asString()!!
+                if (args.isEmpty()) {
+                    whiteSpace.split(str).filter { it.isEmpty() }.toList().toNodeValue()
+                } else {
+                    str.split(args[0].asString()!!).toList().toNodeValue()
+                }
             }
             "join" -> {
-                StringValue((expr.exec(context) as ListValue).value.joinToString((args.params[0].exec(context) as StringValue).value))
+                val list = expr.exec(context).asList()!!
+                if (args.isEmpty()) {
+                    list.joinToString("").toNodeValue()
+                } else {
+                    list.joinToString(args[0].asString()!!).toNodeValue()
+                }
             }
             "slice" -> {
                 val col = expr.exec(context)
-                val start = args.params[0].exec(context) as NumberValue
-                val end = args.params[1].exec(context) as NumberValue
+                val start = args[0].asNumber()!!
+                val end = args[1].asNumber()!!
                 when (col) {
-                    is StringValue -> StringValue(col.value.slice(start.value until end.value))
-                    is ListValue -> ListValue(col.value.slice(start.value until end.value))
+                    is StringValue -> col.value.sliceSafe(start, end).toNodeValue()
+                    is ListValue -> col.value.sliceSafe(start, end).toNodeValue()
                     else -> throw IllegalArgumentException("Expected StringValue or ListValue, got ${col.javaClass.simpleName}")
                 }
             }
             "toList" -> {
                 when (val what = expr.exec(context)) {
-                    is StringValue -> ListValue(listOf(what.value))
-                    is NumberValue -> ListValue(listOf(what.value.toString()))
+                    is StringValue -> listOf(what.value).toNodeValue()
+                    is NumberValue -> listOf(what.value.toString()).toNodeValue()
                     else -> throw IllegalArgumentException("Expected StringValue or NumberValue, got ${what.javaClass.simpleName}")
                 }
             }
             "find" -> {
-                NumberValue((expr.exec(context) as StringValue).value.indexOf((args.params[0].exec(context) as StringValue).value))
+                expr.exec(context).asString()!!.indexOf(args[0].asString()!!).toNodeValue()
             }
             "contains" -> {
-                NumberValue(if ((expr.exec(context) as ListValue).value.contains((args.params[0].exec(context) as StringValue).value)) 1 else 0)
+                expr.exec(context).asString()!!.contains(args[0].asString()!!).toNodeValue()
             }
             "length" -> {
                 when (val what = expr.exec(context)) {
-                    is StringValue -> NumberValue(what.value.length)
-                    is ListValue -> NumberValue(what.value.size)
+                    is StringValue -> what.value.length.toNodeValue()
+                    is ListValue -> what.value.size.toNodeValue()
                     else -> throw IllegalArgumentException("Expected StringValue or ListValue, got ${what.javaClass.simpleName}")
                 }
             }
             "defined" -> {
                 val idName = (expr as IdentifierNode).name
-                NumberValue(if (context.table.get(idName) != null) 1 else 0)
+                (context.table.get(idName) != null).toNodeValue()
+            }
+            "time" -> {
+                System.currentTimeMillis().toInt().toNodeValue() // TODO: use real time
+            }
+            "random" -> {
+                (args[0].asNumber()!! until args[1].asNumber()!!).random().toNodeValue()
             }
             else -> throw IllegalArgumentException("Unknown builtin function $func")
         }
@@ -324,35 +385,33 @@ class SubscriptNode(val begin: ExprNode, val extended: Boolean, val end: ExprNod
     }
 }
 
-class UnitSubscriptNode(private val unit: Node, private val subscript: SubscriptNode) : Node {
+class UnitSubscriptNode(private val expr: Node, private val subscript: SubscriptNode) : Node {
     override fun exec(context: ExecutionContext): NodeValue {
-        val value = unit.exec(context)
-        val size = when(value) {
-            is StringValue -> value.value.length
-            is ListValue -> value.value.size
-            else -> throw IllegalArgumentException("Expected StringValue or ListValue, got ${value.javaClass.simpleName}")
+        val expr = expr.exec(context)
+        val size = when(expr) {
+            is StringValue -> expr.value.length
+            is ListValue -> expr.value.size
+            else -> throw IllegalArgumentException("Expected StringValue or ListValue, got ${expr.javaClass.simpleName}")
         }
-        var begin = (subscript.begin.exec(context) as NumberValue).value
-        begin = if (begin < 0) size + begin else begin
+        val begin = subscript.begin.exec(context).asNumber()!!
         return if (subscript.extended) {
-            var end = if(subscript.end == null) size else (subscript.end.exec(context) as NumberValue).value
-            end = if (end < 0) size + end else end
-            when (value) {
-                is StringValue -> StringValue(value.value.slice(begin until end))
-                is ListValue -> ListValue(value.value.slice(begin until end))
-                else -> throw IllegalArgumentException("Expected StringValue or ListValue, got ${value.javaClass.simpleName}")
+            val end = if(subscript.end == null) size else subscript.end.exec(context).asNumber()!!
+            when (expr) {
+                is StringValue -> expr.value.sliceSafe(begin, end).toNodeValue()
+                is ListValue -> expr.value.sliceSafe(begin, end).toNodeValue()
+                else -> throw IllegalArgumentException("Expected StringValue or ListValue, got ${expr.javaClass.simpleName}")
             }
         } else {
-            when (value) {
-                is StringValue -> StringValue(value.value[begin].toString())
-                is ListValue -> StringValue(value.value[begin])
-                else -> throw IllegalArgumentException("Expected StringValue or ListValue, got ${value.javaClass.simpleName}")
+            when (expr) {
+                is StringValue -> expr.value.subscriptSafe(begin)?.toString()?.toNodeValue() ?: NullValue()
+                is ListValue -> expr.value.subscriptSafe(begin)?.toNodeValue() ?: NullValue()
+                else -> throw IllegalArgumentException("Expected StringValue or ListValue, got ${expr.javaClass.simpleName}")
             }
         }
     }
 
     override fun toString(): String {
-        return "subscript($unit, $subscript)"
+        return "subscript($expr, $subscript)"
     }
 }
 
@@ -379,20 +438,22 @@ class FactorNode(private val units: List<Node>, private val ops: List<String>, p
                     else -> throw IllegalArgumentException("Unknown operator $op")
                 }
             } else if (res is StringValue && next is NumberValue && op == "*") {
-                StringValue(res.value.repeat(next.value))
+                res.value.repeat(next.value).toNodeValue()
             } else if (res is ListValue && next is NumberValue && op == "*") {
                 val sz = res.value.size
-                ListValue(List(next.value * sz) { index -> (res as ListValue).value[index % sz] })
+                val cnt = next.value
+                val list = res.asList()!!
+                List(cnt * sz) { index -> list[index % sz] }.toNodeValue()
             } else {
                 throw IllegalArgumentException("Invalid operation: $res $op $next")
             }
         }
         when (prefix) {
             FactorPrefix.NONE -> return res
-            FactorPrefix.NOT -> return NumberValue(if (res.toBoolean()) 0 else 1)
+            FactorPrefix.NOT -> return res.toBoolean().not().toNodeValue()
             FactorPrefix.NEGATIVE -> {
                 if (res is NumberValue) {
-                    res = NumberValue(-res.value)
+                    res = res.value.unaryMinus().toNodeValue()
                 } else {
                     throw IllegalArgumentException("Invalid operation: -$res")
                 }
@@ -402,7 +463,11 @@ class FactorNode(private val units: List<Node>, private val ops: List<String>, p
     }
 
     override fun toString(): String {
-        var str = ""
+        var str = when (prefix) {
+            FactorPrefix.NONE -> ""
+            FactorPrefix.NOT -> "!"
+            FactorPrefix.NEGATIVE -> "-"
+        }
         for (i in units.indices) {
             str += units[i].toString()
             if (i < ops.size) {
@@ -479,49 +544,49 @@ class CompNode(private val terms: List<Node>, private val ops: List<String>) : N
         val ops = ops.toMutableList()
         var res = values.removeAt(0).exec(context)
         while (values.size > 0) {
-            if (res is NullValue) res = NumberValue(0)
-            var next = values.removeAt(0).exec(context)
-            next = if (next is NullValue) NumberValue(0) else next
+            val next = values.removeAt(0).exec(context)
             when (val op = ops.removeAt(0)) {
                 "==" -> {
                     res = if (res is NumberValue && next is NumberValue) {
-                        NumberValue(if (res.value == next.value) 1 else 0)
+                        (res.value == next.value).toNodeValue()
                     } else if (res is StringValue && next is StringValue) {
-                        NumberValue(if (res.value == next.value) 1 else 0)
+                        (res.value == next.value).toNodeValue()
                     } else if (res is ListValue && next is ListValue) {
-                        NumberValue(if (res.value == next.value) 1 else 0)
+                        (res.value == next.value).toNodeValue()
+                    } else if (res is NullValue && next is NullValue) {
+                        true.toNodeValue()
                     } else {
                         throw IllegalArgumentException("Invalid operation: $res == $next")
                     }
                 }
                 "!=" -> {
                     res = if (res is NumberValue && next is NumberValue) {
-                        NumberValue(if (res.value != next.value) 1 else 0)
+                        (res.value != next.value).toNodeValue()
                     } else if (res is StringValue && next is StringValue) {
-                        NumberValue(if (res.value != next.value) 1 else 0)
+                        (res.value != next.value).toNodeValue()
                     } else if (res is ListValue && next is ListValue) {
-                        NumberValue(if (res.value != next.value) 1 else 0)
+                        (res.value != next.value).toNodeValue()
                     } else {
-                        NumberValue(1)
+                        true.toNodeValue()
                     }
                 }
                 ">" -> res = if (res is NumberValue && next is NumberValue) {
-                    NumberValue(if (res.value > next.value) 1 else 0)
+                    (res.value > next.value).toNodeValue()
                 } else {
                     throw IllegalArgumentException("Invalid operation: $res > $next")
                 }
                 "<" -> res = if (res is NumberValue && next is NumberValue) {
-                    NumberValue(if (res.value < next.value) 1 else 0)
+                    (res.value < next.value).toNodeValue()
                 } else {
                     throw IllegalArgumentException("Invalid operation: $res < $next")
                 }
                 ">=" -> res = if (res is NumberValue && next is NumberValue) {
-                    NumberValue(if (res.value >= next.value) 1 else 0)
+                    (res.value >= next.value).toNodeValue()
                 } else {
                     throw IllegalArgumentException("Invalid operation: $res >= $next")
                 }
                 "<=" -> res = if (res is NumberValue && next is NumberValue) {
-                    NumberValue(if (res.value <= next.value) 1 else 0)
+                    (res.value <= next.value).toNodeValue()
                 } else {
                     throw IllegalArgumentException("Invalid operation: $res <= $next")
                 }
@@ -547,18 +612,16 @@ class ExprNode(private val comps: List<Node>, private val ops: List<String>) : N
     override fun exec(context: ExecutionContext): NodeValue {
         val values = comps.toMutableList()
         val ops = ops.toMutableList()
-        var res = values.removeAt(0).exec(context)
+        var res = values.removeAt(0).exec(context).toBoolean()
         while (values.size > 0) {
-            if (res is NullValue) res = NumberValue(0)
-            var next = values.removeAt(0).exec(context)
-            next = if (next is NullValue) NumberValue(0) else next
+            val next = values.removeAt(0)
             res = when (val op = ops.removeAt(0)) {
-                "&&" -> NumberValue(if (res.toBoolean() && next.toBoolean()) 1 else 0)
-                "||" -> NumberValue(if (res.toBoolean() || next.toBoolean()) 1 else 0)
+                "&&" -> res && next.exec(context).toBoolean()
+                "||" -> res || next.exec(context).toBoolean()
                 else -> throw IllegalArgumentException("Invalid operation: $res $op $next")
             }
         }
-        return res
+        return res.toNodeValue()
     }
 
     override fun toString(): String {
