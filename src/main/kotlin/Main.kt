@@ -2,44 +2,80 @@ import java.util.regex.Pattern
 import kotlin.math.min
 
 enum class TokenType {
-    BRACE_OPEN, BRACE_CLOSE, PAREN_OPEN, PAREN_CLOSE, BRACKET_OPEN, BRACKET_CLOSE, SEMICOLON, COLON,
+    BRACE_OPEN, BRACE_CLOSE, PAREN_OPEN, PAREN_CLOSE, BRACKET_OPEN, BRACKET_CLOSE,
+    SEMICOLON, COLON,
     ASSIGN, DOT, COMMA, INIT,
     MULT_OP, // MULTIPLY, DIVIDE, MODULO
     ADD_OP, // PLUS, MINUS,
     COMP_OP, // EQUAL, NOT_EQUAL, GREATER, LESS, GREATER_EQUAL, LESS_EQUAL
     LOGIC_OP, //AND, OR
-    NOT,
-    IF, ELSE, ACTION,
-    IDENTIFIER, BUILTIN,
-    NUMBER, STRING,
-    EOF
+    NOT, IF, ELSE, ACTION, IDENTIFIER, BUILTIN, NUMBER, STRING, EOF
 }
 
-fun <E> List<E>.subscriptSafe(index: Long): E? {
+fun <E> Collection<E>.safeSubscript(index: Int): Int? {
     val i = if (index < 0) size + index else index
     if (i < 0 || i >= size) return null
-    return this[i.toInt()]
+    return i
 }
 
-fun <E> List<E>.sliceSafe(start: Long, end: Long?): List<E> {
-    val b = if (start < 0) size + start else start
-    val e = if (end == null) size.toLong() else if (end < 0) size + end else if (end > size) size.toLong() else end
-    if (b >= e || b < 0) return emptyList()
-    return this.subList(b.toInt(), e.toInt()).toList()
+fun <E> Collection<E>.safeSlice(begin: Int, end: Int?): IntRange? {
+    val b = if (begin < 0) size + begin else begin
+    val e = if (end == null) size else if (end < 0) size + end else if (end > size) size else end
+    if (b >= e || b < 0) return null
+    return b until e
 }
 
-fun String.subscriptSafe(index: Long): Char? {
+fun <E> List<E>.getSubscript(index: Long): E? = this.safeSubscript(index.toInt())?.let { this[it] }
+
+fun <E> List<E>.setSubscript(index: Long, value: E): List<E>? =
+    this.safeSubscript(index.toInt())?.let { this.toMutableList().apply { this[it] = value } }
+
+fun <E> List<E>.getSlice(start: Long, end: Long?): List<E> =
+    this.safeSlice(start.toInt(), end?.toInt())?.let { this.slice(it) } ?: emptyList()
+
+fun <E> List<E>.setSlice(start: Long, end: Long?, value: List<E>): List<E>? {
+    val s = this.safeSlice(start.toInt(), end?.toInt()) ?: return null
+    val tmp = this.toMutableList()
+    for (i in indices) {
+        val delta = i - s.first
+        if (i in s && delta < value.size) {
+            tmp[i] = value[delta]
+        }
+    }
+    return tmp
+}
+
+fun String.safeSubscript(index: Int): Int? {
     val i = if (index < 0) length + index else index
     if (i < 0 || i >= length) return null
-    return this[i.toInt()]
+    return i
 }
 
-fun String.sliceSafe(start: Long, end: Long?): String {
-    val size = this.length
-    val b = if (start < 0) size + start else start
-    val e = if (end == null) size.toLong() else if (end < 0) size + end else if (end > size) size.toLong() else end
-    if (b >= e || b < 0) return ""
-    return this.substring(b.toInt(), e.toInt())
+fun String.safeSlice(begin: Int, end: Int?): IntRange? {
+    val b = if (begin < 0) length + begin else begin
+    val e = if (end == null) length else if (end < 0) length + end else if (end > length) length else end
+    if (b >= e || b < 0) return null
+    return b until e
+}
+
+fun String.getSubscript(index: Long): Char? = this.safeSubscript(index.toInt())?.let { this[it] }
+
+fun String.getSlice(start: Long, end: Long?): String =
+    this.safeSlice(start.toInt(), end?.toInt())?.let { this.slice(it) } ?: ""
+
+fun String.setSubscript(index: Long, value: Char): String? =
+    this.safeSubscript(index.toInt())?.let { String(this.toCharArray().apply { this[it] = value }) }
+
+fun String.setSlice(start: Long, end: Long?, value: String): String? {
+    val s = this.safeSlice(start.toInt(), end?.toInt()) ?: return null
+    return String(CharArray(this.length) {
+        val delta = it - s.first
+        if (it in s && delta < value.length) {
+            value[delta]
+        } else {
+            this[it]
+        }
+    })
 }
 
 data class Token(val type: TokenType, val value: String) {
@@ -230,8 +266,7 @@ abstract class NodeValue {
         val other = if (that is BooleanValue) NumberValue(that.value.toLong()) else that
         if (expr is NumberValue || other is NumberValue) {
             val (num, otherExpr) = if (expr is NumberValue) Pair(expr.asNumber()!!, other) else Pair(
-                other.asNumber()!!,
-                expr
+                other.asNumber()!!, expr
             )
             return when (otherExpr) {
                 is NumberValue -> NumberValue(num * otherExpr.value)
@@ -309,8 +344,8 @@ abstract class NodeValue {
     operator fun get(id: NodeValue): NodeValue {
         val index = id.asNumber()!!
         return when (this) {
-            is StringValue -> this.value.subscriptSafe(index)?.toString()?.toNodeValue() ?: NullValue()
-            is ListValue -> this.value.subscriptSafe(index) ?: NullValue()
+            is StringValue -> this.value.getSubscript(index)?.toString()?.toNodeValue() ?: NullValue()
+            is ListValue -> this.value.getSubscript(index) ?: NullValue()
             else -> throw IllegalArgumentException("Expected StringValue or ListValue, got ${this.javaClass.simpleName}")
         }
     }
@@ -319,8 +354,8 @@ abstract class NodeValue {
         val begin = b.asNumber()!!
         val end = e?.asNumber()
         return when (this) {
-            is StringValue -> this.value.sliceSafe(begin, end).toNodeValue()
-            is ListValue -> this.value.sliceSafe(begin, end).toNodeValue()
+            is StringValue -> this.value.getSlice(begin, end).toNodeValue()
+            is ListValue -> this.value.getSlice(begin, end).toNodeValue()
             else -> throw IllegalArgumentException("Expected StringValue or ListValue, got ${this.javaClass.simpleName}")
         }
     }
@@ -368,11 +403,11 @@ class SymbolTable(definedSymbols: Map<String, NodeValue>? = null) {
         definedSymbols?.forEach { table[it.key] = it.value }
     }
 
-    fun get(name: String): NodeValue? {
+    operator fun get(name: String): NodeValue? {
         return table[name]
     }
 
-    fun set(name: String, value: NodeValue) {
+    operator fun set(name: String, value: NodeValue) {
         table[name] = value
     }
 
@@ -398,11 +433,11 @@ class IdentifierNode(token: Token) : Node() {
     }
 
     override fun exec(context: ExecutionContext): NodeValue {
-        return context.table.get(name) ?: NullValue()
+        return context.table[name] ?: NullValue()
     }
 
     override fun assign(context: ExecutionContext, value: NodeValue) {
-        context.table.set(name, value)
+        context.table[name] = value
     }
 
     override fun toString(): String {
@@ -458,10 +493,10 @@ class ParamListNode(private val params: List<ExprNode>) : Node() {
         return if (subscript.extended) {
             val begin = subscript.begin.exec(context).asNumber()!!
             val end = subscript.end?.exec(context)?.asNumber()
-            ParamListNode(params.sliceSafe(begin, end))
+            ParamListNode(params.getSlice(begin, end))
         } else {
             val index = subscript.begin.exec(context).asNumber()!!
-            params.subscriptSafe(index)!!
+            params.getSubscript(index)!!
         }
     }
 
@@ -515,8 +550,8 @@ class UnitCallNode(private val expr: Node, func: Token, private val args: ParamL
                 val start = args[0].asNumber()!!
                 val end = args[1].asNumber()!!
                 when (col) {
-                    is StringValue -> col.value.sliceSafe(start, end).toNodeValue()
-                    is ListValue -> col.value.sliceSafe(start, end).toNodeValue()
+                    is StringValue -> col.value.getSlice(start, end).toNodeValue()
+                    is ListValue -> col.value.getSlice(start, end).toNodeValue()
                     else -> throw IllegalArgumentException("Expected StringValue or ListValue, got ${col.javaClass.simpleName}")
                 }
             }
@@ -535,7 +570,7 @@ class UnitCallNode(private val expr: Node, func: Token, private val args: ParamL
             }
             "defined" -> {
                 val idName = (expr as IdentifierNode).name
-                (context.table.get(idName) != null).toNodeValue()
+                (context.table[idName] != null).toNodeValue()
             }
             "time" -> {
                 System.currentTimeMillis().toNodeValue()
@@ -573,10 +608,38 @@ class UnitSubscriptNode(private val expr: Node, private val subscript: Subscript
     }
 
     override fun assign(context: ExecutionContext, value: NodeValue) {
-        if (expr is ParamListNode) {
-            expr.subList(context, subscript).assign(context, value)
-        } else {
-            expr.assign(context, value)
+        when (expr) {
+            is ParamListNode -> {
+                expr.subList(context, subscript).assign(context, value)
+            }
+            is IdentifierNode -> {
+                val storedValue = context.table[expr.name]!!
+                context.table[expr.name] = when (storedValue) {
+                    is StringValue -> {
+                        if (subscript.extended) storedValue.value.setSlice(
+                            subscript.begin.exec(context).asNumber()!!,
+                            subscript.end?.exec(context)?.asNumber(),
+                            value.asString()!!
+                        )?.toNodeValue()
+                        else storedValue.value.setSubscript(
+                            subscript.begin.exec(context).asNumber()!!, value.asString()!![0]
+                        )?.toNodeValue()
+                    }
+                    is ListValue -> {
+                        if (subscript.extended) storedValue.value.setSlice(
+                            subscript.begin.exec(context).asNumber()!!,
+                            subscript.end?.exec(context)?.asNumber(),
+                            value.asList()!!
+                        )?.toNodeValue()
+                        else storedValue.value.setSubscript(subscript.begin.exec(context).asNumber()!!, value)
+                            ?.toNodeValue()
+                    }
+                    else -> throw IllegalArgumentException("Expected StringValue or ListValue, got ${storedValue.javaClass.simpleName}")
+                } ?: throw IllegalArgumentException("Could not assign $value to range $subscript of $expr")
+            }
+            else -> {
+                expr.assign(context, value)
+            }
         }
     }
 
@@ -588,9 +651,7 @@ class UnitSubscriptNode(private val expr: Node, private val subscript: Subscript
 class FactorNode(private val units: List<Node>, private val ops: List<String>, private val prefix: FactorPrefix) :
     Node() {
     enum class FactorPrefix {
-        NONE,
-        NOT,
-        NEGATIVE
+        NONE, NOT, NEGATIVE
     }
 
     override fun exec(context: ExecutionContext): NodeValue {
@@ -794,9 +855,7 @@ class StmtActionNode(private val action: Token, private val expr: ExprNode) : No
 }
 
 class StmtIfNode(
-    private val condition: Node,
-    private val ifBody: Node,
-    private val elseBody: Node? = null
+    private val condition: Node, private val ifBody: Node, private val elseBody: Node? = null
 ) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
         if (condition.exec(context).toBoolean()) {
@@ -905,16 +964,13 @@ class Parser(private val tokens: List<Token>) {
             "+=" -> StmtAssignNode(lvalue, TermNode(listOf(lvalue, parseExpr()), listOf("+")))
             "-=" -> StmtAssignNode(lvalue, TermNode(listOf(lvalue, parseExpr()), listOf("-")))
             "*=" -> StmtAssignNode(
-                lvalue,
-                FactorNode(listOf(lvalue, parseExpr()), listOf("*"), FactorNode.FactorPrefix.NONE)
+                lvalue, FactorNode(listOf(lvalue, parseExpr()), listOf("*"), FactorNode.FactorPrefix.NONE)
             )
             "/=" -> StmtAssignNode(
-                lvalue,
-                FactorNode(listOf(lvalue, parseExpr()), listOf("/"), FactorNode.FactorPrefix.NONE)
+                lvalue, FactorNode(listOf(lvalue, parseExpr()), listOf("/"), FactorNode.FactorPrefix.NONE)
             )
             "%=" -> StmtAssignNode(
-                lvalue,
-                FactorNode(listOf(lvalue, parseExpr()), listOf("%"), FactorNode.FactorPrefix.NONE)
+                lvalue, FactorNode(listOf(lvalue, parseExpr()), listOf("%"), FactorNode.FactorPrefix.NONE)
             )
             else -> throw IllegalStateException("Unexpected token $assignToken")
         }
@@ -1138,7 +1194,7 @@ fun main() {
         inputs.add(line)
     }
     val input = inputs.joinToString("\n")
-    println(input)
+//    println(input)
     val context =
         ConsoleContext(SymbolTable(mapOf("text" to StringValue("this is a brand new world the world of parsing"))))
 //    println("\nTokenizing...")
