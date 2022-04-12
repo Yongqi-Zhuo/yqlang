@@ -16,7 +16,7 @@ enum class TokenType {
 
 fun <E> List<E>.subscriptSafe(index: Long): E? {
     val i = if (index < 0) size + index else index
-    if(i < 0 || i >= size) return null
+    if (i < 0 || i >= size) return null
     return this[i.toInt()]
 }
 
@@ -147,7 +147,6 @@ class Tokenizer(private val input: String) {
                         "split" -> tokens.add(Token(TokenType.BUILTIN, "split"))
                         "join" -> tokens.add(Token(TokenType.BUILTIN, "join"))
                         "slice" -> tokens.add(Token(TokenType.BUILTIN, "slice"))
-                        "toList" -> tokens.add(Token(TokenType.BUILTIN, "toList"))
                         "find" -> tokens.add(Token(TokenType.BUILTIN, "find"))
                         "contains" -> tokens.add(Token(TokenType.BUILTIN, "contains"))
                         "length" -> tokens.add(Token(TokenType.BUILTIN, "length"))
@@ -173,106 +172,131 @@ abstract class NodeValue {
     fun asString() = (this as? StringValue)?.value
     fun asNumber() = (this as? NumberValue)?.value
     fun asList() = (this as? ListValue)?.value
-    operator fun plus(other: NodeValue): NodeValue {
+    operator fun plus(that: NodeValue): NodeValue {
         return when (this) {
+            is BooleanValue -> {
+                when (that) {
+                    is BooleanValue -> NumberValue(this.value.toLong() + that.value.toLong())
+                    is NumberValue -> NumberValue(this.value.toLong() + that.value)
+                    is StringValue -> StringValue(this.value.toString() + that.value)
+                    is ListValue -> ListValue(listOf(this) + that.value)
+                    else -> throw IllegalArgumentException("Invalid operation: $this + $that")
+                }
+            }
             is NumberValue -> {
-                when (other) {
-                    is NumberValue -> NumberValue(this.value + other.value)
-                    is StringValue -> StringValue(value.toString() + other.value)
-                    is ListValue -> ListValue(listOf(value.toString()) + other.value)
-                    else -> throw IllegalArgumentException("Invalid operation: $this + $other")
+                when (that) {
+                    is BooleanValue -> NumberValue(this.value + that.value.toLong())
+                    is NumberValue -> NumberValue(this.value + that.value)
+                    is StringValue -> StringValue(this.value.toString() + that.value)
+                    is ListValue -> ListValue(listOf(this) + that.value)
+                    else -> throw IllegalArgumentException("Invalid operation: $this + $that")
                 }
             }
             is StringValue -> {
-                when (other) {
-                    is NumberValue -> StringValue(value + other.value.toString())
-                    is StringValue -> StringValue(value + other.value)
-                    is ListValue -> ListValue(listOf(value) + other.value)
-                    else -> throw IllegalArgumentException("Invalid operation: $this + $other")
+                when (that) {
+                    is BooleanValue -> StringValue(this.value + that.value.toString())
+                    is NumberValue -> StringValue(this.value + that.value.toString())
+                    is StringValue -> StringValue(this.value + that.value)
+                    is ListValue -> ListValue(listOf(this) + that.value)
+                    else -> throw IllegalArgumentException("Invalid operation: $this + $that")
                 }
             }
             is ListValue -> {
-                when (other) {
-                    is NumberValue -> ListValue(value + listOf(other.value.toString()))
-                    is StringValue -> ListValue(value + listOf(other.value))
-                    is ListValue -> ListValue(value + other.value)
-                    else -> throw IllegalArgumentException("Invalid operation: $this + $other")
+                when (that) {
+                    is BooleanValue -> ListValue(this.value + listOf(that))
+                    is NumberValue -> ListValue(this.value + listOf(that))
+                    is StringValue -> ListValue(this.value + listOf(that))
+                    is ListValue -> ListValue(this.value + that.value)
+                    else -> throw IllegalArgumentException("Invalid operation: $this + $that")
                 }
             }
-            else -> throw IllegalArgumentException("Invalid operation: $this + $other")
+            else -> throw IllegalArgumentException("Invalid operation: $this + $that")
         }
     }
-    operator fun minus(other: NodeValue): NodeValue {
-        if (this is NumberValue && other is NumberValue) {
-            return NumberValue(this.value - other.value)
+
+    operator fun minus(that: NodeValue): NodeValue {
+        val expr = if (this is BooleanValue) NumberValue(this.value.toLong()) else this
+        val other = if (that is BooleanValue) NumberValue(that.value.toLong()) else that
+        if (expr is NumberValue && other is NumberValue) {
+            return NumberValue(expr.value - other.value)
         } else {
-            throw IllegalArgumentException("Invalid operation: $this - $other")
+            throw IllegalArgumentException("Invalid operation: $this - $that")
         }
     }
+
     operator fun times(that: NodeValue): NodeValue {
-        if(this is NumberValue || that is NumberValue) {
-            val (num, other) = if(this is NumberValue) Pair(this.value, that) else Pair(that.asNumber()!!, this)
-            return when(other) {
-                is NumberValue -> NumberValue(num * other.value)
-                is StringValue -> other.value.repeat(num.toInt()).toNodeValue()
+        val expr = if (this is BooleanValue) NumberValue(this.value.toLong()) else this
+        val other = if (that is BooleanValue) NumberValue(that.value.toLong()) else that
+        if (expr is NumberValue || other is NumberValue) {
+            val (num, otherExpr) = if (expr is NumberValue) Pair(expr.asNumber()!!, other) else Pair(
+                other.asNumber()!!,
+                expr
+            )
+            return when (otherExpr) {
+                is NumberValue -> NumberValue(num * otherExpr.value)
+                is StringValue -> otherExpr.value.repeat(num.toInt()).toNodeValue()
                 is ListValue -> {
-                    val sz = other.value.size
+                    val sz = otherExpr.value.size
                     val cnt = num.toInt()
-                    val list = other.asList()!!
+                    val list = otherExpr.asList()!!
                     List(cnt * sz) { index -> list[index % sz] }.toNodeValue()
                 }
-                else -> throw IllegalArgumentException("Invalid operation: $this * $other")
+                else -> throw IllegalArgumentException("Invalid operation: $this * $that")
             }
         } else {
             throw IllegalArgumentException("Invalid operation: $this * $that")
         }
     }
+
     operator fun div(that: NodeValue): NodeValue {
-        if (this is NumberValue && that is NumberValue) {
-            return NumberValue(this.value / that.value)
+        val expr = if (this is BooleanValue) NumberValue(this.value.toLong()) else this
+        val other = if (that is BooleanValue) NumberValue(that.value.toLong()) else that
+        if (expr is NumberValue && other is NumberValue) {
+            return NumberValue(expr.value / other.value)
         } else {
             throw IllegalArgumentException("Invalid operation: $this / $that")
         }
     }
+
     operator fun rem(that: NodeValue): NodeValue {
-        if (this is NumberValue && that is NumberValue) {
-            return NumberValue(this.value % that.value)
+        val expr = if (this is BooleanValue) NumberValue(this.value.toLong()) else this
+        val other = if (that is BooleanValue) NumberValue(that.value.toLong()) else that
+        if (expr is NumberValue && other is NumberValue) {
+            return NumberValue(expr.value % other.value)
         } else {
             throw IllegalArgumentException("Invalid operation: $this % $that")
         }
     }
+
     override operator fun equals(other: Any?): Boolean {
-        return if (this is NumberValue && other is NumberValue) {
-            (this.value == other.value)
+        return if (this is BooleanValue && other is BooleanValue) {
+            this.value == other.value
+        } else if (this is NumberValue && other is NumberValue) {
+            this.value == other.value
         } else if (this is StringValue && other is StringValue) {
-            (this.value == other.value)
+            this.value == other.value
         } else if (this is ListValue && other is ListValue) {
-            (this.value == other.value)
+            this.value == other.value
         } else this is NullValue && other is NullValue
     }
+
     override fun hashCode(): Int {
         return when (this) {
-            is NumberValue -> {
-                value.hashCode()
-            }
-            is StringValue -> {
-                value.hashCode()
-            }
-            is ListValue -> {
-                value.hashCode()
-            }
-            is NullValue -> {
-                0
-            }
-            else -> {
-                throw IllegalArgumentException("Invalid operation: hashCode($this)")
-            }
+            is BooleanValue -> value.hashCode()
+            is NumberValue -> value.hashCode()
+            is StringValue -> value.hashCode()
+            is ListValue -> value.hashCode()
+            is NullValue -> 0
+            else -> throw IllegalArgumentException("Invalid operation: hashCode($this)")
         }
     }
+
     operator fun compareTo(that: NodeValue): Int {
         return if (this is NumberValue && that is NumberValue) {
             this.value.compareTo(that.value)
         } else if (this is StringValue && that is StringValue) {
+            this.value.compareTo(that.value)
+        } else if (this is BooleanValue && that is BooleanValue) {
             this.value.compareTo(that.value)
         } else if (this is NullValue && that is NullValue) {
             0
@@ -280,14 +304,16 @@ abstract class NodeValue {
             throw IllegalArgumentException("Invalid operation: $this <=> $that")
         }
     }
+
     operator fun get(id: NodeValue): NodeValue {
         val index = id.asNumber()!!
-        return when(this) {
+        return when (this) {
             is StringValue -> this.value.subscriptSafe(index)?.toString()?.toNodeValue() ?: NullValue()
-            is ListValue -> this.value.subscriptSafe(index)?.toNodeValue() ?: NullValue()
+            is ListValue -> this.value.subscriptSafe(index) ?: NullValue()
             else -> throw IllegalArgumentException("Expected StringValue or ListValue, got ${this.javaClass.simpleName}")
         }
     }
+
     operator fun get(b: NodeValue, e: NodeValue?): NodeValue {
         val begin = b.asNumber()!!
         val end = e?.asNumber()
@@ -303,23 +329,31 @@ class StringValue(val value: String) : NodeValue() {
     override fun toString() = value
     override fun toBoolean(): Boolean = value.isNotEmpty()
 }
-fun String.toNodeValue(): NodeValue = StringValue(this)
 
-class ListValue(val value: List<String>) : NodeValue() {
+fun String.toNodeValue() = StringValue(this)
+
+class ListValue(val value: List<NodeValue>) : NodeValue() {
     override fun toString() = "[${value.joinToString(", ")}]"
     override fun toBoolean(): Boolean = value.isNotEmpty()
 }
-fun List<String>.toNodeValue(): NodeValue = ListValue(this)
+
+fun List<NodeValue>.toNodeValue() = ListValue(this)
 
 class NumberValue(val value: Long) : NodeValue() {
     override fun toString() = value.toString()
     override fun toBoolean(): Boolean = value != 0L
 }
+
 fun Int.toNodeValue(): NodeValue = NumberValue(this.toLong())
 fun Long.toNodeValue(): NodeValue = NumberValue(this)
 
-// TODO: implement BooleanValue
-fun Boolean.toNodeValue(): NodeValue = NumberValue(if (this) 1 else 0)
+class BooleanValue(val value: Boolean) : NodeValue() {
+    override fun toString() = value.toString()
+    override fun toBoolean(): Boolean = value
+}
+
+fun Boolean.toNodeValue() = BooleanValue(this)
+fun Boolean.toLong() = if (this) 1L else 0L
 
 class NullValue : NodeValue() {
     override fun toString() = "null"
@@ -327,7 +361,7 @@ class NullValue : NodeValue() {
 }
 
 class SymbolTable(definedSymbols: Map<String, NodeValue>? = null) {
-    private val table = mutableMapOf<String, NodeValue>()
+    private val table = mutableMapOf<String, NodeValue>("true" to true.toNodeValue(), "false" to false.toNodeValue())
 
     init {
         definedSymbols?.forEach { table[it.key] = it.value }
@@ -408,9 +442,9 @@ class StringNode(token: Token) : Node {
     }
 }
 
-class ParamListNode(val params: List<ExprNode>) : Node {
-    override fun exec(context: ExecutionContext): NodeValue {
-        return NullValue()
+class ParamListNode(private val params: List<ExprNode>) : Node {
+    override fun exec(context: ExecutionContext): ListValue {
+        return params.map { it.exec(context) }.toNodeValue()
     }
 
     override fun toString(): String {
@@ -429,16 +463,15 @@ class UnitCallNode(private val expr: Node, func: Token, private val args: ParamL
     }
 
     private val whiteSpace = Pattern.compile("\\s+")
-
     override fun exec(context: ExecutionContext): NodeValue {
-        val args = args.params.map { it.exec(context) }
+        val args = args.exec(context).value
         return when (func) {
             "split" -> {
                 val str = expr.exec(context).asString()!!
                 if (args.isEmpty()) {
-                    whiteSpace.split(str).filter { it.isEmpty() }.toList().toNodeValue()
+                    whiteSpace.split(str).filter { it.isNotEmpty() }.map { it.toNodeValue() }.toList().toNodeValue()
                 } else {
-                    str.split(args[0].asString()!!).toList().toNodeValue()
+                    str.split(args[0].asString()!!).map { it.toNodeValue() }.toList().toNodeValue()
                 }
             }
             "join" -> {
@@ -457,13 +490,6 @@ class UnitCallNode(private val expr: Node, func: Token, private val args: ParamL
                     is StringValue -> col.value.sliceSafe(start, end).toNodeValue()
                     is ListValue -> col.value.sliceSafe(start, end).toNodeValue()
                     else -> throw IllegalArgumentException("Expected StringValue or ListValue, got ${col.javaClass.simpleName}")
-                }
-            }
-            "toList" -> {
-                when (val what = expr.exec(context)) {
-                    is StringValue -> listOf(what.value).toNodeValue()
-                    is NumberValue -> listOf(what.value.toString()).toNodeValue()
-                    else -> throw IllegalArgumentException("Expected StringValue or NumberValue, got ${what.javaClass.simpleName}")
                 }
             }
             "find" -> {
@@ -583,7 +609,7 @@ class TermNode(private val factors: List<Node>, private val ops: List<String>) :
         while (values.size > 0) {
             val next = values.removeAt(0).exec(context)
             val op = ops.removeAt(0)
-            res = when(op) {
+            res = when (op) {
                 "+" -> res + next
                 "-" -> res - next
                 else -> throw IllegalArgumentException("Unknown operator $op")
@@ -934,15 +960,21 @@ class Parser(private val tokens: List<Token>) {
                 consume(TokenType.PAREN_CLOSE)
                 expr
             }
+            TokenType.BRACKET_OPEN -> {
+                consume(TokenType.BRACKET_OPEN)
+                val list = parseParamList()
+                consume(TokenType.BRACKET_CLOSE)
+                list
+            }
             else -> throw IllegalStateException("Unexpected token ${token.value}")
         }
     }
 
     private fun parseParamList(): ParamListNode {
         val params = mutableListOf<ExprNode>()
-        if (peek().type != TokenType.PAREN_CLOSE) {
+        if (peek().type != TokenType.PAREN_CLOSE && peek().type != TokenType.BRACKET_CLOSE) {
             params.add(parseExpr())
-            while (peek().type != TokenType.PAREN_CLOSE) {
+            while (peek().type != TokenType.PAREN_CLOSE && peek().type != TokenType.BRACKET_CLOSE) {
                 consume(TokenType.COMMA)
                 params.add(parseExpr())
             }
