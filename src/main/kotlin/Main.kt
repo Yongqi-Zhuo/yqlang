@@ -14,33 +14,31 @@ enum class TokenType {
     EOF
 }
 
-fun <E> List<E>.subscriptSafe(index: Int): E? {
+fun <E> List<E>.subscriptSafe(index: Long): E? {
     val i = if (index < 0) size + index else index
     if(i < 0 || i >= size) return null
-    return this[i]
+    return this[i.toInt()]
 }
 
-fun <E> List<E>.sliceSafe(start: Int, end: Int): List<E> {
+fun <E> List<E>.sliceSafe(start: Long, end: Long?): List<E> {
     val b = if (start < 0) size + start else start
-    var e = if (end < 0) size + end else end
-    if (b >= e) return emptyList()
-    e = if (e > size) size else e
-    return this.subList(b, e).toList()
+    val e = if (end == null) size.toLong() else if (end < 0) size + end else if (end > size) size.toLong() else end
+    if (b >= e || b < 0) return emptyList()
+    return this.subList(b.toInt(), e.toInt()).toList()
 }
 
-fun String.subscriptSafe(index: Int): Char? {
+fun String.subscriptSafe(index: Long): Char? {
     val i = if (index < 0) length + index else index
     if (i < 0 || i >= length) return null
-    return this[i]
+    return this[i.toInt()]
 }
 
-fun String.sliceSafe(start: Int, end: Int): String {
+fun String.sliceSafe(start: Long, end: Long?): String {
     val size = this.length
     val b = if (start < 0) size + start else start
-    var e = if (end < 0) size + end else end
-    if (b >= e) return ""
-    e = if (e > size) size else e
-    return this.substring(b, e)
+    val e = if (end == null) size.toLong() else if (end < 0) size + end else if (end > size) size.toLong() else end
+    if (b >= e || b < 0) return ""
+    return this.substring(b.toInt(), e.toInt())
 }
 
 data class Token(val type: TokenType, val value: String) {
@@ -175,6 +173,130 @@ abstract class NodeValue {
     fun asString() = (this as? StringValue)?.value
     fun asNumber() = (this as? NumberValue)?.value
     fun asList() = (this as? ListValue)?.value
+    operator fun plus(other: NodeValue): NodeValue {
+        return when (this) {
+            is NumberValue -> {
+                when (other) {
+                    is NumberValue -> NumberValue(this.value + other.value)
+                    is StringValue -> StringValue(value.toString() + other.value)
+                    is ListValue -> ListValue(listOf(value.toString()) + other.value)
+                    else -> throw IllegalArgumentException("Invalid operation: $this + $other")
+                }
+            }
+            is StringValue -> {
+                when (other) {
+                    is NumberValue -> StringValue(value + other.value.toString())
+                    is StringValue -> StringValue(value + other.value)
+                    is ListValue -> ListValue(listOf(value) + other.value)
+                    else -> throw IllegalArgumentException("Invalid operation: $this + $other")
+                }
+            }
+            is ListValue -> {
+                when (other) {
+                    is NumberValue -> ListValue(value + listOf(other.value.toString()))
+                    is StringValue -> ListValue(value + listOf(other.value))
+                    is ListValue -> ListValue(value + other.value)
+                    else -> throw IllegalArgumentException("Invalid operation: $this + $other")
+                }
+            }
+            else -> throw IllegalArgumentException("Invalid operation: $this + $other")
+        }
+    }
+    operator fun minus(other: NodeValue): NodeValue {
+        if (this is NumberValue && other is NumberValue) {
+            return NumberValue(this.value - other.value)
+        } else {
+            throw IllegalArgumentException("Invalid operation: $this - $other")
+        }
+    }
+    operator fun times(that: NodeValue): NodeValue {
+        if(this is NumberValue || that is NumberValue) {
+            val (num, other) = if(this is NumberValue) Pair(this.value, that) else Pair(that.asNumber()!!, this)
+            return when(other) {
+                is NumberValue -> NumberValue(num * other.value)
+                is StringValue -> other.value.repeat(num.toInt()).toNodeValue()
+                is ListValue -> {
+                    val sz = other.value.size
+                    val cnt = num.toInt()
+                    val list = other.asList()!!
+                    List(cnt * sz) { index -> list[index % sz] }.toNodeValue()
+                }
+                else -> throw IllegalArgumentException("Invalid operation: $this * $other")
+            }
+        } else {
+            throw IllegalArgumentException("Invalid operation: $this * $that")
+        }
+    }
+    operator fun div(that: NodeValue): NodeValue {
+        if (this is NumberValue && that is NumberValue) {
+            return NumberValue(this.value / that.value)
+        } else {
+            throw IllegalArgumentException("Invalid operation: $this / $that")
+        }
+    }
+    operator fun rem(that: NodeValue): NodeValue {
+        if (this is NumberValue && that is NumberValue) {
+            return NumberValue(this.value % that.value)
+        } else {
+            throw IllegalArgumentException("Invalid operation: $this % $that")
+        }
+    }
+    override operator fun equals(other: Any?): Boolean {
+        return if (this is NumberValue && other is NumberValue) {
+            (this.value == other.value)
+        } else if (this is StringValue && other is StringValue) {
+            (this.value == other.value)
+        } else if (this is ListValue && other is ListValue) {
+            (this.value == other.value)
+        } else this is NullValue && other is NullValue
+    }
+    override fun hashCode(): Int {
+        return when (this) {
+            is NumberValue -> {
+                value.hashCode()
+            }
+            is StringValue -> {
+                value.hashCode()
+            }
+            is ListValue -> {
+                value.hashCode()
+            }
+            is NullValue -> {
+                0
+            }
+            else -> {
+                throw IllegalArgumentException("Invalid operation: hashCode($this)")
+            }
+        }
+    }
+    operator fun compareTo(that: NodeValue): Int {
+        return if (this is NumberValue && that is NumberValue) {
+            this.value.compareTo(that.value)
+        } else if (this is StringValue && that is StringValue) {
+            this.value.compareTo(that.value)
+        } else if (this is NullValue && that is NullValue) {
+            0
+        } else {
+            throw IllegalArgumentException("Invalid operation: $this <=> $that")
+        }
+    }
+    operator fun get(id: NodeValue): NodeValue {
+        val index = id.asNumber()!!
+        return when(this) {
+            is StringValue -> this.value.subscriptSafe(index)?.toString()?.toNodeValue() ?: NullValue()
+            is ListValue -> this.value.subscriptSafe(index)?.toNodeValue() ?: NullValue()
+            else -> throw IllegalArgumentException("Expected StringValue or ListValue, got ${this.javaClass.simpleName}")
+        }
+    }
+    operator fun get(b: NodeValue, e: NodeValue?): NodeValue {
+        val begin = b.asNumber()!!
+        val end = e?.asNumber()
+        return when (this) {
+            is StringValue -> this.value.sliceSafe(begin, end).toNodeValue()
+            is ListValue -> this.value.sliceSafe(begin, end).toNodeValue()
+            else -> throw IllegalArgumentException("Expected StringValue or ListValue, got ${this.javaClass.simpleName}")
+        }
+    }
 }
 
 class StringValue(val value: String) : NodeValue() {
@@ -189,11 +311,12 @@ class ListValue(val value: List<String>) : NodeValue() {
 }
 fun List<String>.toNodeValue(): NodeValue = ListValue(this)
 
-class NumberValue(val value: Int) : NodeValue() {
+class NumberValue(val value: Long) : NodeValue() {
     override fun toString() = value.toString()
-    override fun toBoolean(): Boolean = value != 0
+    override fun toBoolean(): Boolean = value != 0L
 }
-fun Int.toNodeValue(): NodeValue = NumberValue(this)
+fun Int.toNodeValue(): NodeValue = NumberValue(this.toLong())
+fun Long.toNodeValue(): NodeValue = NumberValue(this)
 
 // TODO: implement BooleanValue
 fun Boolean.toNodeValue(): NodeValue = NumberValue(if (this) 1 else 0)
@@ -361,7 +484,7 @@ class UnitCallNode(private val expr: Node, func: Token, private val args: ParamL
                 (context.table.get(idName) != null).toNodeValue()
             }
             "time" -> {
-                System.currentTimeMillis().toInt().toNodeValue() // TODO: use real time
+                System.currentTimeMillis().toNodeValue()
             }
             "random" -> {
                 (args[0].asNumber()!! until args[1].asNumber()!!).random().toNodeValue()
@@ -388,25 +511,10 @@ class SubscriptNode(val begin: ExprNode, val extended: Boolean, val end: ExprNod
 class UnitSubscriptNode(private val expr: Node, private val subscript: SubscriptNode) : Node {
     override fun exec(context: ExecutionContext): NodeValue {
         val expr = expr.exec(context)
-        val size = when(expr) {
-            is StringValue -> expr.value.length
-            is ListValue -> expr.value.size
-            else -> throw IllegalArgumentException("Expected StringValue or ListValue, got ${expr.javaClass.simpleName}")
-        }
-        val begin = subscript.begin.exec(context).asNumber()!!
         return if (subscript.extended) {
-            val end = if(subscript.end == null) size else subscript.end.exec(context).asNumber()!!
-            when (expr) {
-                is StringValue -> expr.value.sliceSafe(begin, end).toNodeValue()
-                is ListValue -> expr.value.sliceSafe(begin, end).toNodeValue()
-                else -> throw IllegalArgumentException("Expected StringValue or ListValue, got ${expr.javaClass.simpleName}")
-            }
+            expr[subscript.begin.exec(context), subscript.end?.exec(context)]
         } else {
-            when (expr) {
-                is StringValue -> expr.value.subscriptSafe(begin)?.toString()?.toNodeValue() ?: NullValue()
-                is ListValue -> expr.value.subscriptSafe(begin)?.toNodeValue() ?: NullValue()
-                else -> throw IllegalArgumentException("Expected StringValue or ListValue, got ${expr.javaClass.simpleName}")
-            }
+            expr[subscript.begin.exec(context)]
         }
     }
 
@@ -430,22 +538,11 @@ class FactorNode(private val units: List<Node>, private val ops: List<String>, p
         while (values.size > 0) {
             val next = values.removeAt(0).exec(context)
             val op = ops.removeAt(0)
-            res = if (res is NumberValue && next is NumberValue) {
-                when (op) {
-                    "*" -> NumberValue(res.value * next.value)
-                    "/" -> NumberValue(res.value / next.value)
-                    "%" -> NumberValue(res.value % next.value)
-                    else -> throw IllegalArgumentException("Unknown operator $op")
-                }
-            } else if (res is StringValue && next is NumberValue && op == "*") {
-                res.value.repeat(next.value).toNodeValue()
-            } else if (res is ListValue && next is NumberValue && op == "*") {
-                val sz = res.value.size
-                val cnt = next.value
-                val list = res.asList()!!
-                List(cnt * sz) { index -> list[index % sz] }.toNodeValue()
-            } else {
-                throw IllegalArgumentException("Invalid operation: $res $op $next")
+            res = when (op) {
+                "*" -> res * next
+                "/" -> res / next
+                "%" -> res % next
+                else -> throw IllegalArgumentException("Unknown operator $op")
             }
         }
         when (prefix) {
@@ -486,41 +583,10 @@ class TermNode(private val factors: List<Node>, private val ops: List<String>) :
         while (values.size > 0) {
             val next = values.removeAt(0).exec(context)
             val op = ops.removeAt(0)
-            if (res is NumberValue && next is NumberValue) {
-                res = when (op) {
-                    "+" -> NumberValue(res.value + next.value)
-                    "-" -> NumberValue(res.value - next.value)
-                    else -> throw IllegalArgumentException("Unknown operator $op")
-                }
-            } else if (op == "+") {
-                res = when (res) {
-                    is NumberValue -> {
-                        when (next) {
-                            is StringValue -> StringValue(res.value.toString() + next.value)
-                            is ListValue -> ListValue(listOf(res.value.toString()) + next.value)
-                            else -> throw IllegalArgumentException("Invalid operation: $res + $next")
-                        }
-                    }
-                    is StringValue -> {
-                        when (next) {
-                            is NumberValue -> StringValue(res.value + next.value.toString())
-                            is StringValue -> StringValue(res.value + next.value)
-                            is ListValue -> ListValue(listOf(res.value) + next.value)
-                            else -> throw IllegalArgumentException("Invalid operation: $res + $next")
-                        }
-                    }
-                    is ListValue -> {
-                        when (next) {
-                            is NumberValue -> ListValue(res.value + listOf(next.value.toString()))
-                            is StringValue -> ListValue(res.value + listOf(next.value))
-                            is ListValue -> ListValue(res.value + next.value)
-                            else -> throw IllegalArgumentException("Invalid operation: $res + $next")
-                        }
-                    }
-                    else -> throw IllegalArgumentException("Invalid operation: $res + $next")
-                }
-            } else {
-                throw IllegalArgumentException("Invalid operation: $res $op $next")
+            res = when(op) {
+                "+" -> res + next
+                "-" -> res - next
+                else -> throw IllegalArgumentException("Unknown operator $op")
             }
         }
         return res
@@ -545,52 +611,14 @@ class CompNode(private val terms: List<Node>, private val ops: List<String>) : N
         var res = values.removeAt(0).exec(context)
         while (values.size > 0) {
             val next = values.removeAt(0).exec(context)
-            when (val op = ops.removeAt(0)) {
-                "==" -> {
-                    res = if (res is NumberValue && next is NumberValue) {
-                        (res.value == next.value).toNodeValue()
-                    } else if (res is StringValue && next is StringValue) {
-                        (res.value == next.value).toNodeValue()
-                    } else if (res is ListValue && next is ListValue) {
-                        (res.value == next.value).toNodeValue()
-                    } else if (res is NullValue && next is NullValue) {
-                        true.toNodeValue()
-                    } else {
-                        throw IllegalArgumentException("Invalid operation: $res == $next")
-                    }
-                }
-                "!=" -> {
-                    res = if (res is NumberValue && next is NumberValue) {
-                        (res.value != next.value).toNodeValue()
-                    } else if (res is StringValue && next is StringValue) {
-                        (res.value != next.value).toNodeValue()
-                    } else if (res is ListValue && next is ListValue) {
-                        (res.value != next.value).toNodeValue()
-                    } else {
-                        true.toNodeValue()
-                    }
-                }
-                ">" -> res = if (res is NumberValue && next is NumberValue) {
-                    (res.value > next.value).toNodeValue()
-                } else {
-                    throw IllegalArgumentException("Invalid operation: $res > $next")
-                }
-                "<" -> res = if (res is NumberValue && next is NumberValue) {
-                    (res.value < next.value).toNodeValue()
-                } else {
-                    throw IllegalArgumentException("Invalid operation: $res < $next")
-                }
-                ">=" -> res = if (res is NumberValue && next is NumberValue) {
-                    (res.value >= next.value).toNodeValue()
-                } else {
-                    throw IllegalArgumentException("Invalid operation: $res >= $next")
-                }
-                "<=" -> res = if (res is NumberValue && next is NumberValue) {
-                    (res.value <= next.value).toNodeValue()
-                } else {
-                    throw IllegalArgumentException("Invalid operation: $res <= $next")
-                }
-                else -> throw IllegalArgumentException("Invalid operation: $res $op $next")
+            res = when (val op = ops.removeAt(0)) {
+                "==" -> (res == next).toNodeValue()
+                "!=" -> (res != next).toNodeValue()
+                ">" -> (res > next).toNodeValue()
+                "<" -> (res < next).toNodeValue()
+                ">=" -> (res >= next).toNodeValue()
+                "<=" -> (res <= next).toNodeValue()
+                else -> throw IllegalArgumentException("Unknown operator $op")
             }
         }
         return res
@@ -610,6 +638,9 @@ class CompNode(private val terms: List<Node>, private val ops: List<String>) : N
 
 class ExprNode(private val comps: List<Node>, private val ops: List<String>) : Node {
     override fun exec(context: ExecutionContext): NodeValue {
+        if (comps.size == 1) {
+            return comps[0].exec(context)
+        }
         val values = comps.toMutableList()
         val ops = ops.toMutableList()
         var res = values.removeAt(0).exec(context).toBoolean()
