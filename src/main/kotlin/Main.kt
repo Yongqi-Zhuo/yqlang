@@ -2,81 +2,32 @@ import java.util.regex.Pattern
 import kotlin.math.min
 
 enum class TokenType {
-    BRACE_OPEN, BRACE_CLOSE, PAREN_OPEN, PAREN_CLOSE, BRACKET_OPEN, BRACKET_CLOSE,
-    SEMICOLON, COLON,
-    ASSIGN, DOT, COMMA, INIT,
-    MULT_OP, // MULTIPLY, DIVIDE, MODULO
+    BRACE_OPEN, BRACE_CLOSE, PAREN_OPEN, PAREN_CLOSE, BRACKET_OPEN, BRACKET_CLOSE, SEMICOLON, COLON, ASSIGN, DOT, COMMA, INIT, MULT_OP, // MULTIPLY, DIVIDE, MODULO
     ADD_OP, // PLUS, MINUS,
     COMP_OP, // EQUAL, NOT_EQUAL, GREATER, LESS, GREATER_EQUAL, LESS_EQUAL
     LOGIC_OP, //AND, OR
     NOT, IF, ELSE, ACTION, IDENTIFIER, BUILTIN, NUMBER, STRING, EOF
 }
 
-fun <E> Collection<E>.safeSubscript(index: Int): Int? {
+fun IntRange.safeSubscript(index: Int): Int? {
+    val size = last - first + 1
     val i = if (index < 0) size + index else index
     if (i < 0 || i >= size) return null
-    return i
+    return i + first
 }
 
-fun <E> Collection<E>.safeSlice(begin: Int, end: Int?): IntRange? {
+fun IntRange.safeSlice(begin: Int, end: Int?): IntRange? {
+    val size = last - first + 1
     val b = if (begin < 0) size + begin else begin
     val e = if (end == null) size else if (end < 0) size + end else if (end > size) size else end
     if (b >= e || b < 0) return null
-    return b until e
+    return first + b until first + e
 }
 
-fun <E> List<E>.getSubscript(index: Long): E? = this.safeSubscript(index.toInt())?.let { this[it] }
+fun String.safeSlice(start: Int, end: Int?): String = this.indices.safeSlice(start, end)?.let { this.slice(it) } ?: ""
 
-fun <E> List<E>.setSubscript(index: Long, value: E): List<E>? =
-    this.safeSubscript(index.toInt())?.let { this.toMutableList().apply { this[it] = value } }
-
-fun <E> List<E>.getSlice(start: Long, end: Long?): List<E> =
-    this.safeSlice(start.toInt(), end?.toInt())?.let { this.slice(it) } ?: emptyList()
-
-fun <E> List<E>.setSlice(start: Long, end: Long?, value: List<E>): List<E>? {
-    val s = this.safeSlice(start.toInt(), end?.toInt()) ?: return null
-    val tmp = this.toMutableList()
-    for (i in indices) {
-        val delta = i - s.first
-        if (i in s && delta < value.size) {
-            tmp[i] = value[delta]
-        }
-    }
-    return tmp
-}
-
-fun String.safeSubscript(index: Int): Int? {
-    val i = if (index < 0) length + index else index
-    if (i < 0 || i >= length) return null
-    return i
-}
-
-fun String.safeSlice(begin: Int, end: Int?): IntRange? {
-    val b = if (begin < 0) length + begin else begin
-    val e = if (end == null) length else if (end < 0) length + end else if (end > length) length else end
-    if (b >= e || b < 0) return null
-    return b until e
-}
-
-fun String.getSubscript(index: Long): Char? = this.safeSubscript(index.toInt())?.let { this[it] }
-
-fun String.getSlice(start: Long, end: Long?): String =
-    this.safeSlice(start.toInt(), end?.toInt())?.let { this.slice(it) } ?: ""
-
-fun String.setSubscript(index: Long, value: Char): String? =
-    this.safeSubscript(index.toInt())?.let { String(this.toCharArray().apply { this[it] = value }) }
-
-fun String.setSlice(start: Long, end: Long?, value: String): String? {
-    val s = this.safeSlice(start.toInt(), end?.toInt()) ?: return null
-    return String(CharArray(this.length) {
-        val delta = it - s.first
-        if (it in s && delta < value.length) {
-            value[delta]
-        } else {
-            this[it]
-        }
-    })
-}
+fun <E> List<E>.safeSlice(start: Int, end: Int?): List<E> =
+    this.indices.safeSlice(start, end)?.let { this.slice(it) } ?: emptyList()
 
 data class Token(val type: TokenType, val value: String) {
     override fun toString(): String {
@@ -122,6 +73,7 @@ class Tokenizer(private val input: String) {
                 currentChar == '[' -> pushAndAdvance(Token(TokenType.BRACKET_OPEN, "["))
                 currentChar == ']' -> pushAndAdvance(Token(TokenType.BRACKET_CLOSE, "]"))
                 currentChar == ';' -> pushAndAdvance(Token(TokenType.SEMICOLON, ";"))
+                currentChar == '\n' -> pushAndAdvance(Token(TokenType.SEMICOLON, "\n")) // Maybe new semantics for new lines?
                 currentChar == ':' -> pushAndAdvance(Token(TokenType.COLON, ":"))
                 currentChar == '.' -> pushAndAdvance(Token(TokenType.DOT, "."))
                 currentChar == ',' -> pushAndAdvance(Token(TokenType.COMMA, ","))
@@ -340,25 +292,6 @@ abstract class NodeValue {
             throw IllegalArgumentException("Invalid operation: $this <=> $that")
         }
     }
-
-    operator fun get(id: NodeValue): NodeValue {
-        val index = id.asNumber()!!
-        return when (this) {
-            is StringValue -> this.value.getSubscript(index)?.toString()?.toNodeValue() ?: NullValue()
-            is ListValue -> this.value.getSubscript(index) ?: NullValue()
-            else -> throw IllegalArgumentException("Expected StringValue or ListValue, got ${this.javaClass.simpleName}")
-        }
-    }
-
-    operator fun get(b: NodeValue, e: NodeValue?): NodeValue {
-        val begin = b.asNumber()!!
-        val end = e?.asNumber()
-        return when (this) {
-            is StringValue -> this.value.getSlice(begin, end).toNodeValue()
-            is ListValue -> this.value.getSlice(begin, end).toNodeValue()
-            else -> throw IllegalArgumentException("Expected StringValue or ListValue, got ${this.javaClass.simpleName}")
-        }
-    }
 }
 
 class StringValue(val value: String) : NodeValue() {
@@ -390,6 +323,11 @@ class BooleanValue(val value: Boolean) : NodeValue() {
 
 fun Boolean.toNodeValue() = BooleanValue(this)
 fun Boolean.toLong() = if (this) 1L else 0L
+
+class SubscriptValue(val begin: Int, val extended: Boolean, val end: Int? = null) : NodeValue() {
+    override fun toString() = if (extended) "$begin:$end" else "$begin"
+    override fun toBoolean(): Boolean = true
+}
 
 class NullValue : NodeValue() {
     override fun toString() = "null"
@@ -484,38 +422,223 @@ class StringNode(token: Token) : Node() {
     }
 }
 
-class ParamListNode(private val params: List<ExprNode>) : Node() {
+class ListNode(private val items: List<ExprNode>) : Node() {
     override fun exec(context: ExecutionContext): ListValue {
-        return params.map { it.exec(context) }.toNodeValue()
-    }
-
-    fun subList(context: ExecutionContext, subscript: SubscriptNode): Node {
-        return if (subscript.extended) {
-            val begin = subscript.begin.exec(context).asNumber()!!
-            val end = subscript.end?.exec(context)?.asNumber()
-            ParamListNode(params.getSlice(begin, end))
-        } else {
-            val index = subscript.begin.exec(context).asNumber()!!
-            params.getSubscript(index)!!
-        }
+        return items.map { it.exec(context) }.toNodeValue()
     }
 
     override fun assign(context: ExecutionContext, value: NodeValue) {
         val list = value.asList()
         if (list != null) {
-            val cnt = min(params.size, list.size)
+            val cnt = min(items.size, list.size)
             for (i in 0 until cnt) {
-                params[i].assign(context, list[i])
+                items[i].assign(context, list[i])
             }
         }
     }
 
     override fun toString(): String {
-        return "params(${params.joinToString(", ")})"
+        return "[${items.joinToString(", ")}]"
     }
 }
 
-class UnitCallNode(private val expr: Node, func: Token, private val args: ParamListNode) : Node() {
+class SubscriptNode(private val begin: ExprNode, private val extended: Boolean, private val end: ExprNode? = null) :
+    Node() {
+    override fun exec(context: ExecutionContext): SubscriptValue {
+        return SubscriptValue(
+            begin.exec(context).asNumber()!!.toInt(), extended, end?.exec(context)?.asNumber()?.toInt()
+        )
+    }
+
+    override fun toString(): String {
+        return if (end != null) "subscript($begin, $end)" else "subscript($begin)"
+    }
+}
+
+class SubscriptViewNode(private val list: Node, private val subscripts: List<SubscriptNode>) : Node() {
+    constructor(
+        existing: Node,
+        subscript: SubscriptNode
+    ) : this(
+        if (existing is SubscriptViewNode) existing.list else existing,
+        if (existing is SubscriptViewNode) existing.subscripts + subscript else listOf(subscript)
+    )
+
+    private class RangeHierarchy(list: NodeValue, subscripts: List<SubscriptValue>) {
+        val isEmpty: Boolean
+        val pointers: List<Int>
+        val endsAtString: Boolean
+        val lastSlice: IntRange?
+
+        init {
+            var currentList = list
+            var isEmpty = false
+            val pointers = mutableListOf<Int>()
+            var endsAtString = false
+            var lastRecursion = false
+            var lastSlice: IntRange? = null
+
+            for (subscript in subscripts) {
+                if (lastRecursion) {
+                    isEmpty = true
+                    break
+                }
+                when (currentList) {
+                    is ListValue -> {
+                        val range = lastSlice ?: currentList.value.indices
+                        if (subscript.extended) {
+                            val slice = range.safeSlice(subscript.begin, subscript.end)
+                            if (slice != null) {
+                                lastSlice = slice
+                            } else {
+                                isEmpty = true
+                                break
+                            }
+                        } else {
+                            val index = range.safeSubscript(subscript.begin)
+                            if (index != null) {
+                                pointers.add(index)
+                                lastSlice = null
+                                currentList = currentList.value[index]
+                            } else {
+                                isEmpty = true
+                                break
+                            }
+                        }
+                    }
+                    is StringValue -> {
+                        endsAtString = true
+                        val range = lastSlice ?: currentList.value.indices
+                        if (subscript.extended) {
+                            val slice = range.safeSlice(subscript.begin, subscript.end)
+                            if (slice != null) {
+                                lastSlice = slice
+                            } else {
+                                isEmpty = true
+                                break
+                            }
+                        } else {
+                            val index = range.safeSubscript(subscript.begin)
+                            if (index != null) {
+                                lastSlice = IntRange(index, index)
+                                lastRecursion = true
+                            } else {
+                                isEmpty = true
+                                break
+                            }
+                        }
+                    }
+                    else -> throw RuntimeException("Failed subscripting on $currentList[$subscript]")
+                }
+            }
+            this.isEmpty = isEmpty
+            this.pointers = pointers
+            this.endsAtString = endsAtString
+            this.lastSlice = lastSlice
+        }
+
+        fun containPath(path: List<Int>): Boolean {
+            if (path.size != pointers.size) {
+                return false
+            }
+            for (i in pointers.indices) {
+                if (pointers[i] != path[i]) {
+                    return false
+                }
+            }
+            return true
+        }
+    }
+
+    override fun exec(context: ExecutionContext): NodeValue {
+        var list = list.exec(context)
+        val subscripts = subscripts.map { it.exec(context) }
+        val hierarchy = RangeHierarchy(list, subscripts)
+        if (hierarchy.isEmpty) return NullValue()
+        for (pointer in hierarchy.pointers) {
+            list = list.asList()!![pointer]
+        }
+        return if (hierarchy.endsAtString) {
+            val string = list.asString()!!
+            StringValue(string.substring(hierarchy.lastSlice!!))
+        } else {
+            if (hierarchy.lastSlice != null) {
+                ListValue(list.asList()!!.slice(hierarchy.lastSlice))
+            } else {
+                list
+            }
+        }
+    }
+
+    override fun assign(context: ExecutionContext, value: NodeValue) {
+        if (list !is IdentifierNode) {
+            throw RuntimeException("Can only assign to identifiers, not $list")
+        }
+        val listValue = list.exec(context)
+        val subscripts = subscripts.map { it.exec(context) }
+        val hierarchy = RangeHierarchy(listValue, subscripts)
+        if (hierarchy.isEmpty) throw RuntimeException("Failed subscripting on $list${subscripts.joinToString("") { "[$it]" }}")
+        val path = mutableListOf<Int>()
+        fun copyValue(cur: NodeValue): NodeValue {
+            if (hierarchy.containPath(path)) {
+                // Do the real assignment
+                if (hierarchy.endsAtString) {
+                    val string = cur.asString()!!
+                    val slice = hierarchy.lastSlice!!
+                    val newString = if (slice.first > 0) string.substring(
+                        0,
+                        slice.first
+                    ) else "" + value.toString() + if (slice.last + 1 < string.length) string.substring(slice.last + 1) else ""
+                    return StringValue(newString)
+                } else {
+                    if (hierarchy.lastSlice != null) {
+                        val list = cur.asList()!!
+                        val slice = hierarchy.lastSlice
+                        val newList = mutableListOf<NodeValue>()
+                        if (slice.first > 0) {
+                            newList.addAll(list.slice(0 until slice.first))
+                        }
+                        when (value) {
+                            is ListValue -> {
+                                newList.addAll(value.value)
+                            }
+                            else -> {
+                                newList.add(value)
+                            }
+                        }
+                        if (slice.last + 1 < list.size) {
+                            newList.addAll(list.slice(slice.last + 1 until list.size))
+                        }
+                        return ListValue(newList)
+                    } else {
+                        return value
+                    }
+                }
+            } else {
+                return if (cur is ListValue) {
+                    val newList = mutableListOf<NodeValue>()
+                    for (i in cur.value.indices) {
+                        path.add(i)
+                        newList.add(copyValue(cur.value[i]))
+                        path.removeLast()
+                    }
+                    ListValue(newList)
+                } else {
+                    cur
+                }
+            }
+        }
+
+        val newValue = copyValue(listValue)
+        list.assign(context, newValue)
+    }
+
+    override fun toString(): String {
+        return "listview($list, ${subscripts.joinToString("") { "[$it]" }})"
+    }
+}
+
+class UnitCallNode(private val expr: Node, func: Token, private val args: ListNode) : Node() {
     private val func: String
 
     init {
@@ -547,11 +670,11 @@ class UnitCallNode(private val expr: Node, func: Token, private val args: ParamL
             }
             "slice" -> {
                 val col = expr.exec(context)
-                val start = args[0].asNumber()!!
-                val end = args[1].asNumber()!!
+                val start = args[0].asNumber()!!.toInt()
+                val end = args[1].asNumber()!!.toInt()
                 when (col) {
-                    is StringValue -> col.value.getSlice(start, end).toNodeValue()
-                    is ListValue -> col.value.getSlice(start, end).toNodeValue()
+                    is StringValue -> col.value.safeSlice(start, end).toNodeValue()
+                    is ListValue -> col.value.safeSlice(start, end).toNodeValue()
                     else -> throw IllegalArgumentException("Expected StringValue or ListValue, got ${col.javaClass.simpleName}")
                 }
             }
@@ -584,67 +707,6 @@ class UnitCallNode(private val expr: Node, func: Token, private val args: ParamL
 
     override fun toString(): String {
         return "func($func, $expr, $args)"
-    }
-}
-
-class SubscriptNode(val begin: ExprNode, val extended: Boolean, val end: ExprNode? = null) : Node() {
-    override fun exec(context: ExecutionContext): NodeValue {
-        return begin.exec(context)
-    }
-
-    override fun toString(): String {
-        return if (end != null) "subscript($begin, $end)" else "subscript($begin)"
-    }
-}
-
-class UnitSubscriptNode(private val expr: Node, private val subscript: SubscriptNode) : Node() {
-    override fun exec(context: ExecutionContext): NodeValue {
-        val expr = expr.exec(context)
-        return if (subscript.extended) {
-            expr[subscript.begin.exec(context), subscript.end?.exec(context)]
-        } else {
-            expr[subscript.begin.exec(context)]
-        }
-    }
-
-    override fun assign(context: ExecutionContext, value: NodeValue) {
-        when (expr) {
-            is ParamListNode -> {
-                expr.subList(context, subscript).assign(context, value)
-            }
-            is IdentifierNode -> {
-                val storedValue = context.table[expr.name]!!
-                context.table[expr.name] = when (storedValue) {
-                    is StringValue -> {
-                        if (subscript.extended) storedValue.value.setSlice(
-                            subscript.begin.exec(context).asNumber()!!,
-                            subscript.end?.exec(context)?.asNumber(),
-                            value.asString()!!
-                        )?.toNodeValue()
-                        else storedValue.value.setSubscript(
-                            subscript.begin.exec(context).asNumber()!!, value.asString()!![0]
-                        )?.toNodeValue()
-                    }
-                    is ListValue -> {
-                        if (subscript.extended) storedValue.value.setSlice(
-                            subscript.begin.exec(context).asNumber()!!,
-                            subscript.end?.exec(context)?.asNumber(),
-                            value.asList()!!
-                        )?.toNodeValue()
-                        else storedValue.value.setSubscript(subscript.begin.exec(context).asNumber()!!, value)
-                            ?.toNodeValue()
-                    }
-                    else -> throw IllegalArgumentException("Expected StringValue or ListValue, got ${storedValue.javaClass.simpleName}")
-                } ?: throw IllegalArgumentException("Could not assign $value to range $subscript of $expr")
-            }
-            else -> {
-                expr.assign(context, value)
-            }
-        }
-    }
-
-    override fun toString(): String {
-        return "subscript($expr, $subscript)"
     }
 }
 
@@ -1097,7 +1159,7 @@ class Parser(private val tokens: List<Token>) {
         }
     }
 
-    private fun parseParamList(): ParamListNode {
+    private fun parseParamList(): ListNode {
         val params = mutableListOf<ExprNode>()
         if (peek().type != TokenType.PAREN_CLOSE && peek().type != TokenType.BRACKET_CLOSE) {
             params.add(parseExpr())
@@ -1106,7 +1168,7 @@ class Parser(private val tokens: List<Token>) {
                 params.add(parseExpr())
             }
         }
-        return ParamListNode(params)
+        return ListNode(params)
     }
 
     private fun parseUnitTail(unitHead: Node): Node {
@@ -1134,7 +1196,7 @@ class Parser(private val tokens: List<Token>) {
                     SubscriptNode(begin, false)
                 }
                 consume(TokenType.BRACKET_CLOSE)
-                UnitSubscriptNode(unitHead, subscript)
+                SubscriptViewNode(unitHead, subscript)
             }
             else -> unitHead
         }
