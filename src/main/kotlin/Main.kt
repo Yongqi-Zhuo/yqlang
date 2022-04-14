@@ -2,7 +2,8 @@ import java.util.regex.Pattern
 import kotlin.math.min
 
 enum class TokenType {
-    BRACE_OPEN, BRACE_CLOSE, PAREN_OPEN, PAREN_CLOSE, BRACKET_OPEN, BRACKET_CLOSE, SEMICOLON, COLON, ASSIGN, DOT, COMMA, INIT, MULT_OP, // MULTIPLY, DIVIDE, MODULO
+    BRACE_OPEN, BRACE_CLOSE, PAREN_OPEN, PAREN_CLOSE, BRACKET_OPEN, BRACKET_CLOSE, NEWLINE, SEMICOLON, COLON, ASSIGN, DOT, COMMA, INIT,
+    MULT_OP, // MULTIPLY, DIVIDE, MODULO
     ADD_OP, // PLUS, MINUS,
     COMP_OP, // EQUAL, NOT_EQUAL, GREATER, LESS, GREATER_EQUAL, LESS_EQUAL
     LOGIC_OP, //AND, OR
@@ -73,7 +74,7 @@ class Tokenizer(private val input: String) {
                 currentChar == '[' -> pushAndAdvance(Token(TokenType.BRACKET_OPEN, "["))
                 currentChar == ']' -> pushAndAdvance(Token(TokenType.BRACKET_CLOSE, "]"))
                 currentChar == ';' -> pushAndAdvance(Token(TokenType.SEMICOLON, ";"))
-                currentChar == '\n' -> pushAndAdvance(Token(TokenType.SEMICOLON, "\n")) // Maybe new semantics for new lines?
+                currentChar == '\n' -> pushAndAdvance(Token(TokenType.NEWLINE, "\n"))
                 currentChar == ':' -> pushAndAdvance(Token(TokenType.COLON, ":"))
                 currentChar == '.' -> pushAndAdvance(Token(TokenType.DOT, "."))
                 currentChar == ',' -> pushAndAdvance(Token(TokenType.COMMA, ","))
@@ -127,7 +128,7 @@ class Tokenizer(private val input: String) {
                     val start = index
                     do {
                         advance()
-                    } while (currentChar.isLetterOrDigit() && index < input.length)
+                    } while ((currentChar.isLetterOrDigit() || currentChar == '_') && index < input.length)
                     when (val value = input.substring(start, index)) {
                         "if" -> tokens.add(Token(TokenType.IF, "if"))
                         "else" -> tokens.add(Token(TokenType.ELSE, "else"))
@@ -457,8 +458,7 @@ class SubscriptNode(private val begin: ExprNode, private val extended: Boolean, 
 
 class SubscriptViewNode(private val list: Node, private val subscripts: List<SubscriptNode>) : Node() {
     constructor(
-        existing: Node,
-        subscript: SubscriptNode
+        existing: Node, subscript: SubscriptNode
     ) : this(
         if (existing is SubscriptViewNode) existing.list else existing,
         if (existing is SubscriptViewNode) existing.subscripts + subscript else listOf(subscript)
@@ -586,8 +586,7 @@ class SubscriptViewNode(private val list: Node, private val subscripts: List<Sub
                     val string = cur.asString()!!
                     val slice = hierarchy.lastSlice!!
                     val newString = if (slice.first > 0) string.substring(
-                        0,
-                        slice.first
+                        0, slice.first
                     ) else "" + value.toString() + if (slice.last + 1 < string.length) string.substring(slice.last + 1) else ""
                     return StringValue(newString)
                 } else {
@@ -973,6 +972,16 @@ class Parser(private val tokens: List<Token>) {
         return tokens[current++]
     }
 
+    private fun consumeLineBreak() {
+        while (true) {
+            when (peek().type) {
+                TokenType.SEMICOLON -> consume(TokenType.SEMICOLON)
+                TokenType.NEWLINE -> consume(TokenType.NEWLINE)
+                else -> return
+            }
+        }
+    }
+
     private fun isAtEnd() = current >= tokens.size
     private fun peek() = tokens[current]
 //    private fun peekNext() = tokens[current + 1]
@@ -983,12 +992,14 @@ class Parser(private val tokens: List<Token>) {
 
     private fun parseStmtList(): StmtListNode {
         val stmts = mutableListOf<Node>()
+        consumeLineBreak()
         while (peek().type != TokenType.EOF && peek().type != TokenType.BRACE_CLOSE) {
             stmts.add(parseStmt())
         }
         return StmtListNode(stmts)
     }
 
+    // calls consumeLineBreak() in the end of this function
     private fun parseStmt(): Node {
         val token = peek()
         return when (token.type) {
@@ -1006,12 +1017,14 @@ class Parser(private val tokens: List<Token>) {
             }
             TokenType.INIT -> {
                 consume(TokenType.INIT)
+                consumeLineBreak()
                 StmtInitNode(parseStmt())
             }
             TokenType.BRACE_OPEN -> {
                 consume(TokenType.BRACE_OPEN)
                 val stmtList = parseStmtList()
                 consume(TokenType.BRACE_CLOSE)
+                consumeLineBreak()
                 stmtList
             }
             else -> throw IllegalStateException("Unexpected token ${token.value}")
@@ -1036,33 +1049,25 @@ class Parser(private val tokens: List<Token>) {
             )
             else -> throw IllegalStateException("Unexpected token $assignToken")
         }
-        if (peek().type == TokenType.SEMICOLON) {
-            consume(TokenType.SEMICOLON)
-        }
+        consumeLineBreak()
         return stmt
     }
 
     private fun parseStmtAction(): Node {
         val action = consume(TokenType.ACTION)
         val expr = parseExpr()
-        if (peek().type == TokenType.SEMICOLON) {
-            consume(TokenType.SEMICOLON)
-        }
+        consumeLineBreak()
         return StmtActionNode(action, expr)
     }
 
     private fun parseStmtIf(): Node {
         consume(TokenType.IF)
-        if (peek().type == TokenType.PAREN_OPEN) {
-            consume(TokenType.PAREN_OPEN)
-        }
         val condition = parseExpr()
-        if (peek().type == TokenType.PAREN_CLOSE) {
-            consume(TokenType.PAREN_CLOSE)
-        }
+        consumeLineBreak()
         val ifBody = parseStmt()
         if (peek().type == TokenType.ELSE) {
             consume(TokenType.ELSE)
+            consumeLineBreak()
             val elseBody = parseStmt()
             return StmtIfNode(condition, ifBody, elseBody)
         }
@@ -1257,8 +1262,9 @@ fun main() {
     }
     val input = inputs.joinToString("\n")
 //    println(input)
-    val context =
-        ConsoleContext(SymbolTable(mapOf("text" to StringValue("this is a brand new world the world of parsing"))))
+    val st = SymbolTable(mapOf("text" to StringValue("this is a brand new world the world of parsing")))
+    st.unset("unknown")
+    val context = ConsoleContext(st)
 //    println("\nTokenizing...")
 //    val tokens = Tokenizer(input).scan()
 //    println(tokens.joinToString(", "))
