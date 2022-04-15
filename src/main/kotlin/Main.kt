@@ -157,7 +157,7 @@ abstract class NodeValue {
     fun asString() = (this as? StringValue)?.value
     fun asNumber() = (this as? NumberValue)?.value
     fun asList() = (this as? ListValue)?.value
-    fun asProcedure() = (this as? ProcedureValue)?.func
+    fun asProcedure() = (this as? ProcedureValue)
     operator fun plus(that: NodeValue): NodeValue {
         return when (this) {
             is BooleanValue -> {
@@ -326,9 +326,88 @@ class SubscriptValue(val begin: Int, val extended: Boolean, val end: Int? = null
     override fun toBoolean(): Boolean = true
 }
 
-class ProcedureValue(val func: Node) : NodeValue() {
-    override fun toString() = "procedure($func)"
+abstract class ProcedureValue(private val params: List<String>) : NodeValue() {
     override fun toBoolean(): Boolean = true
+    fun nameArgs(context: ExecutionContext) {
+        val argc = min(params.size, context.stack.args.size)
+        for (i in 0 until argc) {
+            context.stack[params[i]] = context.stack.args[i]
+        }
+    }
+    abstract fun execute(context: ExecutionContext): NodeValue
+    companion object {
+        val Slice = NodeProcedureValue(
+            listOf("begin", "end"),
+            SubscriptViewNode(
+                IdentifierNode(Token(TokenType.IDENTIFIER, "this")),
+                SubscriptNode(
+                    IdentifierNode(Token(TokenType.IDENTIFIER, "begin")),
+                    true,
+                    IdentifierNode(Token(TokenType.IDENTIFIER, "end"))
+                )
+            )
+        )
+        private val whiteSpace = Pattern.compile("\\s+")
+        val Split = BuiltinProcedureValue(listOf("separator"), "split") { context ->
+            val str = context.stack["this"]!!.asString()!!
+            val arg = context.stack["separator"]?.asString()
+            if (arg == null) {
+                whiteSpace.split(str).filter { it.isNotEmpty() }.map { it.toNodeValue() }.toList().toNodeValue()
+            } else {
+                str.split(arg).map { it.toNodeValue() }.toList().toNodeValue()
+            }
+        }
+        val Join = BuiltinProcedureValue(listOf("separator"), "join") { context ->
+            val list = context.stack["this"]!!.asList()!!
+            val arg = context.stack["separator"]?.asString()
+            if (arg == null) {
+                list.joinToString("").toNodeValue()
+            } else {
+                list.joinToString(arg).toNodeValue()
+            }
+        }
+        val Find = BuiltinProcedureValue(listOf("substring"), "find") { context ->
+            val expr = context.stack["this"]!!.asString()!!
+            val arg = context.stack["substring"]!!.asString()!!
+            expr.indexOf(arg).toNodeValue()
+        }
+        val Contains = BuiltinProcedureValue(listOf("substring"), "contains") { context ->
+            val expr = context.stack["this"]!!.asString()!!
+            val arg = context.stack["substring"]!!.asString()!!
+            expr.contains(arg).toNodeValue()
+        }
+        val Length = BuiltinProcedureValue(listOf(), "length") { context ->
+            when (val expr = context.stack["this"]!!) {
+                is StringValue -> expr.value.length.toNodeValue()
+                is ListValue -> expr.value.size.toNodeValue()
+                else -> throw RuntimeException("$expr has no such method as \"length\"")
+            }
+        }
+        val Time = BuiltinProcedureValue(listOf(""), "time") {
+            System.currentTimeMillis().toNodeValue()
+        }
+        val Random = BuiltinProcedureValue(listOf("begin", "end"), "random") { context ->
+            val min = context.stack["begin"]!!.asNumber()!!
+            val max = context.stack["end"]!!.asNumber()!!
+            (min until max).random().toNodeValue()
+        }
+    }
+}
+
+class BuiltinProcedureValue(params: List<String>, private val name: String, private val func: (context: ExecutionContext) -> NodeValue): ProcedureValue(params) {
+    override fun toString(): String = "builtin($name)"
+    override fun execute(context: ExecutionContext): NodeValue {
+        nameArgs(context)
+        return func(context)
+    }
+}
+
+class NodeProcedureValue(params: List<String>, private val func: Node) : ProcedureValue(params) {
+    override fun toString() = "procedure($func)"
+    override fun execute(context: ExecutionContext): NodeValue {
+        nameArgs(context)
+        return func.exec(context)
+    }
 }
 
 class NullValue : NodeValue() {
@@ -336,7 +415,7 @@ class NullValue : NodeValue() {
     override fun toBoolean(): Boolean = false
 }
 
-class Scope(private val parent: Scope?, private val symbols: MutableMap<String, NodeValue>) {
+class Scope(private val parent: Scope?, private val symbols: MutableMap<String, NodeValue>, val args: List<NodeValue> = emptyList()) {
     operator fun get(name: String): NodeValue? {
         return symbols[name] ?: parent?.get(name)
     }
@@ -356,32 +435,34 @@ class Scope(private val parent: Scope?, private val symbols: MutableMap<String, 
     }
     companion object {
         fun createRoot(defs: Map<String, NodeValue> = mapOf()): Scope {
-            val builtins = defs.toMutableMap()
-            builtins["true"] = BooleanValue(true)
-            builtins["false"] = BooleanValue(false)
-            builtins["null"] = NullValue()
-            builtins["slice"] = ProcedureValue(
-                SubscriptViewNode(
-                    IdentifierNode(Token(TokenType.IDENTIFIER, "this")),
-                    SubscriptNode(
-                        IdentifierNode(Token(TokenType.IDENTIFIER, "begin")),
-                        true,
-                        IdentifierNode(Token(TokenType.IDENTIFIER, "end"))
-                    )
-                )
+            val builtins = mutableMapOf(
+                "true" to true.toNodeValue(),
+                "false" to false.toNodeValue(),
+                "null" to NullValue(),
+                "slice" to ProcedureValue.Slice,
+                "split" to ProcedureValue.Split,
+                "join" to ProcedureValue.Join,
+                "find" to ProcedureValue.Find,
+                "contains" to ProcedureValue.Contains,
+                "length" to ProcedureValue.Length,
+                "time" to ProcedureValue.Time,
+                "random" to ProcedureValue.Random
             )
+            builtins.putAll(defs)
             return Scope(null, builtins)
         }
     }
 }
 
 class Stack(private val scopes: MutableList<Scope>) {
-    fun push() {
-        scopes.add(Scope(scopes.lastOrNull(), mutableMapOf()))
+    fun push(args: List<NodeValue> = emptyList()) {
+        scopes.add(Scope(scopes.lastOrNull(), mutableMapOf(), args))
     }
     fun pop() {
         scopes.removeAt(scopes.lastIndex)
     }
+    val args: List<NodeValue>
+        get() = scopes.last().args
     operator fun get(name: String): NodeValue? {
         return scopes.lastOrNull()?.get(name)
     }
@@ -389,27 +470,6 @@ class Stack(private val scopes: MutableList<Scope>) {
         scopes.lastOrNull()?.set(name, value)
     }
 }
-
-//class SymbolTable(definedSymbols: Map<String, NodeValue>? = null) {
-//    private val table = mutableMapOf<String, NodeValue>("true" to true.toNodeValue(), "false" to false.toNodeValue())
-////    private val stack = mutableListOf<>()
-//
-//    init {
-//        definedSymbols?.forEach { table[it.key] = it.value }
-//    }
-//
-//    operator fun get(name: String): NodeValue? {
-//        return table[name]
-//    }
-//
-//    operator fun set(name: String, value: NodeValue) {
-//        table[name] = value
-//    }
-//
-//    fun unset(name: String) {
-//        table.remove(name)
-//    }
-//}
 
 abstract class Node {
     abstract fun exec(context: ExecutionContext): NodeValue
@@ -697,65 +757,23 @@ class UnitCallNode(private val expr: Node, func: Token, private val args: ListNo
     private val func: String
 
     init {
-        if (func.type != TokenType.BUILTIN) {
-            throw IllegalArgumentException("Expected BUILTIN, got ${func.type}")
-        }
         this.func = func.value
     }
 
-    private val whiteSpace = Pattern.compile("\\s+")
     override fun exec(context: ExecutionContext): NodeValue {
         val args = args.exec(context).value
         return when (func) {
-            "split" -> {
-                val str = expr.exec(context).asString()!!
-                if (args.isEmpty()) {
-                    whiteSpace.split(str).filter { it.isNotEmpty() }.map { it.toNodeValue() }.toList().toNodeValue()
-                } else {
-                    str.split(args[0].asString()!!).map { it.toNodeValue() }.toList().toNodeValue()
-                }
-            }
-            "join" -> {
-                val list = expr.exec(context).asList()!!
-                if (args.isEmpty()) {
-                    list.joinToString("").toNodeValue()
-                } else {
-                    list.joinToString(args[0].asString()!!).toNodeValue()
-                }
-            }
-            "slice" -> {
-                context.stack.push()
-                context.stack["this"] = expr.exec(context)
-                context.stack["begin"] = args[0]
-                context.stack["end"] = args[1]
-                val res = context.stack["slice"]?.asProcedure()?.exec(context)
-                context.stack.pop()
-                res ?: NullValue()
-            }
-            "find" -> {
-                expr.exec(context).asString()!!.indexOf(args[0].asString()!!).toNodeValue()
-            }
-            "contains" -> {
-                expr.exec(context).asString()!!.contains(args[0].asString()!!).toNodeValue()
-            }
-            "length" -> {
-                when (val what = expr.exec(context)) {
-                    is StringValue -> what.value.length.toNodeValue()
-                    is ListValue -> what.value.size.toNodeValue()
-                    else -> throw IllegalArgumentException("Expected StringValue or ListValue, got ${what.javaClass.simpleName}")
-                }
-            }
             "defined" -> {
                 val idName = (expr as IdentifierNode).name
                 (context.stack[idName] != null).toNodeValue()
             }
-            "time" -> {
-                System.currentTimeMillis().toNodeValue()
+            else -> {
+                context.stack.push(args)
+                context.stack["this"] = expr.exec(context)
+                val res = context.stack[func]?.asProcedure()?.execute(context)
+                context.stack.pop()
+                res ?: NullValue()
             }
-            "random" -> {
-                (args[0].asNumber()!! until args[1].asNumber()!!).random().toNodeValue()
-            }
-            else -> throw IllegalArgumentException("Unknown builtin function $func")
         }
     }
 
