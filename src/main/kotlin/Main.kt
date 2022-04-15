@@ -25,11 +25,6 @@ fun IntRange.safeSlice(begin: Int, end: Int?): IntRange? {
     return first + b until first + e
 }
 
-fun String.safeSlice(start: Int, end: Int?): String = this.indices.safeSlice(start, end)?.let { this.slice(it) } ?: ""
-
-fun <E> List<E>.safeSlice(start: Int, end: Int?): List<E> =
-    this.indices.safeSlice(start, end)?.let { this.slice(it) } ?: emptyList()
-
 data class Token(val type: TokenType, val value: String) {
     override fun toString(): String {
         return if (type == TokenType.STRING) "$type: \"$value\"" else "$type: $value"
@@ -162,6 +157,7 @@ abstract class NodeValue {
     fun asString() = (this as? StringValue)?.value
     fun asNumber() = (this as? NumberValue)?.value
     fun asList() = (this as? ListValue)?.value
+    fun asProcedure() = (this as? ProcedureValue)?.func
     operator fun plus(that: NodeValue): NodeValue {
         return when (this) {
             is BooleanValue -> {
@@ -330,30 +326,90 @@ class SubscriptValue(val begin: Int, val extended: Boolean, val end: Int? = null
     override fun toBoolean(): Boolean = true
 }
 
+class ProcedureValue(val func: Node) : NodeValue() {
+    override fun toString() = "procedure($func)"
+    override fun toBoolean(): Boolean = true
+}
+
 class NullValue : NodeValue() {
     override fun toString() = "null"
     override fun toBoolean(): Boolean = false
 }
 
-class SymbolTable(definedSymbols: Map<String, NodeValue>? = null) {
-    private val table = mutableMapOf<String, NodeValue>("true" to true.toNodeValue(), "false" to false.toNodeValue())
-
-    init {
-        definedSymbols?.forEach { table[it.key] = it.value }
-    }
-
+class Scope(private val parent: Scope?, private val symbols: MutableMap<String, NodeValue>) {
     operator fun get(name: String): NodeValue? {
-        return table[name]
+        return symbols[name] ?: parent?.get(name)
     }
-
     operator fun set(name: String, value: NodeValue) {
-        table[name] = value
+        if(symbols[name] == null) {
+            if(parent?.get(name) == null) {
+                symbols[name] = value
+            } else {
+                parent[name] = value
+            }
+        } else {
+            symbols[name] = value
+        }
     }
-
-    fun unset(name: String) {
-        table.remove(name)
+    fun remove(name: String) {
+        symbols.remove(name)
+    }
+    companion object {
+        fun createRoot(defs: Map<String, NodeValue> = mapOf()): Scope {
+            val builtins = defs.toMutableMap()
+            builtins["true"] = BooleanValue(true)
+            builtins["false"] = BooleanValue(false)
+            builtins["null"] = NullValue()
+            builtins["slice"] = ProcedureValue(
+                SubscriptViewNode(
+                    IdentifierNode(Token(TokenType.IDENTIFIER, "this")),
+                    SubscriptNode(
+                        IdentifierNode(Token(TokenType.IDENTIFIER, "begin")),
+                        true,
+                        IdentifierNode(Token(TokenType.IDENTIFIER, "end"))
+                    )
+                )
+            )
+            return Scope(null, builtins)
+        }
     }
 }
+
+class Stack(private val scopes: MutableList<Scope>) {
+    fun push() {
+        scopes.add(Scope(scopes.lastOrNull(), mutableMapOf()))
+    }
+    fun pop() {
+        scopes.removeAt(scopes.lastIndex)
+    }
+    operator fun get(name: String): NodeValue? {
+        return scopes.lastOrNull()?.get(name)
+    }
+    operator fun set(name: String, value: NodeValue) {
+        scopes.lastOrNull()?.set(name, value)
+    }
+}
+
+//class SymbolTable(definedSymbols: Map<String, NodeValue>? = null) {
+//    private val table = mutableMapOf<String, NodeValue>("true" to true.toNodeValue(), "false" to false.toNodeValue())
+////    private val stack = mutableListOf<>()
+//
+//    init {
+//        definedSymbols?.forEach { table[it.key] = it.value }
+//    }
+//
+//    operator fun get(name: String): NodeValue? {
+//        return table[name]
+//    }
+//
+//    operator fun set(name: String, value: NodeValue) {
+//        table[name] = value
+//    }
+//
+//    fun unset(name: String) {
+//        table.remove(name)
+//    }
+//}
 
 abstract class Node {
     abstract fun exec(context: ExecutionContext): NodeValue
@@ -372,11 +428,11 @@ class IdentifierNode(token: Token) : Node() {
     }
 
     override fun exec(context: ExecutionContext): NodeValue {
-        return context.table[name] ?: NullValue()
+        return context.stack[name] ?: NullValue()
     }
 
     override fun assign(context: ExecutionContext, value: NodeValue) {
-        context.table[name] = value
+        context.stack[name] = value
     }
 
     override fun toString(): String {
@@ -443,7 +499,7 @@ class ListNode(private val items: List<ExprNode>) : Node() {
     }
 }
 
-class SubscriptNode(private val begin: ExprNode, private val extended: Boolean, private val end: ExprNode? = null) :
+class SubscriptNode(private val begin: Node, private val extended: Boolean, private val end: Node? = null) :
     Node() {
     override fun exec(context: ExecutionContext): SubscriptValue {
         return SubscriptValue(
@@ -668,14 +724,13 @@ class UnitCallNode(private val expr: Node, func: Token, private val args: ListNo
                 }
             }
             "slice" -> {
-                val col = expr.exec(context)
-                val start = args[0].asNumber()!!.toInt()
-                val end = args[1].asNumber()!!.toInt()
-                when (col) {
-                    is StringValue -> col.value.safeSlice(start, end).toNodeValue()
-                    is ListValue -> col.value.safeSlice(start, end).toNodeValue()
-                    else -> throw IllegalArgumentException("Expected StringValue or ListValue, got ${col.javaClass.simpleName}")
-                }
+                context.stack.push()
+                context.stack["this"] = expr.exec(context)
+                context.stack["begin"] = args[0]
+                context.stack["end"] = args[1]
+                val res = context.stack["slice"]?.asProcedure()?.exec(context)
+                context.stack.pop()
+                res ?: NullValue()
             }
             "find" -> {
                 expr.exec(context).asString()!!.indexOf(args[0].asString()!!).toNodeValue()
@@ -692,7 +747,7 @@ class UnitCallNode(private val expr: Node, func: Token, private val args: ListNo
             }
             "defined" -> {
                 val idName = (expr as IdentifierNode).name
-                (context.table[idName] != null).toNodeValue()
+                (context.stack[idName] != null).toNodeValue()
             }
             "time" -> {
                 System.currentTimeMillis().toNodeValue()
@@ -883,6 +938,19 @@ class ExprNode(private val comps: List<Node>, private val ops: List<String>) : N
     }
 }
 
+class StmtScopeNode(private val content: Node) : Node() {
+    override fun exec(context: ExecutionContext): NodeValue {
+        context.stack.push()
+        val res = content.exec(context)
+        context.stack.pop()
+        return res
+    }
+
+    override fun toString(): String {
+        return "scope($content)"
+    }
+}
+
 class StmtAssignNode(private val lvalue: Node, private val expr: Node) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
         val value = expr.exec(context)
@@ -1025,7 +1093,7 @@ class Parser(private val tokens: List<Token>) {
                 val stmtList = parseStmtList()
                 consume(TokenType.BRACE_CLOSE)
                 consumeLineBreak()
-                stmtList
+                StmtScopeNode(stmtList)
             }
             else -> throw IllegalStateException("Unexpected token ${token.value}")
         }
@@ -1220,20 +1288,15 @@ class Parser(private val tokens: List<Token>) {
     }
 }
 
-interface ExecutionContext {
-    val table: SymbolTable
-    val firstRun: Boolean
-    fun say(text: String)
+abstract class ExecutionContext(rootScope: Scope, val firstRun: Boolean) {
+    val stack: Stack
+    init {
+        stack = Stack(mutableListOf(rootScope))
+    }
+    abstract fun say(text: String)
 }
 
-class ConsoleContext(st: SymbolTable? = null) : ExecutionContext {
-    override val table: SymbolTable
-    override val firstRun: Boolean = true
-
-    init {
-        this.table = st ?: SymbolTable()
-    }
-
+class ConsoleContext(rootScope: Scope? = null) : ExecutionContext(rootScope ?: Scope.createRoot(), true) {
     override fun say(text: String) {
         println(text)
     }
@@ -1262,8 +1325,8 @@ fun main() {
     }
     val input = inputs.joinToString("\n")
 //    println(input)
-    val st = SymbolTable(mapOf("text" to StringValue("this is a brand new world the world of parsing")))
-    st.unset("unknown")
+    val st = Scope.createRoot(mapOf("text" to StringValue("this is a brand new world the world of parsing")))
+    st.remove("unknown")
     val context = ConsoleContext(st)
 //    println("\nTokenizing...")
 //    val tokens = Tokenizer(input).scan()
