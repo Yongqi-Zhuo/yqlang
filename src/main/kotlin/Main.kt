@@ -7,7 +7,7 @@ enum class TokenType {
     ADD_OP, // PLUS, MINUS,
     COMP_OP, // EQUAL, NOT_EQUAL, GREATER, LESS, GREATER_EQUAL, LESS_EQUAL
     LOGIC_OP, //AND, OR
-    NOT, IF, ELSE, ACTION, IDENTIFIER, BUILTIN, NUMBER, STRING, EOF
+    NOT, IF, ELSE, ACTION, IDENTIFIER, NUMBER, STRING, EOF
 }
 
 fun IntRange.safeSubscript(index: Int): Int? {
@@ -129,15 +129,6 @@ class Tokenizer(private val input: String) {
                         "else" -> tokens.add(Token(TokenType.ELSE, "else"))
                         "init" -> tokens.add(Token(TokenType.INIT, "init"))
                         "say" -> tokens.add(Token(TokenType.ACTION, "say"))
-                        "split" -> tokens.add(Token(TokenType.BUILTIN, "split"))
-                        "join" -> tokens.add(Token(TokenType.BUILTIN, "join"))
-                        "slice" -> tokens.add(Token(TokenType.BUILTIN, "slice"))
-                        "find" -> tokens.add(Token(TokenType.BUILTIN, "find"))
-                        "contains" -> tokens.add(Token(TokenType.BUILTIN, "contains"))
-                        "length" -> tokens.add(Token(TokenType.BUILTIN, "length"))
-                        "defined" -> tokens.add(Token(TokenType.BUILTIN, "defined"))
-                        "time" -> tokens.add(Token(TokenType.BUILTIN, "time"))
-                        "random" -> tokens.add(Token(TokenType.BUILTIN, "random"))
                         // "text" -> tokens.add(Token(TokenType.IDENTIFIER, "text")) // events are special identifiers
                         else -> tokens.add(Token(TokenType.IDENTIFIER, value))
                     }
@@ -301,6 +292,8 @@ fun String.toNodeValue() = StringValue(this)
 class ListValue(val value: List<NodeValue>) : NodeValue() {
     override fun toString() = "[${value.joinToString(", ")}]"
     override fun toBoolean(): Boolean = value.isNotEmpty()
+    val size: Int get() = value.size
+    operator fun get(index: Int): NodeValue = value[index]
 }
 
 fun List<NodeValue>.toNodeValue() = ListValue(this)
@@ -326,18 +319,11 @@ class SubscriptValue(val begin: Int, val extended: Boolean, val end: Int? = null
     override fun toBoolean(): Boolean = true
 }
 
-abstract class ProcedureValue(private val params: List<String>) : NodeValue() {
+abstract class ProcedureValue(protected val params: List<String>) : NodeValue() {
     override fun toBoolean(): Boolean = true
-    fun nameArgs(context: ExecutionContext) {
-        val argc = min(params.size, context.stack.args.size)
-        for (i in 0 until argc) {
-            context.stack[params[i]] = context.stack.args[i]
-        }
-    }
     abstract fun execute(context: ExecutionContext): NodeValue
     companion object {
         val Slice = NodeProcedureValue(
-            listOf("begin", "end"),
             SubscriptViewNode(
                 IdentifierNode(Token(TokenType.IDENTIFIER, "this")),
                 SubscriptNode(
@@ -345,10 +331,11 @@ abstract class ProcedureValue(private val params: List<String>) : NodeValue() {
                     true,
                     IdentifierNode(Token(TokenType.IDENTIFIER, "end"))
                 )
-            )
+            ),
+            listOf("this", "begin", "end")
         )
         private val whiteSpace = Pattern.compile("\\s+")
-        val Split = BuiltinProcedureValue(listOf("separator"), "split") { context ->
+        val Split = BuiltinProcedureValue("split", listOf("this", "separator")) { context ->
             val str = context.stack["this"]!!.asString()!!
             val arg = context.stack["separator"]?.asString()
             if (arg == null) {
@@ -357,7 +344,7 @@ abstract class ProcedureValue(private val params: List<String>) : NodeValue() {
                 str.split(arg).map { it.toNodeValue() }.toList().toNodeValue()
             }
         }
-        val Join = BuiltinProcedureValue(listOf("separator"), "join") { context ->
+        val Join = BuiltinProcedureValue("join", listOf("this", "separator")) { context ->
             val list = context.stack["this"]!!.asList()!!
             val arg = context.stack["separator"]?.asString()
             if (arg == null) {
@@ -366,27 +353,27 @@ abstract class ProcedureValue(private val params: List<String>) : NodeValue() {
                 list.joinToString(arg).toNodeValue()
             }
         }
-        val Find = BuiltinProcedureValue(listOf("substring"), "find") { context ->
+        val Find = BuiltinProcedureValue("find", listOf("this", "substring")) { context ->
             val expr = context.stack["this"]!!.asString()!!
             val arg = context.stack["substring"]!!.asString()!!
             expr.indexOf(arg).toNodeValue()
         }
-        val Contains = BuiltinProcedureValue(listOf("substring"), "contains") { context ->
+        val Contains = BuiltinProcedureValue("contains", listOf("this", "substring")) { context ->
             val expr = context.stack["this"]!!.asString()!!
             val arg = context.stack["substring"]!!.asString()!!
             expr.contains(arg).toNodeValue()
         }
-        val Length = BuiltinProcedureValue(listOf(), "length") { context ->
+        val Length = BuiltinProcedureValue("length", listOf("this")) { context ->
             when (val expr = context.stack["this"]!!) {
                 is StringValue -> expr.value.length.toNodeValue()
                 is ListValue -> expr.value.size.toNodeValue()
                 else -> throw RuntimeException("$expr has no such method as \"length\"")
             }
         }
-        val Time = BuiltinProcedureValue(listOf(""), "time") {
+        val Time = BuiltinProcedureValue("time", listOf()) {
             System.currentTimeMillis().toNodeValue()
         }
-        val Random = BuiltinProcedureValue(listOf("begin", "end"), "random") { context ->
+        val Random = BuiltinProcedureValue("random", listOf("this", "begin", "end")) { context ->
             val min = context.stack["begin"]!!.asNumber()!!
             val max = context.stack["end"]!!.asNumber()!!
             (min until max).random().toNodeValue()
@@ -394,18 +381,18 @@ abstract class ProcedureValue(private val params: List<String>) : NodeValue() {
     }
 }
 
-class BuiltinProcedureValue(params: List<String>, private val name: String, private val func: (context: ExecutionContext) -> NodeValue): ProcedureValue(params) {
+class BuiltinProcedureValue(private val name: String, params: List<String>, private val func: (context: ExecutionContext) -> NodeValue): ProcedureValue(params) {
     override fun toString(): String = "builtin($name)"
     override fun execute(context: ExecutionContext): NodeValue {
-        nameArgs(context)
+        context.stack.nameArgs(params)
         return func(context)
     }
 }
 
-class NodeProcedureValue(params: List<String>, private val func: Node) : ProcedureValue(params) {
+class NodeProcedureValue(private val func: Node, params: List<String>) : ProcedureValue(params) {
     override fun toString() = "procedure($func)"
     override fun execute(context: ExecutionContext): NodeValue {
-        nameArgs(context)
+        context.stack.nameArgs(params)
         return func.exec(context)
     }
 }
@@ -415,20 +402,12 @@ class NullValue : NodeValue() {
     override fun toBoolean(): Boolean = false
 }
 
-class Scope(private val parent: Scope?, private val symbols: MutableMap<String, NodeValue>, val args: List<NodeValue> = emptyList()) {
+class Scope(private val symbols: MutableMap<String, NodeValue>, val args: ListValue = ListValue(emptyList())) {
     operator fun get(name: String): NodeValue? {
-        return symbols[name] ?: parent?.get(name)
+        return symbols[name]
     }
     operator fun set(name: String, value: NodeValue) {
-        if(symbols[name] == null) {
-            if(parent?.get(name) == null) {
-                symbols[name] = value
-            } else {
-                parent[name] = value
-            }
-        } else {
-            symbols[name] = value
-        }
+        symbols[name] = value
     }
     fun remove(name: String) {
         symbols.remove(name)
@@ -449,25 +428,44 @@ class Scope(private val parent: Scope?, private val symbols: MutableMap<String, 
                 "random" to ProcedureValue.Random
             )
             builtins.putAll(defs)
-            return Scope(null, builtins)
+            return Scope(builtins)
         }
     }
 }
 
 class Stack(private val scopes: MutableList<Scope>) {
-    fun push(args: List<NodeValue> = emptyList()) {
-        scopes.add(Scope(scopes.lastOrNull(), mutableMapOf(), args))
+    // The first argument must be the value of "this"
+    fun push(args: ListValue = emptyList<NodeValue>().toNodeValue()) {
+        scopes.add(Scope(mutableMapOf(), args))
     }
     fun pop() {
         scopes.removeAt(scopes.lastIndex)
     }
-    val args: List<NodeValue>
+    private val args: ListValue
         get() = scopes.last().args
+    fun nameArgs(params: List<String>) {
+        val argc = min(params.size, args.size)
+        for (i in 0 until argc) {
+            scopes.last()[params[i]] = args[i]
+        }
+    }
     operator fun get(name: String): NodeValue? {
-        return scopes.lastOrNull()?.get(name)
+        for (scope in scopes.reversed()) {
+            val value = scope[name]
+            if (value != null) {
+                return value
+            }
+        }
+        return null
     }
     operator fun set(name: String, value: NodeValue) {
-        scopes.lastOrNull()?.set(name, value)
+        for (scope in scopes.reversed()) {
+            if (scope[name] != null) {
+                scope[name] = value
+                return
+            }
+        }
+        scopes.last()[name] = value
     }
 }
 
@@ -753,32 +751,26 @@ class SubscriptViewNode(private val list: Node, private val subscripts: List<Sub
     }
 }
 
-class UnitCallNode(private val expr: Node, func: Token, private val args: ListNode) : Node() {
-    private val func: String
-
-    init {
-        this.func = func.value
-    }
-
+class ProcedureNode(private val caller: Node?, private val func: IdentifierNode, private val args: ListNode) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
         val args = args.exec(context).value
-        return when (func) {
+        return when (func.name) {
             "defined" -> {
-                val idName = (expr as IdentifierNode).name
+                val idName = (caller as IdentifierNode).name
                 (context.stack[idName] != null).toNodeValue()
             }
             else -> {
-                context.stack.push(args)
-                context.stack["this"] = expr.exec(context)
-                val res = context.stack[func]?.asProcedure()?.execute(context)
+                val procedure = context.stack[func.name]!!.asProcedure()!!
+                context.stack.push((listOf(caller?.exec(context) ?: NullValue()) + args).toNodeValue())
+                val res = procedure.execute(context)
                 context.stack.pop()
-                res ?: NullValue()
+                res
             }
         }
     }
 
     override fun toString(): String {
-        return "func($func, $expr, $args)"
+        return if(caller == null) "$func($args)" else "$caller.$func($args)"
     }
 }
 
@@ -956,19 +948,6 @@ class ExprNode(private val comps: List<Node>, private val ops: List<String>) : N
     }
 }
 
-class StmtScopeNode(private val content: Node) : Node() {
-    override fun exec(context: ExecutionContext): NodeValue {
-        context.stack.push()
-        val res = content.exec(context)
-        context.stack.pop()
-        return res
-    }
-
-    override fun toString(): String {
-        return "scope($content)"
-    }
-}
-
 class StmtAssignNode(private val lvalue: Node, private val expr: Node) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
         val value = expr.exec(context)
@@ -1005,12 +984,11 @@ class StmtIfNode(
     private val condition: Node, private val ifBody: Node, private val elseBody: Node? = null
 ) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
-        if (condition.exec(context).toBoolean()) {
+        return if (condition.exec(context).toBoolean()) {
             ifBody.exec(context)
         } else {
-            elseBody?.exec(context)
+            elseBody?.exec(context) ?: NullValue()
         }
-        return NullValue()
     }
 
     override fun toString(): String {
@@ -1034,10 +1012,13 @@ class StmtInitNode(private val stmt: Node) : Node() {
 
 class StmtListNode(private val stmts: List<Node>) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
+        context.stack.push()
+        var res: NodeValue = NullValue()
         for (node in stmts) {
-            node.exec(context)
+            res = node.exec(context)
         }
-        return NullValue()
+        context.stack.pop()
+        return res
     }
 
     override fun toString(): String {
@@ -1089,12 +1070,6 @@ class Parser(private val tokens: List<Token>) {
     private fun parseStmt(): Node {
         val token = peek()
         return when (token.type) {
-            TokenType.IDENTIFIER -> {
-                parseStmtAssign()
-            }
-            TokenType.BRACKET_OPEN -> {
-                parseStmtAssign()
-            }
             TokenType.ACTION -> {
                 parseStmtAction()
             }
@@ -1111,14 +1086,21 @@ class Parser(private val tokens: List<Token>) {
                 val stmtList = parseStmtList()
                 consume(TokenType.BRACE_CLOSE)
                 consumeLineBreak()
-                StmtScopeNode(stmtList)
+                stmtList
             }
-            else -> throw IllegalStateException("Unexpected token ${token.value}")
+            else -> {
+                val expr = parseExpr()
+                if(peek().type == TokenType.ASSIGN) {
+                    parseStmtAssign(expr)
+                } else {
+                    consumeLineBreak()
+                    expr
+                }
+            }
         }
     }
 
-    private fun parseStmtAssign(): Node {
-        val lvalue = parseExpr()
+    private fun parseStmtAssign(lvalue: Node): Node {
         val assignToken = consume(TokenType.ASSIGN)
         val stmt = when (assignToken.value) {
             "=" -> StmtAssignNode(lvalue, parseExpr())
@@ -1231,7 +1213,17 @@ class Parser(private val tokens: List<Token>) {
     private fun parseUnitHead(): Node {
         val token = peek()
         return when (token.type) {
-            TokenType.IDENTIFIER -> parseIdentifier()
+            TokenType.IDENTIFIER -> {
+                val identifier = parseIdentifier()
+                if (peek().type == TokenType.PAREN_OPEN) {
+                    consume(TokenType.PAREN_OPEN)
+                    val arguments = parseParamList()
+                    consume(TokenType.PAREN_CLOSE)
+                    ProcedureNode(null, identifier, arguments)
+                } else {
+                    identifier
+                }
+            }
             TokenType.NUMBER -> parseNumber()
             TokenType.STRING -> parseString()
             TokenType.PAREN_OPEN -> {
@@ -1267,11 +1259,11 @@ class Parser(private val tokens: List<Token>) {
         return when (token.type) {
             TokenType.DOT -> {
                 consume(TokenType.DOT)
-                val func = consume(TokenType.BUILTIN)
+                val func = IdentifierNode(consume(TokenType.IDENTIFIER))
                 consume(TokenType.PAREN_OPEN)
                 val params = parseParamList()
                 consume(TokenType.PAREN_CLOSE)
-                UnitCallNode(unitHead, func, params)
+                ProcedureNode(unitHead, func, params)
             }
             TokenType.BRACKET_OPEN -> {
                 consume(TokenType.BRACKET_OPEN)
