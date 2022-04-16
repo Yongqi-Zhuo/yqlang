@@ -1,13 +1,17 @@
+import java.util.concurrent.CompletableFuture
 import java.util.regex.Pattern
 import kotlin.math.min
+import java.util.concurrent.TimeUnit
 
 enum class TokenType {
-    BRACE_OPEN, BRACE_CLOSE, PAREN_OPEN, PAREN_CLOSE, BRACKET_OPEN, BRACKET_CLOSE, NEWLINE, SEMICOLON, COLON, ASSIGN, DOT, COMMA, INIT,
+    BRACE_OPEN, BRACE_CLOSE, PAREN_OPEN, PAREN_CLOSE, BRACKET_OPEN, BRACKET_CLOSE, // Braces and parentheses
+    NEWLINE, SEMICOLON, COLON, ASSIGN, DOT, COMMA, INIT, // Statements
+    IF, ELSE, FUNC, RETURN, WHILE, CONTINUE, BREAK, // Control flow
     MULT_OP, // MULTIPLY, DIVIDE, MODULO
     ADD_OP, // PLUS, MINUS,
     COMP_OP, // EQUAL, NOT_EQUAL, GREATER, LESS, GREATER_EQUAL, LESS_EQUAL
     LOGIC_OP, //AND, OR
-    NOT, IF, ELSE, ACTION, IDENTIFIER, NUMBER, STRING, EOF
+    NOT, ACTION, IDENTIFIER, NUMBER, STRING, EOF
 }
 
 fun IntRange.safeSubscript(index: Int): Int? {
@@ -127,6 +131,11 @@ class Tokenizer(private val input: String) {
                     when (val value = input.substring(start, index)) {
                         "if" -> tokens.add(Token(TokenType.IF, "if"))
                         "else" -> tokens.add(Token(TokenType.ELSE, "else"))
+                        "func" -> tokens.add(Token(TokenType.FUNC, "func"))
+                        "return" -> tokens.add(Token(TokenType.RETURN, "return"))
+                        "while" -> tokens.add(Token(TokenType.WHILE, "while"))
+                        "continue" -> tokens.add(Token(TokenType.CONTINUE, "continue"))
+                        "break" -> tokens.add(Token(TokenType.BREAK, "break"))
                         "init" -> tokens.add(Token(TokenType.INIT, "init"))
                         "say" -> tokens.add(Token(TokenType.ACTION, "say"))
                         // "text" -> tokens.add(Token(TokenType.IDENTIFIER, "text")) // events are special identifiers
@@ -432,8 +441,14 @@ class Scope(private val symbols: MutableMap<String, NodeValue>, val args: ListVa
         }
     }
 }
+typealias SymbolTable = Scope
 
-class Stack(private val scopes: MutableList<Scope>) {
+class Stack(rootScope: Scope, private var declarations: MutableMap<String, NodeValue>) {
+    private val scopes: MutableList<Scope>
+    init {
+        scopes = mutableListOf(rootScope)
+    }
+
     // The first argument must be the value of "this"
     fun push(args: ListValue = emptyList<NodeValue>().toNodeValue()) {
         scopes.add(Scope(mutableMapOf(), args))
@@ -456,7 +471,7 @@ class Stack(private val scopes: MutableList<Scope>) {
                 return value
             }
         }
-        return null
+        return declarations[name]
     }
     operator fun set(name: String, value: NodeValue) {
         for (scope in scopes.reversed()) {
@@ -761,9 +776,13 @@ class ProcedureNode(private val caller: Node?, private val func: IdentifierNode,
             }
             else -> {
                 val procedure = context.stack[func.name]!!.asProcedure()!!
-                context.stack.push((listOf(caller?.exec(context) ?: NullValue()) + args).toNodeValue())
-                val res = procedure.execute(context)
-                context.stack.pop()
+                val res: NodeValue
+                try {
+                    context.stack.push((listOf(caller?.exec(context) ?: NullValue()) + args).toNodeValue())
+                    res = procedure.execute(context)
+                } finally {
+                    context.stack.pop()
+                }
                 res
             }
         }
@@ -1010,14 +1029,77 @@ class StmtInitNode(private val stmt: Node) : Node() {
     }
 }
 
+class ReturnException(val value: NodeValue) : Exception()
+class StmtFuncNode(private val content: Node) : Node() {
+    override fun exec(context: ExecutionContext): NodeValue {
+        val res: NodeValue?
+        try {
+            res = content.exec(context)
+        } catch (e: ReturnException) {
+            return e.value
+        }
+        return res
+    }
+    override fun toString(): String {
+        return "func($content)"
+    }
+}
+class StmtReturnNode(private val expr: Node) : Node() {
+    override fun exec(context: ExecutionContext): NodeValue {
+        throw ReturnException(expr.exec(context))
+    }
+    override fun toString(): String {
+        return "return($expr)"
+    }
+}
+
+class StmtWhileNode(private val condition: Node, private val body: Node) : Node() {
+    override fun exec(context: ExecutionContext): NodeValue {
+        while (condition.exec(context).toBoolean()) {
+            try {
+                body.exec(context)
+            } catch (continueEx: ContinueException) {
+                continue
+            } catch (breakEx: BreakException) {
+                break
+            }
+        }
+        return NullValue()
+    }
+    override fun toString(): String {
+        return "while($condition, $body)"
+    }
+}
+class ContinueException : Exception()
+class StmtContinueNode : Node() {
+    override fun exec(context: ExecutionContext): NodeValue {
+        throw ContinueException()
+    }
+    override fun toString(): String {
+        return "continue"
+    }
+}
+class BreakException : Exception()
+class StmtBreakNode : Node() {
+    override fun exec(context: ExecutionContext): NodeValue {
+        throw BreakException()
+    }
+    override fun toString(): String {
+        return "break"
+    }
+}
+
 class StmtListNode(private val stmts: List<Node>) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
-        context.stack.push()
         var res: NodeValue = NullValue()
-        for (node in stmts) {
-            res = node.exec(context)
+        try {
+            context.stack.push()
+            for (node in stmts) {
+                res = node.exec(context)
+            }
+        } finally {
+            context.stack.pop()
         }
-        context.stack.pop()
         return res
     }
 
@@ -1087,6 +1169,46 @@ class Parser(private val tokens: List<Token>) {
                 consume(TokenType.BRACE_CLOSE)
                 consumeLineBreak()
                 stmtList
+            }
+            TokenType.FUNC -> {
+                consume(TokenType.FUNC)
+                val func = parseIdentifier()
+                consume(TokenType.PAREN_OPEN)
+                val params = mutableListOf<IdentifierNode>()
+                if (peek().type != TokenType.PAREN_CLOSE) {
+                    params.add(parseIdentifier())
+                    while (peek().type != TokenType.PAREN_CLOSE) {
+                        consume(TokenType.COMMA)
+                        params.add(parseIdentifier())
+                    }
+                }
+                consume(TokenType.PAREN_CLOSE)
+                consumeLineBreak()
+                val body = parseStmt()
+                declarations[func.name] = NodeProcedureValue(StmtFuncNode(body), params.map { it.name })
+                func
+            }
+            TokenType.RETURN -> {
+                consume(TokenType.RETURN)
+                consumeLineBreak()
+                StmtReturnNode(parseExpr())
+            }
+            TokenType.WHILE -> {
+                consume(TokenType.WHILE)
+                val condition = parseExpr()
+                consumeLineBreak()
+                val body = parseStmt()
+                StmtWhileNode(condition, body)
+            }
+            TokenType.CONTINUE -> {
+                consume(TokenType.CONTINUE)
+                consumeLineBreak()
+                StmtContinueNode()
+            }
+            TokenType.BREAK -> {
+                consume(TokenType.BREAK)
+                consumeLineBreak()
+                StmtBreakNode()
             }
             else -> {
                 val expr = parseExpr()
@@ -1293,36 +1415,60 @@ class Parser(private val tokens: List<Token>) {
         return unit
     }
 
-    fun parse(): Node {
-        return parseStmtList()
+    private var declarations: MutableMap<String, NodeValue> = mutableMapOf()
+    fun parse(): Pair<Node, MutableMap<String, NodeValue>> {
+        declarations = mutableMapOf()
+        return Pair(parseStmtList(), declarations)
     }
 }
 
-abstract class ExecutionContext(rootScope: Scope, val firstRun: Boolean) {
+abstract class ExecutionContext(rootScope: Scope, declarations: MutableMap<String, NodeValue>, val firstRun: Boolean) {
     val stack: Stack
     init {
-        stack = Stack(mutableListOf(rootScope))
+        stack = Stack(rootScope, declarations)
     }
     abstract fun say(text: String)
 }
 
-class ConsoleContext(rootScope: Scope? = null) : ExecutionContext(rootScope ?: Scope.createRoot(), true) {
+class ConsoleContext(rootScope: Scope? = null, declarations: MutableMap<String, NodeValue>) : ExecutionContext(rootScope ?: Scope.createRoot(), declarations, true) {
     override fun say(text: String) {
         println(text)
     }
 }
 
-class Interpreter(source: String) {
+class ControlledContext(rootScope: Scope, declarations: MutableMap<String, NodeValue>, firstRun: Boolean) : ExecutionContext(rootScope, declarations, firstRun) {
+    private val record = mutableListOf<String>()
+    override fun say(text: String) {
+        record.add(text)
+    }
+    fun dumpOutput(): String {
+        val str = record.joinToString("\n")
+        record.clear()
+        return str
+    }
+}
+
+class Interpreter(source: String, private val restricted: Boolean = false) {
     private val ast: Node
+    val declarations: MutableMap<String, NodeValue>
 
     init {
         val tokens = Tokenizer(source).scan()
         val parser = Parser(tokens)
-        ast = parser.parse()
+        val res = parser.parse()
+        ast = res.first
+        declarations = res.second
     }
 
     fun run(context: ExecutionContext) {
-        ast.exec(context)
+        if (restricted) {
+            val task = CompletableFuture.runAsync {
+                ast.exec(context)
+            }.orTimeout(800, TimeUnit.MILLISECONDS)
+            task.get()
+        } else {
+            ast.exec(context)
+        }
     }
 }
 
@@ -1335,9 +1481,6 @@ fun main() {
     }
     val input = inputs.joinToString("\n")
 //    println(input)
-    val st = Scope.createRoot(mapOf("text" to StringValue("this is a brand new world the world of parsing")))
-    st.remove("unknown")
-    val context = ConsoleContext(st)
 //    println("\nTokenizing...")
 //    val tokens = Tokenizer(input).scan()
 //    println(tokens.joinToString(", "))
@@ -1346,7 +1489,10 @@ fun main() {
 //    println(ast)
 //    println("\nExecuting...")
 //    ast.exec(context)
-    val interpreter = Interpreter(input)
+    val interpreter = Interpreter(input, true)
+    val st = SymbolTable.createRoot(mapOf("text" to StringValue("this is a brand new world the world of parsing")))
+    st.remove("unknown")
+    val context = ConsoleContext(st, interpreter.declarations)
     interpreter.run(context)
     println("\nDone!")
 }
