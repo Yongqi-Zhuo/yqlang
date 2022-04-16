@@ -6,7 +6,7 @@ import java.util.concurrent.TimeUnit
 enum class TokenType {
     BRACE_OPEN, BRACE_CLOSE, PAREN_OPEN, PAREN_CLOSE, BRACKET_OPEN, BRACKET_CLOSE, // Braces and parentheses
     NEWLINE, SEMICOLON, COLON, ASSIGN, DOT, COMMA, INIT, // Statements
-    IF, ELSE, FUNC, RETURN, WHILE, CONTINUE, BREAK, // Control flow
+    IF, ELSE, FUNC, RETURN, WHILE, CONTINUE, BREAK, FOR, IN, // Control flow
     MULT_OP, // MULTIPLY, DIVIDE, MODULO
     ADD_OP, // PLUS, MINUS,
     COMP_OP, // EQUAL, NOT_EQUAL, GREATER, LESS, GREATER_EQUAL, LESS_EQUAL
@@ -136,6 +136,8 @@ class Tokenizer(private val input: String) {
                         "while" -> tokens.add(Token(TokenType.WHILE, "while"))
                         "continue" -> tokens.add(Token(TokenType.CONTINUE, "continue"))
                         "break" -> tokens.add(Token(TokenType.BREAK, "break"))
+                        "for" -> tokens.add(Token(TokenType.FOR, "for"))
+                        "in" -> tokens.add(Token(TokenType.IN, "in"))
                         "init" -> tokens.add(Token(TokenType.INIT, "init"))
                         "say" -> tokens.add(Token(TokenType.ACTION, "say"))
                         // "text" -> tokens.add(Token(TokenType.IDENTIFIER, "text")) // events are special identifiers
@@ -387,6 +389,11 @@ abstract class ProcedureValue(protected val params: List<String>) : NodeValue() 
             val max = context.stack["end"]!!.asNumber()!!
             (min until max).random().toNodeValue()
         }
+        val Range = BuiltinProcedureValue("range", listOf("this", "begin", "end")) { context ->
+            val begin = context.stack["begin"]!!.asNumber()!!
+            val end = context.stack["end"]?.asNumber()
+            return@BuiltinProcedureValue if (end == null) RangeValue(0, begin) else RangeValue(begin, end)
+        }
     }
 }
 
@@ -404,6 +411,11 @@ class NodeProcedureValue(private val func: Node, params: List<String>) : Procedu
         context.stack.nameArgs(params)
         return func.exec(context)
     }
+}
+
+class RangeValue(val begin: Long, val end: Long): NodeValue() {
+    override fun toBoolean() = true
+    override fun toString() = "range($begin, $end)"
 }
 
 class NullValue : NodeValue() {
@@ -434,7 +446,8 @@ class Scope(private val symbols: MutableMap<String, NodeValue>, val args: ListVa
                 "contains" to ProcedureValue.Contains,
                 "length" to ProcedureValue.Length,
                 "time" to ProcedureValue.Time,
-                "random" to ProcedureValue.Random
+                "random" to ProcedureValue.Random,
+                "range" to ProcedureValue.Range
             )
             builtins.putAll(defs)
             return Scope(builtins)
@@ -1089,6 +1102,41 @@ class StmtBreakNode : Node() {
     }
 }
 
+class StmtForNode(private val iterator: IdentifierNode, private val collection: Node, private val body: Node) : Node() {
+    override fun exec(context: ExecutionContext): NodeValue {
+        val collection = collection.exec(context)
+        var res: NodeValue = NullValue()
+        when (collection) {
+            is ListValue -> {
+                for (i in collection.value) {
+                    context.stack[iterator.name] = i
+                    try {
+                        res = body.exec(context)
+                    } catch (continueEx: ContinueException) {
+                        continue
+                    } catch (breakEx: BreakException) {
+                        break
+                    }
+                }
+            }
+            is RangeValue -> {
+                for (i in collection.begin until collection.end) {
+                    context.stack[iterator.name] = i.toNodeValue()
+                    try {
+                        res = body.exec(context)
+                    } catch (continueEx: ContinueException) {
+                        continue
+                    } catch (breakEx: BreakException) {
+                        break
+                    }
+                }
+            }
+            else -> throw RuntimeException("for loop can only iterate over lists or ranges")
+        }
+        return res
+    }
+}
+
 class StmtListNode(private val stmts: List<Node>) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
         var res: NodeValue = NullValue()
@@ -1209,6 +1257,15 @@ class Parser(private val tokens: List<Token>) {
                 consume(TokenType.BREAK)
                 consumeLineBreak()
                 StmtBreakNode()
+            }
+            TokenType.FOR -> {
+                consume(TokenType.FOR)
+                val iterator = parseIdentifier()
+                consume(TokenType.IN)
+                val collection = parseExpr()
+                consumeLineBreak()
+                val body = parseStmt()
+                StmtForNode(iterator, collection, body)
             }
             else -> {
                 val expr = parseExpr()
