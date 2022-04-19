@@ -1,8 +1,6 @@
 package top.saucecode
 
-import kotlinx.serialization.KSerializer
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.Serializable
+import kotlinx.serialization.*
 import kotlinx.serialization.descriptors.*
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
@@ -922,25 +920,47 @@ class NullValue : NodeValue() {
     override fun toBoolean(): Boolean = false
 }
 
-@Serializable
 class Scope(private val symbols: MutableMap<String, NodeValue>, val args: ListValue = ListValue(emptyList())) {
     operator fun get(name: String): NodeValue? {
         return symbols[name]
     }
-
     operator fun set(name: String, value: NodeValue) {
         symbols[name] = value
     }
-
     fun remove(name: String) {
         symbols.remove(name)
     }
-
+    override fun toString(): String {
+        return "Scope(symbols=$symbols, args=$args)"
+    }
     companion object {
         fun createRoot(defs: Map<String, NodeValue> = mapOf()): Scope {
             val builtins = defs.toMutableMap()
             return Scope(builtins)
         }
+        fun deserialize(input: String): Scope {
+            val dict = Json.decodeFromString<MutableMap<String, String>>(serializer(), input)
+            val reconstructed = mutableMapOf<String, NodeValue>()
+            try {
+                dict.forEach { (key, value) ->
+                    reconstructed[key] = Json.decodeFromString(NodeValue.serializer(), value)
+                }
+            } catch (_: Exception) {
+            }
+            return Scope(reconstructed)
+        }
+    }
+    fun serialize(): String {
+        val filteredSymbols = mutableMapOf<String, String>()
+        for ((key, value) in symbols) {
+            try {
+                val jsonValue = Json.encodeToString(value)
+                filteredSymbols[key] = jsonValue
+            } catch (_: Exception) {
+
+            }
+        }
+        return Json.encodeToString(filteredSymbols)
     }
 }
 typealias SymbolTable = Scope
@@ -2082,7 +2102,7 @@ class Interpreter(source: String, private val restricted: Boolean) {
 }
 
 class REPL {
-    private val rootScope = Scope.createRoot()
+    val rootScope = Scope.createRoot()
     private val declarations = mutableMapOf<String, NodeValue>()
 
     fun run() {
@@ -2091,6 +2111,7 @@ class REPL {
             print("> ")
             val input = readLine() ?: break
             if (input.isEmpty()) continue
+            if (input == "exit" || input == "stop") break
             inputs.add(input)
             val ast = try {
                 val node = Parser(Tokenizer(inputs.joinToString("\n")).scan()).parse()

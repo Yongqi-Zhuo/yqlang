@@ -27,11 +27,13 @@ fun main() {
 //    val context = ConsoleContext(st, interpreter.declarations)
 //    interpreter.run(context)
 
-    REPL().run()
+    val repl = REPL()
+    repl.run()
+    println(repl.rootScope.serialize())
+//    while(true) {
+//        val line = readLine() ?: break
+//        println(Scope.deserialize(line))
+//    }
 
-    while (true) {
-        val line = readLine() ?: break
-        println(Json.decodeFromString<NodeValue>(line))
-    }
     println("\nDone!")
 }
