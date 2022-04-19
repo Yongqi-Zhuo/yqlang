@@ -326,19 +326,33 @@ sealed class NodeValue: Comparable<NodeValue> {
 }
 
 @Serializable
-class StringValue(val value: String) : NodeValue() {
+class StringValue(val value: String) : NodeValue(), Iterable<StringValue> {
     override fun toString() = value
     override fun toBoolean(): Boolean = value.isNotEmpty()
+    override fun iterator(): Iterator<StringValue> {
+        return object : Iterator<StringValue> {
+            var index = 0
+            override fun hasNext(): Boolean = index < value.length
+            override fun next(): StringValue {
+                val result = StringValue(value.substring(index, index + 1))
+                index++
+                return result
+            }
+        }
+    }
 }
 
 fun String.toNodeValue() = StringValue(this)
 
 @Serializable
-class ListValue(val value: List<NodeValue>) : NodeValue() {
+class ListValue(val value: List<NodeValue>) : NodeValue(), Iterable<NodeValue> {
     override fun toString() = "[${value.joinToString(", ")}]"
     override fun toBoolean(): Boolean = value.isNotEmpty()
     val size: Int get() = value.size
     operator fun get(index: Int): NodeValue = value[index]
+    override fun iterator(): Iterator<NodeValue> {
+        return value.iterator()
+    }
 }
 
 fun List<NodeValue>.toNodeValue() = ListValue(this)
@@ -415,6 +429,7 @@ sealed class ProcedureValue(protected val params: List<String>) : NodeValue() {
             when (expr) {
                 is StringValue -> expr.value.contains(arg.asString()!!).toNodeValue()
                 is ListValue -> expr.value.contains(arg).toNodeValue()
+                is RangeValue<*> -> expr.contains(arg).toNodeValue()
                 else -> throw RuntimeException("$expr has no such method as \"contains\"")
             }
         }
@@ -483,10 +498,12 @@ sealed class ProcedureValue(protected val params: List<String>) : NodeValue() {
             context.stack["num"]!!.asNumber()!!.absoluteValue.toNodeValue()
         }
         private val Enumerated = BuiltinProcedureValue("enumerated", listOf("list")) { context ->
-            val list = context.stack["list"]!!.asList()!!
-            return@BuiltinProcedureValue list.mapIndexed { index, value ->
-                ListValue(listOf(index.toNodeValue(), value))
-            }.toNodeValue()
+            val list = context.stack["list"]!!
+            return@BuiltinProcedureValue if (list is Iterable<*>) {
+                list.mapIndexed { index, value -> ListValue(listOf(index.toNodeValue(), value as NodeValue)) }.toNodeValue()
+            } else {
+                throw RuntimeException("$list has no such method as \"enumerated\"")
+            }
         }
         private val Ord = BuiltinProcedureValue("ord", listOf("str")) { context ->
             context.stack["str"]!!.asString()!!.first().code.toLong().toNodeValue()
@@ -500,20 +517,11 @@ sealed class ProcedureValue(protected val params: List<String>) : NodeValue() {
             num.toDouble().pow(exp.toDouble()).toLong().toNodeValue()
         }
         private val Sum = BuiltinProcedureValue("sum", listOf("list")) { context ->
-            return@BuiltinProcedureValue when (val list = context.stack["list"]!!) {
-                is ListValue -> {
-                    list.value.sumOf { it.asNumber()!! }.toNodeValue()
-                }
-                is NumberRangeValue -> {
-                    val it = list.iterator()
-                    var sum = 0L
-                    while (it.hasNext()) {
-                        val value = it.next()
-                        sum += value.value
-                    }
-                    sum.toNodeValue()
-                }
-                else -> throw RuntimeException("$list has no such method as \"sum\"")
+            val list = context.stack["list"]!!
+            return@BuiltinProcedureValue if (list is Iterable<*>) {
+                list.sumOf { (it as NodeValue).asNumber()!! }.toNodeValue()
+            } else {
+                throw RuntimeException("$list has no such method as \"sum\"")
             }
         }
         private val Boolean = BuiltinProcedureValue("boolean", listOf("value")) { context ->
@@ -521,92 +529,43 @@ sealed class ProcedureValue(protected val params: List<String>) : NodeValue() {
         }
         private val Filter = BuiltinProcedureValue("filter", listOf("list", "predicate")) { context ->
             fun predicateCall(it: NodeValue) = ProcedureNode.call(context, it, "predicate", ListValue(emptyList()))
-            val collection = context.stack["list"]!!
-            val res = mutableListOf<NodeValue>()
-            when (collection) {
-                is ListValue -> {
-                    for (i in collection.value) {
-                        if (predicateCall(i).toBoolean()) {
-                            res.add(i)
-                        }
-                    }
-                }
-                is RangeValue<*> -> {
-                    val it = collection.iterator()
-                    while (it.hasNext()) {
-                        val i = it.next()
-                        if (predicateCall(i).toBoolean()) {
-                            res.add(i)
-                        }
-                    }
-                }
-                else -> throw RuntimeException("$collection has no such method as \"filter\"")
+            val list = context.stack["list"]!!
+            return@BuiltinProcedureValue if (list is Iterable<*>) {
+                @Suppress("UNCHECKED_CAST")
+                (list.filter { predicateCall(it as NodeValue).toBoolean() } as List<NodeValue>).toNodeValue()
+            } else {
+                throw RuntimeException("$list has no such method as \"filter\"")
             }
-            return@BuiltinProcedureValue res.toNodeValue()
         }
-        private val Reduce = NodeProcedureValue(
-            StmtListNode(listOf(
-            StmtForNode(
-                IdentifierNode(Token(TokenType.IDENTIFIER, "it")),
-                IdentifierNode(Token(TokenType.IDENTIFIER, "list")),
-                StmtAssignNode(
-                    IdentifierNode(Token(TokenType.IDENTIFIER, "initial")),
-                    ProcedureNode(
-                        null,
-                        IdentifierNode(Token(TokenType.IDENTIFIER, "reducer")),
-                        ListNode(listOf(
-                            IdentifierNode(Token(TokenType.IDENTIFIER, "initial")),
-                            IdentifierNode(Token(TokenType.IDENTIFIER, "it"))
-                        ))
-                    )
-                )
-            ),
-            IdentifierNode(Token(TokenType.IDENTIFIER, "initial"))
-        ), true), listOf("list", "initial", "reducer"))
+        private val Reduce = BuiltinProcedureValue("reduce", listOf("list", "initial", "reducer")) { context ->
+            fun reducerCall(acc: NodeValue, it: NodeValue) = ProcedureNode.call(context, acc, "reducer", ListValue(listOf(it)))
+            val list = context.stack["list"]!!
+            return@BuiltinProcedureValue if (list is Iterable<*>) {
+                var res = context.stack["initial"]!!
+                for (i in list) {
+                    res = reducerCall(res, i as NodeValue)
+                }
+                res
+            } else {
+                throw RuntimeException("$list has no such method as \"reduce\"")
+            }
+        }
         private val Map = BuiltinProcedureValue("map", listOf("list", "mapper")) { context ->
             fun mapperCall(it: NodeValue) = ProcedureNode.call(context, it, "mapper", ListValue(emptyList()))
             val collection = context.stack["list"]!!
-            val res = mutableListOf<NodeValue>()
-            when (collection) {
-                is ListValue -> {
-                    for (i in collection.value) {
-                        res.add(mapperCall(i))
-                    }
-                }
-                is RangeValue<*> -> {
-                    val it = collection.iterator()
-                    while (it.hasNext()) {
-                        val i = it.next()
-                        res.add(mapperCall(i))
-                    }
-                }
-                else -> throw RuntimeException("$collection has no such method as \"map\"")
+            return@BuiltinProcedureValue if (collection is Iterable<*>) {
+                (collection.map { mapperCall(it as NodeValue) }).toNodeValue()
+            } else {
+                throw RuntimeException("$collection has no such method as \"map\"")
             }
-            return@BuiltinProcedureValue res.toNodeValue()
         }
         private val Max = BuiltinProcedureValue("max", listOf("list")) { context ->
             val list = context.stack["list"]!!.asList()!!
-            val it = list.iterator()
-            var max = it.next()
-            while (it.hasNext()) {
-                val value = it.next()
-                if (value.asNumber()!! > max.asNumber()!!) {
-                    max = value
-                }
-            }
-            max
+            return@BuiltinProcedureValue list.maxByOrNull { it.asNumber()!! }!!
         }
         private val Min = BuiltinProcedureValue("min", listOf("list")) { context ->
             val list = context.stack["list"]!!.asList()!!
-            val it = list.iterator()
-            var min = it.next()
-            while (it.hasNext()) {
-                val value = it.next()
-                if (value.asNumber()!! < min.asNumber()!!) {
-                    min = value
-                }
-            }
-            min
+            return@BuiltinProcedureValue list.minByOrNull { it.asNumber()!! }!!
         }
         private val Reversed = BuiltinProcedureValue("reversed", listOf("list")) { context ->
             return@BuiltinProcedureValue when(val list = context.stack["list"]!!) {
@@ -694,7 +653,7 @@ sealed class ProcedureValue(protected val params: List<String>) : NodeValue() {
                 |Check if an element is in a list or a substring is in a string.
                 |Usage: list.contains(element)
                 |Example: [1, 2, 3, 4, 5].contains(3) // true
-                |Example: "hello world".contains("o") // true
+                |Example: "hello world".contains("o w") // true
                 |Example: [1, 2, 3, 4, 5].contains(6) // false
                 |""".trimMargin(),
             "length" to """
@@ -836,6 +795,7 @@ sealed class RangeValue<T : NodeValue>(
 ) : NodeValue(), Iterable<T> {
     override fun toBoolean() = true
     override fun toString() = "range($begin, $end)"
+    abstract fun contains(value: T): Boolean
 }
 
 @Serializable(with = NumberRangeValue.Serializer::class)
@@ -853,6 +813,13 @@ class NumberRangeValue(begin: NumberValue, end: NumberValue, inclusive: Boolean)
                 current = NumberValue(current.value + 1)
                 return result
             }
+        }
+    }
+    override fun contains(value: NumberValue): Boolean {
+        return if (inclusive) {
+            value.value in (begin.value..end.value)
+        } else {
+            value.value in (begin.value until end.value)
         }
     }
     class Serializer : KSerializer<NumberRangeValue> {
@@ -891,6 +858,14 @@ class CharRangeValue(begin: StringValue, end: StringValue, inclusive: Boolean) :
                 current++
                 return StringValue(result.toString())
             }
+        }
+    }
+
+    override fun contains(value: StringValue): Boolean {
+        return if (inclusive) {
+            value.value[0] in (begin.value[0]..end.value[0])
+        } else {
+            value.value[0] in (begin.value[0] until end.value[0])
         }
     }
     class Serializer : KSerializer<CharRangeValue> {
@@ -1530,7 +1505,7 @@ class StmtAssignNode(private val lvalue: Node, private val expr: Node) : Node() 
     override fun exec(context: ExecutionContext): NodeValue {
         val value = expr.exec(context)
         lvalue.assign(context, value)
-        return NullValue()
+        return lvalue.exec(context)
     }
 
     override fun toString(): String {
@@ -1660,33 +1635,19 @@ class StmtForNode(private val iterator: Node, private val collection: Node, priv
     override fun exec(context: ExecutionContext): NodeValue {
         val collection = collection.exec(context)
         var res: NodeValue = NullValue()
-        when (collection) {
-            is ListValue -> {
-                for (i in collection.value) {
-                    iterator.assign(context, i)
-                    try {
-                        res = body.exec(context)
-                    } catch (continueEx: ContinueException) {
-                        continue
-                    } catch (breakEx: BreakException) {
-                        break
-                    }
+        if (collection is Iterable<*>) {
+            for (item in collection) {
+                iterator.assign(context, item as NodeValue)
+                try {
+                    res = body.exec(context)
+                } catch (continueEx: ContinueException) {
+                    continue
+                } catch (breakEx: BreakException) {
+                    break
                 }
             }
-            is RangeValue<*> -> {
-                val i = collection.iterator()
-                while (i.hasNext()) {
-                    iterator.assign(context, i.next())
-                    try {
-                        res = body.exec(context)
-                    } catch (continueEx: ContinueException) {
-                        continue
-                    } catch (breakEx: BreakException) {
-                        break
-                    }
-                }
-            }
-            else -> throw RuntimeException("for loop can only iterate over lists or ranges")
+        } else {
+            throw RuntimeException("$collection is not iterable")
         }
         return res
     }
@@ -2138,7 +2099,7 @@ class REPL {
                 if (output.isNotEmpty()) {
                     println(output)
                 } else {
-                    println("$res, ${Json.encodeToString(res)}")
+                    println(res)
                 }
             } catch (e: Exception) {
                 println("Runtime Error: ${e.message}")
