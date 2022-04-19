@@ -148,7 +148,7 @@ class Tokenizer(private val input: String) {
                     val value = input.substring(start, index)
                     tokens.add(Token(TokenType.NUMBER, value))
                 }
-                currentChar.isLetter() || currentChar == '_' -> {
+                currentChar.isLetter() || currentChar == '_' || currentChar == '$' -> {
                     val start = index
                     do {
                         advance()
@@ -940,8 +940,17 @@ class Scope(private val symbols: MutableMap<String, NodeValue>, val args: ListVa
 }
 typealias SymbolTable = Scope
 
+class RecursionTooDeepException(private val depth: Int) : Exception() {
+    override fun toString(): String {
+        return "Recursion too deep: $depth"
+    }
+
+    override val message: String = toString()
+}
 class Stack(rootScope: Scope, private val declarations: MutableMap<String, NodeValue>) {
     private val scopes: MutableList<Scope>
+
+    private var depth = 0
 
     init {
         scopes = mutableListOf(rootScope)
@@ -950,9 +959,14 @@ class Stack(rootScope: Scope, private val declarations: MutableMap<String, NodeV
     // The first argument must be the value of "this"
     fun push(args: ListValue = emptyList<NodeValue>().toNodeValue()) {
         scopes.add(Scope(mutableMapOf(), args))
+        depth++
+        if (depth > 300) {
+            throw RecursionTooDeepException(depth)
+        }
     }
 
     fun pop() {
+        depth--
         scopes.removeAt(scopes.lastIndex)
     }
 
@@ -965,8 +979,10 @@ class Stack(rootScope: Scope, private val declarations: MutableMap<String, NodeV
             scopes.last()[params[i]] = args[i]
         }
         if (argc > params.size) {
-            scopes.last()["__var_args__"] = args.value.slice(params.size until args.size).toList().toNodeValue()
+            scopes.last()["\$varargs"] = args.value.slice(params.size until args.size).toList().toNodeValue()
         }
+        scopes.last()["\$"] = args
+        args.forEachIndexed { index, nodeValue -> scopes.last()["\$$index"] = nodeValue }
     }
 
     operator fun get(name: String): NodeValue? {
@@ -1513,7 +1529,7 @@ class StmtAssignNode(private val lvalue: Node, private val expr: Node) : Node() 
     }
 }
 
-class StmtActionNode(private val action: Token, private val expr: ExprNode) : Node() {
+class StmtActionNode(private val action: Token, private val expr: Node) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
         if (action.type != TokenType.ACTION) {
             throw IllegalArgumentException("Expected ACTION, got ${action.type}")
@@ -1849,7 +1865,10 @@ class Parser(private val tokens: List<Token>) {
         return StmtIfNode(condition, ifBody)
     }
 
-    private fun parseExpr(): ExprNode {
+    private fun parseExpr(): Node {
+        if(peek().type == TokenType.FUNC) {
+            return parseLambda()
+        }
         val comps = mutableListOf(parseComp())
         val ops = mutableListOf<String>()
         while (true) {
@@ -1862,6 +1881,25 @@ class Parser(private val tokens: List<Token>) {
                 else -> return ExprNode(comps, ops)
             }
         }
+    }
+
+    private fun parseLambda(): Node {
+        consume(TokenType.FUNC)
+        val params = mutableListOf<IdentifierNode>()
+        if (peek().type == TokenType.PAREN_OPEN) {
+            consume(TokenType.PAREN_OPEN)
+            if (peek().type != TokenType.PAREN_CLOSE) {
+                params.add(parseIdentifier())
+                while (peek().type != TokenType.PAREN_CLOSE) {
+                    consume(TokenType.COMMA)
+                    params.add(parseIdentifier())
+                }
+            }
+            consume(TokenType.PAREN_CLOSE)
+        }
+        consumeLineBreak()
+        val body = parseStmt()
+        return NodeProcedureValue(body, params.map { it.name }).toNode()
     }
 
     private fun parseComp(): CompNode {
@@ -1950,7 +1988,7 @@ class Parser(private val tokens: List<Token>) {
     }
 
     private fun parseParamList(): ListNode {
-        val params = mutableListOf<ExprNode>()
+        val params = mutableListOf<Node>()
         if (peek().type != TokenType.PAREN_CLOSE && peek().type != TokenType.BRACKET_CLOSE) {
             params.add(parseExpr())
             while (peek().type != TokenType.PAREN_CLOSE && peek().type != TokenType.BRACKET_CLOSE) {
