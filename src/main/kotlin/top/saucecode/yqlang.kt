@@ -19,11 +19,17 @@ enum class TokenType {
     BRACE_OPEN, BRACE_CLOSE, PAREN_OPEN, PAREN_CLOSE, BRACKET_OPEN, BRACKET_CLOSE, // Braces and parentheses
     NEWLINE, SEMICOLON, COLON, ASSIGN, DOT, COMMA, INIT, // Statements
     IF, ELSE, FUNC, RETURN, WHILE, CONTINUE, BREAK, FOR, IN, // Control flow
-    MULT_OP, // MULTIPLY, DIVIDE, MODULO
-    ADD_OP, // PLUS, MINUS,
-    COMP_OP, // EQUAL, NOT_EQUAL, GREATER, LESS, GREATER_EQUAL, LESS_EQUAL
-    LOGIC_OP, //AND, OR
-    NOT, ACTION, IDENTIFIER, NUMBER, STRING, EOF
+    // Operators begin
+    NOT, // Unary NOT, unary MINUS cannot be discriminated by tokenizer
+    MULT, DIV, MOD, // MULT_OP
+    PLUS, // ADD_OP
+    MINUS, // ADD_OP, but can be unary op
+    GREATER, LESS, GREATER_EQ, LESS_EQ, // COMP_OP
+    EQUAL, NOT_EQUAL, // EQ_OP
+    LOGIC_AND, // LOGIC_OP
+    LOGIC_OR, // LOGIC_OP
+    // Operators end
+    ACTION, IDENTIFIER, NUMBER, STRING, EOF
 }
 
 fun IntRange.safeSubscript(index: Int): Int? {
@@ -90,26 +96,26 @@ class Tokenizer(private val input: String) {
                 currentChar == ':' -> pushAndAdvance(Token(TokenType.COLON, ":"))
                 currentChar == '.' -> pushAndAdvance(Token(TokenType.DOT, "."))
                 currentChar == ',' -> pushAndAdvance(Token(TokenType.COMMA, ","))
-                currentChar == '+' -> handleTwoCharOp(TokenType.ASSIGN, "+=", TokenType.ADD_OP)
-                currentChar == '-' -> handleTwoCharOp(TokenType.ASSIGN, "-=", TokenType.ADD_OP)
-                currentChar == '*' -> handleTwoCharOp(TokenType.ASSIGN, "*=", TokenType.MULT_OP)
-                currentChar == '%' -> handleTwoCharOp(TokenType.ASSIGN, "%=", TokenType.MULT_OP)
-                currentChar == '&' -> handleTwoCharOp(TokenType.LOGIC_OP, "&&")
-                currentChar == '|' -> handleTwoCharOp(TokenType.LOGIC_OP, "||")
-                currentChar == '=' -> handleTwoCharOp(TokenType.COMP_OP, "==", TokenType.ASSIGN)
-                currentChar == '!' -> handleTwoCharOp(TokenType.COMP_OP, "!=", TokenType.NOT)
-                currentChar == '>' -> handleTwoCharOp(TokenType.COMP_OP, ">=", TokenType.COMP_OP)
-                currentChar == '<' -> handleTwoCharOp(TokenType.COMP_OP, "<=", TokenType.COMP_OP)
+                currentChar == '*' -> handleTwoCharOp(TokenType.ASSIGN, "*=", TokenType.MULT)
+                currentChar == '%' -> handleTwoCharOp(TokenType.ASSIGN, "%=", TokenType.MOD)
+                currentChar == '+' -> handleTwoCharOp(TokenType.ASSIGN, "+=", TokenType.PLUS)
+                currentChar == '-' -> handleTwoCharOp(TokenType.ASSIGN, "-=", TokenType.MINUS)
+                currentChar == '>' -> handleTwoCharOp(TokenType.GREATER_EQ, ">=", TokenType.GREATER)
+                currentChar == '<' -> handleTwoCharOp(TokenType.LESS_EQ, "<=", TokenType.LESS)
+                currentChar == '=' -> handleTwoCharOp(TokenType.EQUAL, "==", TokenType.ASSIGN)
+                currentChar == '!' -> handleTwoCharOp(TokenType.NOT_EQUAL, "!=", TokenType.NOT)
+                currentChar == '&' -> handleTwoCharOp(TokenType.LOGIC_AND, "&&")
+                currentChar == '|' -> handleTwoCharOp(TokenType.LOGIC_OR, "||")
                 currentChar == '/' -> {
                     if (index == input.length - 1) {
-                        pushAndAdvance(Token(TokenType.MULT_OP, "/"))
+                        pushAndAdvance(Token(TokenType.DIV, "/"))
                     } else {
                         if (input[index + 1] == '/') {
                             while (index < input.length && currentChar != '\n') {
                                 advance()
                             }
                         } else {
-                            handleTwoCharOp(TokenType.ASSIGN, "/=", TokenType.MULT_OP)
+                            handleTwoCharOp(TokenType.ASSIGN, "/=", TokenType.DIV)
                         }
                     }
                 }
@@ -131,6 +137,33 @@ class Tokenizer(private val input: String) {
                         } else if (currentChar == '\\') {
                             escape = true
                         } else if (currentChar == '"') {
+                            break
+                        } else {
+                            str += currentChar
+                        }
+                        advance()
+                    }
+                    tokens.add(Token(TokenType.STRING, str))
+                    advance()
+                }
+                currentChar == '\'' -> {
+                    var str = ""
+                    var escape = false
+                    advance()
+                    while (index < input.length) {
+                        if (escape) {
+                            escape = false
+                            when (currentChar) {
+                                'n' -> str += '\n'
+                                'r' -> str += '\r'
+                                't' -> str += '\t'
+                                '\\' -> str += '\\'
+                                '\'' -> str += '\''
+                                else -> str += "\\$currentChar"
+                            }
+                        } else if (currentChar == '\\') {
+                            escape = true
+                        } else if (currentChar == '\'') {
                             break
                         } else {
                             str += currentChar
@@ -279,6 +312,29 @@ sealed class NodeValue: Comparable<NodeValue> {
             return NumberValue(expr.value % other.value)
         } else {
             throw IllegalArgumentException("Invalid operation: $this % $that")
+        }
+    }
+
+    operator fun unaryMinus(): NodeValue {
+        val expr = if (this is BooleanValue) NumberValue(this.value.toLong()) else this
+        if (expr is NumberValue) {
+            return NumberValue(-expr.value)
+        } else {
+            throw IllegalArgumentException("Invalid operation: -$this")
+        }
+    }
+
+    operator fun not(): NodeValue {
+        return toBoolean().not().toNodeValue()
+    }
+
+    operator fun contains(that: NodeValue): Boolean {
+        return if (this is StringValue && that is StringValue) {
+            this.value.contains(that.value)
+        } else if (this is Iterable<*>) {
+            (this as Iterable<*>).contains(that)
+        } else {
+            throw IllegalArgumentException("Invalid operation: $that in $this")
         }
     }
 
@@ -795,7 +851,6 @@ sealed class RangeValue<T : NodeValue>(
 ) : NodeValue(), Iterable<T> {
     override fun toBoolean() = true
     override fun toString() = "range($begin, $end)"
-    abstract fun contains(value: T): Boolean
 }
 
 @Serializable(with = NumberRangeValue.Serializer::class)
@@ -815,7 +870,7 @@ class NumberRangeValue(begin: NumberValue, end: NumberValue, inclusive: Boolean)
             }
         }
     }
-    override fun contains(value: NumberValue): Boolean {
+    operator fun contains(value: NumberValue): Boolean {
         return if (inclusive) {
             value.value in (begin.value..end.value)
         } else {
@@ -861,7 +916,7 @@ class CharRangeValue(begin: StringValue, end: StringValue, inclusive: Boolean) :
         }
     }
 
-    override fun contains(value: StringValue): Boolean {
+    operator fun contains(value: StringValue): Boolean {
         return if (inclusive) {
             value.value[0] in (begin.value[0]..end.value[0])
         } else {
@@ -1339,181 +1394,90 @@ class ProcedureNode(private val caller: Node?, private val func: IdentifierNode,
     }
 }
 
-class FactorNode(private val units: List<Node>, private val ops: List<String>, private val prefix: FactorPrefix) :
-    Node() {
-    enum class FactorPrefix {
-        NONE, NOT, NEGATIVE
+abstract class OperatorNode : Node() {
+    enum class OperatorType {
+        UNARY,
+        BINARY
     }
-
-    override fun exec(context: ExecutionContext): NodeValue {
-        val values = units.toMutableList()
-        val ops = ops.toMutableList()
-        var res = values.removeAt(0).exec(context)
-        while (values.size > 0) {
-            val next = values.removeAt(0).exec(context)
-            val op = ops.removeAt(0)
-            res = when (op) {
-                "*" -> res * next
-                "/" -> res / next
-                "%" -> res % next
-                else -> throw IllegalArgumentException("Unknown operator $op")
-            }
-        }
-        when (prefix) {
-            FactorPrefix.NONE -> return res
-            FactorPrefix.NOT -> return res.toBoolean().not().toNodeValue()
-            FactorPrefix.NEGATIVE -> {
-                if (res is NumberValue) {
-                    res = res.value.unaryMinus().toNodeValue()
-                } else {
-                    throw IllegalArgumentException("Invalid operation: -$res")
-                }
-            }
-        }
-        return res
-    }
-
-    override fun assign(context: ExecutionContext, value: NodeValue) {
-        if (prefix == FactorPrefix.NONE && units.size == 1) {
-            units[0].assign(context, value)
-        } else {
-            throw IllegalArgumentException("Invalid assignment: $this = $value")
-        }
-    }
-
-    override fun toString(): String {
-        var str = when (prefix) {
-            FactorPrefix.NONE -> ""
-            FactorPrefix.NOT -> "!"
-            FactorPrefix.NEGATIVE -> "-"
-        }
-        if(units.size == 1) return "$str${units[0]}"
-        for (i in units.indices) {
-            str += units[i].toString()
-            if (i < ops.size) {
-                str += ops[i]
-            }
-        }
-        return "factor($str)"
+    data class Precedence(val operators: List<TokenType>, val opType: OperatorType)
+    companion object {
+        val PrecedenceList = listOf(
+            Precedence(listOf(TokenType.NOT, TokenType.MINUS), OperatorType.UNARY),
+            Precedence(listOf(TokenType.MULT, TokenType.DIV, TokenType.MOD), OperatorType.BINARY),
+            Precedence(listOf(TokenType.PLUS, TokenType.MINUS), OperatorType.BINARY),
+            Precedence(listOf(TokenType.GREATER_EQ, TokenType.LESS_EQ, TokenType.GREATER, TokenType.LESS), OperatorType.BINARY),
+            Precedence(listOf(TokenType.EQUAL, TokenType.NOT_EQUAL), OperatorType.BINARY),
+            Precedence(listOf(TokenType.LOGIC_AND), OperatorType.BINARY),
+            Precedence(listOf(TokenType.LOGIC_OR), OperatorType.BINARY),
+            Precedence(listOf(TokenType.IN), OperatorType.BINARY)
+        )
     }
 }
 
-class TermNode(private val factors: List<Node>, private val ops: List<String>) : Node() {
+class BinaryOperatorNode(private val components: List<Node>, private val ops: List<TokenType>) : OperatorNode() {
+    private val opMap = mapOf<TokenType, (ExecutionContext, Node, Node) -> NodeValue>(
+        TokenType.PLUS to { context, left, right -> left.exec(context) + right.exec(context) },
+        TokenType.MINUS to { context, left, right -> left.exec(context) - right.exec(context) },
+        TokenType.MULT to { context, left, right -> left.exec(context) * right.exec(context) },
+        TokenType.DIV to { context, left, right -> left.exec(context) / right.exec(context) },
+        TokenType.MOD to { context, left, right -> left.exec(context) % right.exec(context) },
+        TokenType.EQUAL to { context, left, right -> (left.exec(context) == right.exec(context)).toNodeValue() },
+        TokenType.NOT_EQUAL to { context, left, right -> (left.exec(context) != right.exec(context)).toNodeValue() },
+        TokenType.GREATER to { context, left, right -> (left.exec(context) > right.exec(context)).toNodeValue() },
+        TokenType.LESS to { context, left, right -> (left.exec(context) < right.exec(context)).toNodeValue() },
+        TokenType.GREATER_EQ to { context, left, right -> (left.exec(context) >= right.exec(context)).toNodeValue() },
+        TokenType.LESS_EQ to { context, left, right -> (left.exec(context) <= right.exec(context)).toNodeValue() },
+        TokenType.LOGIC_AND to { context, left, right -> (left.exec(context).toBoolean() && right.exec(context).toBoolean()).toNodeValue() },
+        TokenType.LOGIC_OR to { context, left, right -> (left.exec(context).toBoolean() || right.exec(context).toBoolean()).toNodeValue() },
+        TokenType.IN to { context, left, right -> (left.exec(context) in right.exec(context)).toNodeValue() }
+    )
+
     override fun exec(context: ExecutionContext): NodeValue {
-        val values = factors.toMutableList()
-        val ops = ops.toMutableList()
-        var res = values.removeAt(0).exec(context)
-        while (values.size > 0) {
-            val next = values.removeAt(0).exec(context)
-            val op = ops.removeAt(0)
-            res = when (op) {
-                "+" -> res + next
-                "-" -> res - next
-                else -> throw IllegalArgumentException("Unknown operator $op")
+        return if (components.isEmpty()) NullValue()
+        else if (components.size == 1) {
+            components[0].exec(context)
+        } else {
+            var res = components[0].exec(context)
+            for (i in 1 until components.size) {
+                val op = ops[i - 1]
+                val next = components[i]
+                res = opMap[op]!!(context, res.toNode(), next)
             }
+            res
         }
-        return res
     }
 
     override fun assign(context: ExecutionContext, value: NodeValue) {
-        if (factors.size == 1) {
-            factors[0].assign(context, value)
+        if (components.size == 1) {
+            components[0].assign(context, value)
         } else {
-            throw IllegalArgumentException("Invalid assignment: $this = $value")
+            throw RuntimeException("$this is not a left value")
         }
     }
 
     override fun toString(): String {
-        var str = ""
-        if (factors.size == 1) return "${factors[0]}"
-        for (i in factors.indices) {
-            str += factors[i].toString()
-            if (i < ops.size) {
-                str += ops[i]
-            }
-        }
-        return "term($str)"
+        if (components.size == 1) return components[0].toString()
+        val str = components.forEachIndexed { index, node -> "$node${if (index < ops.size) ops[index] else ""}" }
+        return "Binary($str)"
     }
 }
 
-class CompNode(private val terms: List<Node>, private val ops: List<String>) : Node() {
+class UnaryOperatorNode(private val component: Node, private val op: TokenType) : OperatorNode() {
+    private val opMap = mapOf<TokenType, (ExecutionContext, Node) -> NodeValue>(
+        TokenType.MINUS to { context, node -> -node.exec(context) },
+        TokenType.NOT to { context, node -> !node.exec(context) },
+    )
+
     override fun exec(context: ExecutionContext): NodeValue {
-        val values = terms.toMutableList()
-        val ops = ops.toMutableList()
-        var res = values.removeAt(0).exec(context)
-        while (values.size > 0) {
-            val next = values.removeAt(0).exec(context)
-            res = when (val op = ops.removeAt(0)) {
-                "==" -> (res == next).toNodeValue()
-                "!=" -> (res != next).toNodeValue()
-                ">" -> (res > next).toNodeValue()
-                "<" -> (res < next).toNodeValue()
-                ">=" -> (res >= next).toNodeValue()
-                "<=" -> (res <= next).toNodeValue()
-                else -> throw IllegalArgumentException("Unknown operator $op")
-            }
-        }
-        return res
+        return opMap[op]!!(context, component)
     }
 
     override fun assign(context: ExecutionContext, value: NodeValue) {
-        if (terms.size == 1) {
-            terms[0].assign(context, value)
-        } else {
-            throw IllegalArgumentException("Invalid assignment: $this = $value")
-        }
+        throw RuntimeException("$this is not a left value")
     }
 
     override fun toString(): String {
-        var str = ""
-        if (terms.size == 1) return "${terms[0]}"
-        for (i in terms.indices) {
-            str += terms[i].toString()
-            if (i < ops.size) {
-                str += ops[i]
-            }
-        }
-        return "comp($str)"
-    }
-}
-
-class ExprNode(private val comps: List<Node>, private val ops: List<String>) : Node() {
-    override fun exec(context: ExecutionContext): NodeValue {
-        if (comps.size == 1) {
-            return comps[0].exec(context)
-        }
-        val values = comps.toMutableList()
-        val ops = ops.toMutableList()
-        var res = values.removeAt(0).exec(context).toBoolean()
-        while (values.size > 0) {
-            val next = values.removeAt(0)
-            res = when (val op = ops.removeAt(0)) {
-                "&&" -> res && next.exec(context).toBoolean()
-                "||" -> res || next.exec(context).toBoolean()
-                else -> throw IllegalArgumentException("Invalid operation: $res $op $next")
-            }
-        }
-        return res.toNodeValue()
-    }
-
-    override fun assign(context: ExecutionContext, value: NodeValue) {
-        if (comps.size == 1) {
-            comps[0].assign(context, value)
-        } else {
-            throw IllegalArgumentException("Invalid assignment: $this = $value")
-        }
-    }
-
-    override fun toString(): String {
-        var str = ""
-        if (comps.size == 1) return "${comps[0]}"
-        for (i in comps.indices) {
-            str += comps[i].toString()
-            if (i < ops.size) {
-                str += ops[i]
-            }
-        }
-        return "expr($str)"
+        return "Unary($op$component)"
     }
 }
 
@@ -1804,7 +1768,7 @@ class Parser(private val tokens: List<Token>) {
             }
             TokenType.FOR -> {
                 consume(TokenType.FOR)
-                val iterator = parseExpr()
+                val iterator = parseTerm()
                 consume(TokenType.IN)
                 val collection = parseExpr()
                 consumeLineBreak()
@@ -1827,17 +1791,11 @@ class Parser(private val tokens: List<Token>) {
         val assignToken = consume(TokenType.ASSIGN)
         val stmt = when (assignToken.value) {
             "=" -> StmtAssignNode(lvalue, parseExpr())
-            "+=" -> StmtAssignNode(lvalue, TermNode(listOf(lvalue, parseExpr()), listOf("+")))
-            "-=" -> StmtAssignNode(lvalue, TermNode(listOf(lvalue, parseExpr()), listOf("-")))
-            "*=" -> StmtAssignNode(
-                lvalue, FactorNode(listOf(lvalue, parseExpr()), listOf("*"), FactorNode.FactorPrefix.NONE)
-            )
-            "/=" -> StmtAssignNode(
-                lvalue, FactorNode(listOf(lvalue, parseExpr()), listOf("/"), FactorNode.FactorPrefix.NONE)
-            )
-            "%=" -> StmtAssignNode(
-                lvalue, FactorNode(listOf(lvalue, parseExpr()), listOf("%"), FactorNode.FactorPrefix.NONE)
-            )
+            "+=" -> StmtAssignNode(lvalue, BinaryOperatorNode(listOf(lvalue, parseExpr()), listOf(TokenType.PLUS)))
+            "-=" -> StmtAssignNode(lvalue, BinaryOperatorNode(listOf(lvalue, parseExpr()), listOf(TokenType.MINUS)))
+            "*=" -> StmtAssignNode(lvalue, BinaryOperatorNode(listOf(lvalue, parseExpr()), listOf(TokenType.MULT)))
+            "/=" -> StmtAssignNode(lvalue, BinaryOperatorNode(listOf(lvalue, parseExpr()), listOf(TokenType.DIV)))
+            "%=" -> StmtAssignNode(lvalue, BinaryOperatorNode(listOf(lvalue, parseExpr()), listOf(TokenType.MOD)))
             else -> throw UnexpectedTokenException(assignToken)
         }
         consumeLineBreak()
@@ -1869,16 +1827,32 @@ class Parser(private val tokens: List<Token>) {
         if(peek().type == TokenType.FUNC) {
             return parseLambda()
         }
-        val comps = mutableListOf(parseComp())
-        val ops = mutableListOf<String>()
-        while (true) {
-            val token = peek()
-            when (token.type) {
-                TokenType.LOGIC_OP -> {
-                    ops.add(consume(TokenType.LOGIC_OP).value)
-                    comps.add(parseComp())
+        return parseOperator()
+    }
+
+    private fun parseOperator(precedence: Int = OperatorNode.PrecedenceList.lastIndex): Node {
+        if (precedence < 0) {
+            return parseTerm()
+        }
+        val op = OperatorNode.PrecedenceList[precedence]
+        return when(op.opType) {
+            OperatorNode.OperatorType.UNARY -> {
+                if (peek().type in op.operators) {
+                    val unaryOp = consume(peek().type)
+                    val next = parseOperator(precedence - 1)
+                    UnaryOperatorNode(next, unaryOp.type)
+                } else {
+                    parseOperator(precedence - 1)
                 }
-                else -> return ExprNode(comps, ops)
+            }
+            OperatorNode.OperatorType.BINARY -> {
+                val nodes = mutableListOf(parseOperator(precedence - 1))
+                val ops = mutableListOf<TokenType>()
+                while (peek().type in op.operators) {
+                    ops.add(consume(peek().type).type)
+                    nodes.add(parseOperator(precedence - 1))
+                }
+                BinaryOperatorNode(nodes, ops)
             }
         }
     }
@@ -1902,60 +1876,7 @@ class Parser(private val tokens: List<Token>) {
         return NodeProcedureValue(body, params.map { it.name }).toNode()
     }
 
-    private fun parseComp(): CompNode {
-        val terms = mutableListOf(parseTerm())
-        val ops = mutableListOf<String>()
-        while (true) {
-            val token = peek()
-            when (token.type) {
-                TokenType.COMP_OP -> {
-                    ops.add(consume(TokenType.COMP_OP).value)
-                    terms.add(parseTerm())
-                }
-                else -> return CompNode(terms, ops)
-            }
-        }
-    }
-
-    private fun parseTerm(): TermNode {
-        val factors = mutableListOf(parseFactor())
-        val ops = mutableListOf<String>()
-        while (true) {
-            val token = peek()
-            when (token.type) {
-                TokenType.ADD_OP -> {
-                    ops.add(consume(TokenType.ADD_OP).value)
-                    factors.add(parseFactor())
-                }
-                else -> return TermNode(factors, ops)
-            }
-        }
-    }
-
-    private fun parseFactor(): FactorNode {
-        var prefix = FactorNode.FactorPrefix.NONE
-        if (peek().type == TokenType.ADD_OP && peek().value == "-") {
-            consume(TokenType.ADD_OP)
-            prefix = FactorNode.FactorPrefix.NEGATIVE
-        } else if (peek().type == TokenType.NOT) {
-            consume(TokenType.NOT)
-            prefix = FactorNode.FactorPrefix.NOT
-        }
-        val units = mutableListOf(parseUnit())
-        val ops = mutableListOf<String>()
-        while (true) {
-            val token = peek()
-            when (token.type) {
-                TokenType.MULT_OP -> {
-                    ops.add(consume(TokenType.MULT_OP).value)
-                    units.add(parseUnit())
-                }
-                else -> return FactorNode(units, ops, prefix)
-            }
-        }
-    }
-
-    private fun parseUnitHead(): Node {
+    private fun parseTermHead(): Node {
         val token = peek()
         return when (token.type) {
             TokenType.IDENTIFIER -> {
@@ -1973,7 +1894,7 @@ class Parser(private val tokens: List<Token>) {
             TokenType.STRING -> parseString()
             TokenType.PAREN_OPEN -> {
                 consume(TokenType.PAREN_OPEN)
-                val expr = parseExpr()
+                val expr = parseOperator()
                 consume(TokenType.PAREN_CLOSE)
                 expr
             }
@@ -1999,7 +1920,7 @@ class Parser(private val tokens: List<Token>) {
         return ListNode(params)
     }
 
-    private fun parseUnitTail(unitHead: Node): Node {
+    private fun parseTermTail(termHead: Node): Node {
         val token = peek()
         return when (token.type) {
             TokenType.DOT -> {
@@ -2008,11 +1929,13 @@ class Parser(private val tokens: List<Token>) {
                 consume(TokenType.PAREN_OPEN)
                 val params = parseParamList()
                 consume(TokenType.PAREN_CLOSE)
-                ProcedureNode(unitHead, func, params)
+                ProcedureNode(termHead, func, params)
             }
             TokenType.BRACKET_OPEN -> {
                 consume(TokenType.BRACKET_OPEN)
-                val begin = parseExpr()
+                val begin = if (peek().type == TokenType.COLON) {
+                    0.toNodeValue().toNode()
+                } else parseExpr()
                 val subscript = if (peek().type == TokenType.COLON) {
                     consume(TokenType.COLON)
                     if (peek().type == TokenType.BRACKET_CLOSE) {
@@ -2024,18 +1947,18 @@ class Parser(private val tokens: List<Token>) {
                     SubscriptNode(begin, false)
                 }
                 consume(TokenType.BRACKET_CLOSE)
-                SubscriptViewNode(unitHead, subscript)
+                SubscriptViewNode(termHead, subscript)
             }
-            else -> unitHead
+            else -> termHead
         }
     }
 
-    private fun parseUnit(): Node {
-        var unit = parseUnitHead()
+    private fun parseTerm(): Node {
+        var term = parseTermHead()
         while (peek().type == TokenType.DOT || peek().type == TokenType.BRACKET_OPEN) {
-            unit = parseUnitTail(unit)
+            term = parseTermTail(term)
         }
-        return unit
+        return term
     }
 
     private var declarations: MutableMap<String, NodeValue> = mutableMapOf()
