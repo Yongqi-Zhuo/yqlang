@@ -19,6 +19,8 @@ enum class TokenType {
     BRACE_OPEN, BRACE_CLOSE, PAREN_OPEN, PAREN_CLOSE, BRACKET_OPEN, BRACKET_CLOSE, // Braces and parentheses
     NEWLINE, SEMICOLON, COLON, ASSIGN, DOT, COMMA, INIT, // Statements
     IF, ELSE, FUNC, RETURN, WHILE, CONTINUE, BREAK, FOR, IN, // Control flow
+    ARROW, // Lambda arrow
+
     // Operators begin
     NOT, // Unary NOT, unary MINUS cannot be discriminated by tokenizer
     MULT, DIV, MOD, // MULT_OP
@@ -28,6 +30,7 @@ enum class TokenType {
     EQUAL, NOT_EQUAL, // EQ_OP
     LOGIC_AND, // LOGIC_OP
     LOGIC_OR, // LOGIC_OP
+
     // Operators end
     ACTION, IDENTIFIER, NUMBER, STRING, EOF
 }
@@ -99,7 +102,15 @@ class Tokenizer(private val input: String) {
                 currentChar == '*' -> handleTwoCharOp(TokenType.ASSIGN, "*=", TokenType.MULT)
                 currentChar == '%' -> handleTwoCharOp(TokenType.ASSIGN, "%=", TokenType.MOD)
                 currentChar == '+' -> handleTwoCharOp(TokenType.ASSIGN, "+=", TokenType.PLUS)
-                currentChar == '-' -> handleTwoCharOp(TokenType.ASSIGN, "-=", TokenType.MINUS)
+                currentChar == '-' -> {
+                    if (index < input.length - 1 && input[index + 1] == '>') {
+                        tokens.add(Token(TokenType.ARROW, "->"))
+                        advance()
+                        advance()
+                    } else {
+                        handleTwoCharOp(TokenType.ASSIGN, "-=", TokenType.MINUS)
+                    }
+                }
                 currentChar == '>' -> handleTwoCharOp(TokenType.GREATER_EQ, ">=", TokenType.GREATER)
                 currentChar == '<' -> handleTwoCharOp(TokenType.LESS_EQ, "<=", TokenType.LESS)
                 currentChar == '=' -> handleTwoCharOp(TokenType.EQUAL, "==", TokenType.ASSIGN)
@@ -213,11 +224,12 @@ class Tokenizer(private val input: String) {
 }
 
 @Serializable
-sealed class NodeValue: Comparable<NodeValue> {
+sealed class NodeValue : Comparable<NodeValue> {
     abstract fun toBoolean(): Boolean
     fun asString() = (this as? StringValue)?.value
     fun asNumber() = (this as? NumberValue)?.value
     fun asList() = (this as? ListValue)?.value
+    fun asObject() = this as? ObjectValue
     fun asProcedure() = (this as? ProcedureValue)
     fun toNode() = ValueNode(this)
     operator fun plus(that: NodeValue): NodeValue {
@@ -356,6 +368,7 @@ sealed class NodeValue: Comparable<NodeValue> {
             is NumberValue -> value.hashCode()
             is StringValue -> value.hashCode()
             is ListValue -> value.hashCode()
+            is ObjectValue -> attributes.hashCode()
             is NullValue -> 0
             else -> throw IllegalArgumentException("Invalid operation: hashCode($this)")
         }
@@ -382,7 +395,7 @@ sealed class NodeValue: Comparable<NodeValue> {
 }
 
 @Serializable
-class StringValue(val value: String) : NodeValue(), Iterable<StringValue> {
+data class StringValue(val value: String) : NodeValue(), Iterable<StringValue> {
     override fun toString() = value
     override fun toBoolean(): Boolean = value.isNotEmpty()
     override fun iterator(): Iterator<StringValue> {
@@ -401,7 +414,7 @@ class StringValue(val value: String) : NodeValue(), Iterable<StringValue> {
 fun String.toNodeValue() = StringValue(this)
 
 @Serializable
-class ListValue(val value: List<NodeValue>) : NodeValue(), Iterable<NodeValue> {
+data class ListValue(val value: List<NodeValue>) : NodeValue(), Iterable<NodeValue> {
     override fun toString() = "[${value.joinToString(", ")}]"
     override fun toBoolean(): Boolean = value.isNotEmpty()
     val size: Int get() = value.size
@@ -414,7 +427,7 @@ class ListValue(val value: List<NodeValue>) : NodeValue(), Iterable<NodeValue> {
 fun List<NodeValue>.toNodeValue() = ListValue(this)
 
 @Serializable
-class NumberValue(val value: Long) : NodeValue() {
+data class NumberValue(val value: Long) : NodeValue() {
     override fun toString() = value.toString()
     override fun toBoolean(): Boolean = value != 0L
 }
@@ -423,7 +436,7 @@ fun Int.toNodeValue(): NodeValue = NumberValue(this.toLong())
 fun Long.toNodeValue(): NodeValue = NumberValue(this)
 
 @Serializable
-class BooleanValue(val value: Boolean) : NodeValue() {
+data class BooleanValue(val value: Boolean) : NodeValue() {
     override fun toString() = value.toString()
     override fun toBoolean(): Boolean = value
 }
@@ -432,10 +445,31 @@ fun Boolean.toNodeValue() = BooleanValue(this)
 fun Boolean.toLong() = if (this) 1L else 0L
 
 @Serializable
-class SubscriptValue(val begin: Int, val extended: Boolean, val end: Int? = null) : NodeValue() {
+sealed class SubscriptValue : NodeValue()
+
+@Serializable
+data class NumberSubscriptValue(val begin: Int, val extended: Boolean, val end: Int? = null) : SubscriptValue() {
     override fun toString() = if (extended) "$begin:$end" else "$begin"
     override fun toBoolean(): Boolean = true
 }
+
+@Serializable
+data class KeySubscriptValue(val key: String) : SubscriptValue() {
+    override fun toString() = key
+    override fun toBoolean(): Boolean = true
+}
+
+@Serializable
+data class ObjectValue(val attributes: Map<String, NodeValue> = mapOf()) : NodeValue() {
+    override fun toBoolean(): Boolean = attributes.isNotEmpty()
+    operator fun get(key: String): NodeValue? = attributes[key]
+    fun keys(): List<String> = attributes.keys.toList()
+    override fun toString(): String {
+        return "{" + attributes.map { "${it.key}: ${it.value}" }.joinToString(", ") + "}"
+    }
+}
+
+fun Map<String, NodeValue>.toNodeValue() = ObjectValue(this)
 
 sealed class ProcedureValue(protected val params: List<String>) : NodeValue() {
     override fun toBoolean(): Boolean = true
@@ -443,7 +477,7 @@ sealed class ProcedureValue(protected val params: List<String>) : NodeValue() {
 
     companion object {
         private val Slice = NodeProcedureValue(
-            SubscriptViewNode(
+            AccessViewNode(
                 IdentifierNode(Token(TokenType.IDENTIFIER, "this")), SubscriptNode(
                     IdentifierNode(Token(TokenType.IDENTIFIER, "begin")),
                     true,
@@ -550,13 +584,24 @@ sealed class ProcedureValue(protected val params: List<String>) : NodeValue() {
         private val String = BuiltinProcedureValue("string", listOf("num")) { context ->
             context.stack["num"]!!.asNumber()!!.toString().toNodeValue()
         }
+        private val Object = BuiltinProcedureValue("object", listOf("fields")) { context ->
+            val fields = context.stack["fields"]?.asList() ?: return@BuiltinProcedureValue ObjectValue(emptyMap())
+            val result = mutableMapOf<String, NodeValue>()
+            for (field in fields) {
+                val key = field.asList()!![0].asString()!!
+                val value = field.asList()!![1]
+                result[key] = value
+            }
+            return@BuiltinProcedureValue ObjectValue(result)
+        }
         private val Abs = BuiltinProcedureValue("abs", listOf("num")) { context ->
             context.stack["num"]!!.asNumber()!!.absoluteValue.toNodeValue()
         }
         private val Enumerated = BuiltinProcedureValue("enumerated", listOf("list")) { context ->
             val list = context.stack["list"]!!
             return@BuiltinProcedureValue if (list is Iterable<*>) {
-                list.mapIndexed { index, value -> ListValue(listOf(index.toNodeValue(), value as NodeValue)) }.toNodeValue()
+                list.mapIndexed { index, value -> ListValue(listOf(index.toNodeValue(), value as NodeValue)) }
+                    .toNodeValue()
             } else {
                 throw RuntimeException("$list has no such method as \"enumerated\"")
             }
@@ -587,14 +632,15 @@ sealed class ProcedureValue(protected val params: List<String>) : NodeValue() {
             fun predicateCall(it: NodeValue) = ProcedureNode.call(context, it, "predicate", ListValue(emptyList()))
             val list = context.stack["list"]!!
             return@BuiltinProcedureValue if (list is Iterable<*>) {
-                @Suppress("UNCHECKED_CAST")
-                (list.filter { predicateCall(it as NodeValue).toBoolean() } as List<NodeValue>).toNodeValue()
+                @Suppress("UNCHECKED_CAST") (list.filter { predicateCall(it as NodeValue).toBoolean() } as List<NodeValue>).toNodeValue()
             } else {
                 throw RuntimeException("$list has no such method as \"filter\"")
             }
         }
         private val Reduce = BuiltinProcedureValue("reduce", listOf("list", "initial", "reducer")) { context ->
-            fun reducerCall(acc: NodeValue, it: NodeValue) = ProcedureNode.call(context, acc, "reducer", ListValue(listOf(it)))
+            fun reducerCall(acc: NodeValue, it: NodeValue) =
+                ProcedureNode.call(context, acc, "reducer", ListValue(listOf(it)))
+
             val list = context.stack["list"]!!
             return@BuiltinProcedureValue if (list is Iterable<*>) {
                 var res = context.stack["initial"]!!
@@ -624,7 +670,7 @@ sealed class ProcedureValue(protected val params: List<String>) : NodeValue() {
             return@BuiltinProcedureValue list.minByOrNull { it.asNumber()!! }!!
         }
         private val Reversed = BuiltinProcedureValue("reversed", listOf("list")) { context ->
-            return@BuiltinProcedureValue when(val list = context.stack["list"]!!) {
+            return@BuiltinProcedureValue when (val list = context.stack["list"]!!) {
                 is ListValue -> list.value.reversed().toNodeValue()
                 is StringValue -> list.value.reversed().toNodeValue()
                 else -> throw RuntimeException("$list has no such method as \"reversed\"")
@@ -662,6 +708,7 @@ sealed class ProcedureValue(protected val params: List<String>) : NodeValue() {
             "num" to Number,
             "string" to String,
             "str" to String,
+            "object" to Object,
             "abs" to Abs,
             "enumerated" to Enumerated,
             "enumerate" to Enumerated,
@@ -671,6 +718,7 @@ sealed class ProcedureValue(protected val params: List<String>) : NodeValue() {
             "pow" to Pow,
             "sum" to Sum,
             "boolean" to Boolean,
+            "bool" to Boolean,
             "filter" to Filter,
             "reduce" to Reduce,
             "map" to Map,
@@ -870,6 +918,7 @@ class NumberRangeValue(begin: NumberValue, end: NumberValue, inclusive: Boolean)
             }
         }
     }
+
     operator fun contains(value: NumberValue): Boolean {
         return if (inclusive) {
             value.value in (begin.value..end.value)
@@ -877,12 +926,14 @@ class NumberRangeValue(begin: NumberValue, end: NumberValue, inclusive: Boolean)
             value.value in (begin.value until end.value)
         }
     }
+
     class Serializer : KSerializer<NumberRangeValue> {
         override val descriptor: SerialDescriptor = buildClassSerialDescriptor("top.saucecode.NumberRangeValue") {
             element<NumberValue>("begin")
             element<NumberValue>("end")
             element<Boolean>("inclusive")
         }
+
         override fun deserialize(decoder: Decoder): NumberRangeValue = decoder.decodeStructure(descriptor) {
             NumberRangeValue(
                 begin = decodeSerializableElement(descriptor, 0, NumberValue.serializer()),
@@ -890,6 +941,7 @@ class NumberRangeValue(begin: NumberValue, end: NumberValue, inclusive: Boolean)
                 inclusive = decodeBooleanElement(descriptor, 2)
             )
         }
+
         override fun serialize(encoder: Encoder, value: NumberRangeValue) = encoder.encodeStructure(descriptor) {
             encodeSerializableElement(descriptor, 0, NumberValue.serializer(), value.begin)
             encodeSerializableElement(descriptor, 1, NumberValue.serializer(), value.end)
@@ -923,12 +975,14 @@ class CharRangeValue(begin: StringValue, end: StringValue, inclusive: Boolean) :
             value.value[0] in (begin.value[0] until end.value[0])
         }
     }
+
     class Serializer : KSerializer<CharRangeValue> {
         override val descriptor: SerialDescriptor = buildClassSerialDescriptor("top.saucecode.CharRangeValue") {
             element<NumberValue>("begin")
             element<NumberValue>("end")
             element<Boolean>("inclusive")
         }
+
         override fun deserialize(decoder: Decoder): CharRangeValue = decoder.decodeStructure(descriptor) {
             CharRangeValue(
                 begin = decodeSerializableElement(descriptor, 0, StringValue.serializer()),
@@ -936,6 +990,7 @@ class CharRangeValue(begin: StringValue, end: StringValue, inclusive: Boolean) :
                 inclusive = decodeBooleanElement(descriptor, 2)
             )
         }
+
         override fun serialize(encoder: Encoder, value: CharRangeValue) = encoder.encodeStructure(descriptor) {
             encodeSerializableElement(descriptor, 0, StringValue.serializer(), value.begin)
             encodeSerializableElement(descriptor, 1, StringValue.serializer(), value.end)
@@ -954,20 +1009,25 @@ class Scope(private val symbols: MutableMap<String, NodeValue>, val args: ListVa
     operator fun get(name: String): NodeValue? {
         return symbols[name]
     }
+
     operator fun set(name: String, value: NodeValue) {
         symbols[name] = value
     }
+
     fun remove(name: String) {
         symbols.remove(name)
     }
+
     override fun toString(): String {
         return "Scope(symbols=$symbols, args=$args)"
     }
+
     companion object {
         fun createRoot(defs: Map<String, NodeValue> = mapOf()): Scope {
             val builtins = defs.toMutableMap()
             return Scope(builtins)
         }
+
         fun deserialize(input: String): Scope {
             val dict = Json.decodeFromString<MutableMap<String, String>>(serializer(), input)
             val reconstructed = mutableMapOf<String, NodeValue>()
@@ -980,6 +1040,7 @@ class Scope(private val symbols: MutableMap<String, NodeValue>, val args: ListVa
             return Scope(reconstructed)
         }
     }
+
     fun serialize(): String {
         val filteredSymbols = mutableMapOf<String, String>()
         for ((key, value) in symbols) {
@@ -1002,6 +1063,7 @@ class RecursionTooDeepException(private val depth: Int) : Exception() {
 
     override val message: String = toString()
 }
+
 class Stack(rootScope: Scope, private val declarations: MutableMap<String, NodeValue>) {
     private val scopes: MutableList<Scope>
 
@@ -1165,9 +1227,13 @@ class ListNode(private val items: List<Node>) : Node() {
 
 class SubscriptNode(private val begin: Node, private val extended: Boolean, private val end: Node? = null) : Node() {
     override fun exec(context: ExecutionContext): SubscriptValue {
-        return SubscriptValue(
-            begin.exec(context).asNumber()!!.toInt(), extended, end?.exec(context)?.asNumber()?.toInt()
-        )
+        return when (val begin = begin.exec(context)) {
+            is NumberValue -> NumberSubscriptValue(
+                begin.value.toInt(), extended, end?.exec(context)?.asNumber()?.toInt()
+            )
+            is StringValue -> KeySubscriptValue(begin.value)
+            else -> throw IllegalArgumentException("Illegal accessing: expected NUMBER or STRING, got ${begin.javaClass.simpleName}")
+        }
     }
 
     override fun toString(): String {
@@ -1175,36 +1241,67 @@ class SubscriptNode(private val begin: Node, private val extended: Boolean, priv
     }
 }
 
-class SubscriptViewNode(private val list: Node, private val subscripts: List<SubscriptNode>) : Node() {
+class ObjectNode(private val items: List<Pair<IdentifierNode, Node>>) : Node() {
+    override fun exec(context: ExecutionContext): ObjectValue {
+        return items.associate { (key, value) ->
+            key.name to value.exec(context)
+        }.toNodeValue()
+    }
+
+    override fun toString(): String {
+        return "{${items.joinToString(", ") { (key, value) -> "$key: $value" }}}"
+    }
+}
+
+class AccessViewNode(private val list: Node, private val subscripts: List<SubscriptNode>) : Node() {
     constructor(
         existing: Node, subscript: SubscriptNode
     ) : this(
-        if (existing is SubscriptViewNode) existing.list else existing,
-        if (existing is SubscriptViewNode) existing.subscripts + subscript else listOf(subscript)
+        if (existing is AccessViewNode) existing.list else existing,
+        if (existing is AccessViewNode) existing.subscripts + subscript else listOf(subscript)
     )
 
-    private class RangeHierarchy(list: NodeValue, subscripts: List<SubscriptValue>) {
+    private class AccessorHierarchy(list: NodeValue, subscripts: List<SubscriptValue>) {
+
+        sealed class Pointer
+        data class IndexPointer(val index: Int) : Pointer()
+        data class KeyPointer(val key: String) : Pointer()
+
         val isEmpty: Boolean
-        val pointers: List<Int>
+        val pointers: List<Pointer>
         val endsAtString: Boolean
+        val newAttribute: Boolean
         val lastSlice: IntRange?
 
         init {
             var currentList = list
             var isEmpty = false
-            val pointers = mutableListOf<Int>()
+            val pointers = mutableListOf<Pointer>()
             var endsAtString = false
+            var newAttribute = false
             var lastRecursion = false
             var lastSlice: IntRange? = null
 
-            for (subscript in subscripts) {
+            for (accessor in subscripts) {
                 if (lastRecursion) {
                     isEmpty = true
                     break
                 }
                 when (currentList) {
+                    is ObjectValue -> {
+                        val subscript = accessor as KeySubscriptValue
+                        pointers.add(KeyPointer(subscript.key))
+                        val newList = currentList[subscript.key]
+                        if (newList == null) {
+                            newAttribute = true
+                            lastRecursion = true
+                        } else {
+                            currentList = newList
+                        }
+                    }
                     is ListValue -> {
                         val range = lastSlice ?: currentList.value.indices
+                        val subscript = accessor as NumberSubscriptValue
                         if (subscript.extended) {
                             val slice = range.safeSlice(subscript.begin, subscript.end)
                             if (slice != null) {
@@ -1216,7 +1313,7 @@ class SubscriptViewNode(private val list: Node, private val subscripts: List<Sub
                         } else {
                             val index = range.safeSubscript(subscript.begin)
                             if (index != null) {
-                                pointers.add(index)
+                                pointers.add(IndexPointer(index))
                                 lastSlice = null
                                 currentList = currentList.value[index]
                             } else {
@@ -1228,6 +1325,7 @@ class SubscriptViewNode(private val list: Node, private val subscripts: List<Sub
                     is StringValue -> {
                         endsAtString = true
                         val range = lastSlice ?: currentList.value.indices
+                        val subscript = accessor as NumberSubscriptValue
                         if (subscript.extended) {
                             val slice = range.safeSlice(subscript.begin, subscript.end)
                             if (slice != null) {
@@ -1247,16 +1345,17 @@ class SubscriptViewNode(private val list: Node, private val subscripts: List<Sub
                             }
                         }
                     }
-                    else -> throw RuntimeException("Failed subscripting on $currentList[$subscript]")
+                    else -> throw RuntimeException("Failed subscripting on $currentList[$accessor]")
                 }
             }
             this.isEmpty = isEmpty
             this.pointers = pointers
             this.endsAtString = endsAtString
+            this.newAttribute = newAttribute
             this.lastSlice = lastSlice
         }
 
-        fun containPath(path: List<Int>): Boolean {
+        fun containPath(path: List<Pointer>): Boolean {
             if (path.size != pointers.size) {
                 return false
             }
@@ -1272,10 +1371,17 @@ class SubscriptViewNode(private val list: Node, private val subscripts: List<Sub
     override fun exec(context: ExecutionContext): NodeValue {
         var list = list.exec(context)
         val subscripts = subscripts.map { it.exec(context) }
-        val hierarchy = RangeHierarchy(list, subscripts)
+        val hierarchy = AccessorHierarchy(list, subscripts)
         if (hierarchy.isEmpty) return NullValue()
         for (pointer in hierarchy.pointers) {
-            list = list.asList()!![pointer]
+            list = when (pointer) {
+                is AccessorHierarchy.IndexPointer -> {
+                    list.asList()!![pointer.index]
+                }
+                is AccessorHierarchy.KeyPointer -> {
+                    list.asObject()!![pointer.key]!!
+                }
+            }
         }
         return if (hierarchy.endsAtString) {
             val string = list.asString()!!
@@ -1295,9 +1401,9 @@ class SubscriptViewNode(private val list: Node, private val subscripts: List<Sub
         }
         val listValue = list.exec(context)
         val subscripts = subscripts.map { it.exec(context) }
-        val hierarchy = RangeHierarchy(listValue, subscripts)
+        val hierarchy = AccessorHierarchy(listValue, subscripts)
         if (hierarchy.isEmpty) throw RuntimeException("Failed subscripting on $list${subscripts.joinToString("") { "[$it]" }}")
-        val path = mutableListOf<Int>()
+        val path = mutableListOf<AccessorHierarchy.Pointer>()
         fun copyValue(cur: NodeValue): NodeValue {
             if (hierarchy.containPath(path)) {
                 // Do the real assignment
@@ -1333,16 +1439,31 @@ class SubscriptViewNode(private val list: Node, private val subscripts: List<Sub
                     }
                 }
             } else {
-                return if (cur is ListValue) {
-                    val newList = mutableListOf<NodeValue>()
-                    for (i in cur.value.indices) {
-                        path.add(i)
-                        newList.add(copyValue(cur.value[i]))
-                        path.removeLast()
+                return when (cur) {
+                    is ListValue -> {
+                        val newList = mutableListOf<NodeValue>()
+                        for (i in cur.value.indices) {
+                            path.add(AccessorHierarchy.IndexPointer(i))
+                            newList.add(copyValue(cur.value[i]))
+                            path.removeLast()
+                        }
+                        ListValue(newList)
                     }
-                    ListValue(newList)
-                } else {
-                    cur
+                    is ObjectValue -> {
+                        val newAttributes = mutableMapOf<String, NodeValue>()
+                        for (i in cur.keys()) {
+                            path.add(AccessorHierarchy.KeyPointer(i))
+                            newAttributes[i] = copyValue(cur[i]!!)
+                            path.removeLast()
+                        }
+                        if (hierarchy.newAttribute) {
+                            if (hierarchy.containPath(path + hierarchy.pointers.last())) {
+                                newAttributes[(hierarchy.pointers.last() as AccessorHierarchy.KeyPointer).key] = value
+                            }
+                        }
+                        ObjectValue(newAttributes)
+                    }
+                    else -> cur
                 }
             }
         }
@@ -1396,16 +1517,18 @@ class ProcedureNode(private val caller: Node?, private val func: IdentifierNode,
 
 abstract class OperatorNode : Node() {
     enum class OperatorType {
-        UNARY,
-        BINARY
+        UNARY, BINARY
     }
+
     data class Precedence(val operators: List<TokenType>, val opType: OperatorType)
     companion object {
         val PrecedenceList = listOf(
             Precedence(listOf(TokenType.NOT, TokenType.MINUS), OperatorType.UNARY),
             Precedence(listOf(TokenType.MULT, TokenType.DIV, TokenType.MOD), OperatorType.BINARY),
             Precedence(listOf(TokenType.PLUS, TokenType.MINUS), OperatorType.BINARY),
-            Precedence(listOf(TokenType.GREATER_EQ, TokenType.LESS_EQ, TokenType.GREATER, TokenType.LESS), OperatorType.BINARY),
+            Precedence(
+                listOf(TokenType.GREATER_EQ, TokenType.LESS_EQ, TokenType.GREATER, TokenType.LESS), OperatorType.BINARY
+            ),
             Precedence(listOf(TokenType.EQUAL, TokenType.NOT_EQUAL), OperatorType.BINARY),
             Precedence(listOf(TokenType.LOGIC_AND), OperatorType.BINARY),
             Precedence(listOf(TokenType.LOGIC_OR), OperatorType.BINARY),
@@ -1415,22 +1538,27 @@ abstract class OperatorNode : Node() {
 }
 
 class BinaryOperatorNode(private val components: List<Node>, private val ops: List<TokenType>) : OperatorNode() {
-    private val opMap = mapOf<TokenType, (ExecutionContext, Node, Node) -> NodeValue>(
-        TokenType.PLUS to { context, left, right -> left.exec(context) + right.exec(context) },
-        TokenType.MINUS to { context, left, right -> left.exec(context) - right.exec(context) },
-        TokenType.MULT to { context, left, right -> left.exec(context) * right.exec(context) },
-        TokenType.DIV to { context, left, right -> left.exec(context) / right.exec(context) },
-        TokenType.MOD to { context, left, right -> left.exec(context) % right.exec(context) },
-        TokenType.EQUAL to { context, left, right -> (left.exec(context) == right.exec(context)).toNodeValue() },
-        TokenType.NOT_EQUAL to { context, left, right -> (left.exec(context) != right.exec(context)).toNodeValue() },
-        TokenType.GREATER to { context, left, right -> (left.exec(context) > right.exec(context)).toNodeValue() },
-        TokenType.LESS to { context, left, right -> (left.exec(context) < right.exec(context)).toNodeValue() },
-        TokenType.GREATER_EQ to { context, left, right -> (left.exec(context) >= right.exec(context)).toNodeValue() },
-        TokenType.LESS_EQ to { context, left, right -> (left.exec(context) <= right.exec(context)).toNodeValue() },
-        TokenType.LOGIC_AND to { context, left, right -> (left.exec(context).toBoolean() && right.exec(context).toBoolean()).toNodeValue() },
-        TokenType.LOGIC_OR to { context, left, right -> (left.exec(context).toBoolean() || right.exec(context).toBoolean()).toNodeValue() },
-        TokenType.IN to { context, left, right -> (left.exec(context) in right.exec(context)).toNodeValue() }
-    )
+    private val opMap =
+        mapOf<TokenType, (ExecutionContext, Node, Node) -> NodeValue>(TokenType.PLUS to { context, left, right ->
+            left.exec(context) + right.exec(context)
+        },
+            TokenType.MINUS to { context, left, right -> left.exec(context) - right.exec(context) },
+            TokenType.MULT to { context, left, right -> left.exec(context) * right.exec(context) },
+            TokenType.DIV to { context, left, right -> left.exec(context) / right.exec(context) },
+            TokenType.MOD to { context, left, right -> left.exec(context) % right.exec(context) },
+            TokenType.EQUAL to { context, left, right -> (left.exec(context) == right.exec(context)).toNodeValue() },
+            TokenType.NOT_EQUAL to { context, left, right -> (left.exec(context) != right.exec(context)).toNodeValue() },
+            TokenType.GREATER to { context, left, right -> (left.exec(context) > right.exec(context)).toNodeValue() },
+            TokenType.LESS to { context, left, right -> (left.exec(context) < right.exec(context)).toNodeValue() },
+            TokenType.GREATER_EQ to { context, left, right -> (left.exec(context) >= right.exec(context)).toNodeValue() },
+            TokenType.LESS_EQ to { context, left, right -> (left.exec(context) <= right.exec(context)).toNodeValue() },
+            TokenType.LOGIC_AND to { context, left, right ->
+                (left.exec(context).toBoolean() && right.exec(context).toBoolean()).toNodeValue()
+            },
+            TokenType.LOGIC_OR to { context, left, right ->
+                (left.exec(context).toBoolean() || right.exec(context).toBoolean()).toNodeValue()
+            },
+            TokenType.IN to { context, left, right -> (left.exec(context) in right.exec(context)).toNodeValue() })
 
     override fun exec(context: ExecutionContext): NodeValue {
         return if (components.isEmpty()) NullValue()
@@ -1660,6 +1788,7 @@ class UnexpectedTokenException(val token: Token, private val expected: TokenType
     override fun toString(): String {
         return if (expected != null) "Unexpected token $token, expected $expected" else "Unexpected token $token"
     }
+
     override val message: String
         get() = toString()
 }
@@ -1689,7 +1818,8 @@ class Parser(private val tokens: List<Token>) {
 
     private fun isAtEnd() = current >= tokens.size
     private fun peek() = tokens[current]
-//    private fun peekNext() = tokens[current + 1]
+    private fun peekNext() = tokens[current + 1]
+    private fun peekNextNext() = tokens[current + 2]
 
     private fun parseIdentifier() = IdentifierNode(consume(TokenType.IDENTIFIER))
     private fun parseNumber() = NumberNode(consume(TokenType.NUMBER))
@@ -1824,7 +1954,7 @@ class Parser(private val tokens: List<Token>) {
     }
 
     private fun parseExpr(): Node {
-        if(peek().type == TokenType.FUNC) {
+        if (peek().type == TokenType.BRACE_OPEN && peekNext().type != TokenType.BRACE_CLOSE && peekNextNext().type != TokenType.COLON) {
             return parseLambda()
         }
         return parseOperator()
@@ -1835,7 +1965,7 @@ class Parser(private val tokens: List<Token>) {
             return parseTerm()
         }
         val op = OperatorNode.PrecedenceList[precedence]
-        return when(op.opType) {
+        return when (op.opType) {
             OperatorNode.OperatorType.UNARY -> {
                 if (peek().type in op.operators) {
                     val unaryOp = consume(peek().type)
@@ -1858,21 +1988,21 @@ class Parser(private val tokens: List<Token>) {
     }
 
     private fun parseLambda(): Node {
-        consume(TokenType.FUNC)
+        consume(TokenType.BRACE_OPEN)
         val params = mutableListOf<IdentifierNode>()
-        if (peek().type == TokenType.PAREN_OPEN) {
-            consume(TokenType.PAREN_OPEN)
-            if (peek().type != TokenType.PAREN_CLOSE) {
+        if (peek().type == TokenType.IDENTIFIER && (peekNext().type == TokenType.COMMA || peekNext().type == TokenType.ARROW)) {
+            // lambda with params
+            params.add(parseIdentifier())
+            while (peek().type != TokenType.ARROW) {
+                consume(TokenType.COMMA)
                 params.add(parseIdentifier())
-                while (peek().type != TokenType.PAREN_CLOSE) {
-                    consume(TokenType.COMMA)
-                    params.add(parseIdentifier())
-                }
             }
-            consume(TokenType.PAREN_CLOSE)
+            consume(TokenType.ARROW)
         }
         consumeLineBreak()
         val body = parseStmt()
+        consume(TokenType.BRACE_CLOSE)
+        consumeLineBreak()
         return NodeProcedureValue(body, params.map { it.name }).toNode()
     }
 
@@ -1904,6 +2034,26 @@ class Parser(private val tokens: List<Token>) {
                 consume(TokenType.BRACKET_CLOSE)
                 list
             }
+            TokenType.BRACE_OPEN -> {
+                consume(TokenType.BRACE_OPEN)
+                val obj = if (peek().type == TokenType.BRACE_CLOSE) {
+                    ObjectNode(emptyList())
+                } else {
+                    val k = parseIdentifier()
+                    consume(TokenType.COLON)
+                    val items = mutableListOf(k to parseExpr())
+                    while (peek().type != TokenType.BRACE_CLOSE) {
+                        consume(TokenType.COMMA)
+                        val k = parseIdentifier()
+                        consume(TokenType.COLON)
+                        items.add(k to parseExpr())
+                    }
+                    ObjectNode(items)
+                }
+                consume(TokenType.BRACE_CLOSE)
+                consumeLineBreak()
+                obj
+            }
             else -> throw UnexpectedTokenException(token)
         }
     }
@@ -1925,11 +2075,15 @@ class Parser(private val tokens: List<Token>) {
         return when (token.type) {
             TokenType.DOT -> {
                 consume(TokenType.DOT)
-                val func = IdentifierNode(consume(TokenType.IDENTIFIER))
-                consume(TokenType.PAREN_OPEN)
-                val params = parseParamList()
-                consume(TokenType.PAREN_CLOSE)
-                ProcedureNode(termHead, func, params)
+                val attribute = IdentifierNode(consume(TokenType.IDENTIFIER))
+                if (peek().type == TokenType.PAREN_OPEN) {
+                    consume(TokenType.PAREN_OPEN)
+                    val params = parseParamList()
+                    consume(TokenType.PAREN_CLOSE)
+                    ProcedureNode(termHead, attribute, params)
+                } else {
+                    AccessViewNode(termHead, SubscriptNode(attribute.name.toNodeValue().toNode(), false))
+                }
             }
             TokenType.BRACKET_OPEN -> {
                 consume(TokenType.BRACKET_OPEN)
@@ -1947,7 +2101,7 @@ class Parser(private val tokens: List<Token>) {
                     SubscriptNode(begin, false)
                 }
                 consume(TokenType.BRACKET_CLOSE)
-                SubscriptViewNode(termHead, subscript)
+                AccessViewNode(termHead, subscript)
             }
             else -> termHead
         }
