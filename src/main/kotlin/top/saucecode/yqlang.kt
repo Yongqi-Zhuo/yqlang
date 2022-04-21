@@ -20,7 +20,6 @@ enum class TokenType {
     NEWLINE, SEMICOLON, COLON, ASSIGN, DOT, COMMA, INIT, // Statements
     IF, ELSE, FUNC, RETURN, WHILE, CONTINUE, BREAK, FOR, IN, // Control flow
     ARROW, // Lambda arrow
-
     // Operators begin
     NOT, // Unary NOT, unary MINUS cannot be discriminated by tokenizer
     MULT, DIV, MOD, // MULT_OP
@@ -30,7 +29,6 @@ enum class TokenType {
     EQUAL, NOT_EQUAL, // EQ_OP
     LOGIC_AND, // LOGIC_OP
     LOGIC_OR, // LOGIC_OP
-
     // Operators end
     ACTION, IDENTIFIER, NUMBER, STRING, EOF
 }
@@ -350,30 +348,6 @@ sealed class NodeValue : Comparable<NodeValue> {
         }
     }
 
-    override fun equals(other: Any?): Boolean {
-        return if (this is BooleanValue && other is BooleanValue) {
-            this.value == other.value
-        } else if (this is NumberValue && other is NumberValue) {
-            this.value == other.value
-        } else if (this is StringValue && other is StringValue) {
-            this.value == other.value
-        } else if (this is ListValue && other is ListValue) {
-            this.value == other.value
-        } else this is NullValue && other is NullValue
-    }
-
-    override fun hashCode(): Int {
-        return when (this) {
-            is BooleanValue -> value.hashCode()
-            is NumberValue -> value.hashCode()
-            is StringValue -> value.hashCode()
-            is ListValue -> value.hashCode()
-            is ObjectValue -> attributes.hashCode()
-            is NullValue -> 0
-            else -> throw IllegalArgumentException("Invalid operation: hashCode($this)")
-        }
-    }
-
     override operator fun compareTo(other: NodeValue): Int {
         return if (this is NumberValue && other is NumberValue) {
             this.value.compareTo(other.value)
@@ -389,7 +363,7 @@ sealed class NodeValue : Comparable<NodeValue> {
     }
 
     companion object {
-        val builtinSymbols = mapOf("true" to true.toNodeValue(), "false" to false.toNodeValue(), "null" to NullValue())
+        val builtinSymbols = mapOf("true" to true.toNodeValue(), "false" to false.toNodeValue(), "null" to NullValue)
     }
 
 }
@@ -467,98 +441,128 @@ data class ObjectValue(val attributes: Map<String, NodeValue> = mapOf()) : NodeV
     override fun toString(): String {
         return "{" + attributes.map { "${it.key}: ${it.value}" }.joinToString(", ") + "}"
     }
+    fun bindSelf(): ObjectValue {
+        for ((key, value) in attributes) {
+            if (value is ProcedureValue) {
+                value.bind(this)
+            }
+        }
+        return this
+    }
 }
 
 fun Map<String, NodeValue>.toNodeValue() = ObjectValue(this)
 
-sealed class ProcedureValue(protected val params: List<String>) : NodeValue() {
+sealed class ProcedureValue(protected val params: List<String>, protected var self: NodeValue?) : NodeValue() {
     override fun toBoolean(): Boolean = true
-    abstract fun execute(context: ExecutionContext): NodeValue
-    fun call(caller: NodeValue?, context: ExecutionContext, args: ListValue): NodeValue {
+    abstract fun execute(context: ExecutionContext, self: NodeValue?): NodeValue
+    fun call(context: ExecutionContext, args: ListValue, otherSelf: NodeValue? = null): NodeValue {
         val res: NodeValue
         try {
-            context.stack.push((if (caller == null) args else (listOf(caller) + args.value).toNodeValue()))
-            res = execute(context)
+            context.stack.push(args)
+            res = execute(context, otherSelf ?: self)
         } finally {
             context.stack.pop()
         }
         return res
     }
+    fun bind(self: NodeValue?): ProcedureValue {
+        this.self = self
+        return this
+    }
+    abstract fun copy(): ProcedureValue
 
     companion object {
-        private val Slice = NodeProcedureValue(
-            AccessViewNode(
-                IdentifierNode(Token(TokenType.IDENTIFIER, "this")), SubscriptNode(
-                    IdentifierNode(Token(TokenType.IDENTIFIER, "begin")),
-                    true,
-                    IdentifierNode(Token(TokenType.IDENTIFIER, "end"))
-                )
-            ), listOf("this", "begin", "end")
-        )
+        private val Slice = { self: NodeValue ->
+            NodeProcedureValue(
+                AccessViewNode(
+                    IdentifierNode(Token(TokenType.IDENTIFIER, "this")), SubscriptNode(
+                        IdentifierNode(Token(TokenType.IDENTIFIER, "begin")),
+                        true,
+                        IdentifierNode(Token(TokenType.IDENTIFIER, "end"))
+                    )
+                ), listOf("begin", "end"), self
+            )
+        }
         private val whiteSpace = Pattern.compile("\\s+")
-        private val Split = BuiltinProcedureValue("split", listOf("this", "separator")) { context ->
-            val str = context.stack["this"]!!.asString()!!
-            val arg = context.stack["separator"]?.asString()
-            if (arg == null) {
-                whiteSpace.split(str).filter { it.isNotEmpty() }.map { it.toNodeValue() }.toList().toNodeValue()
-            } else {
-                str.split(arg).map { it.toNodeValue() }.toList().toNodeValue()
-            }
+        private val Split = { self: NodeValue ->
+            BuiltinProcedureValue("split", listOf("separator"), { context ->
+                val str = context.stack["this"]!!.asString()!!
+                val arg = context.stack["separator"]?.asString()
+                if (arg == null) {
+                    whiteSpace.split(str).filter { it.isNotEmpty() }.map { it.toNodeValue() }.toList().toNodeValue()
+                } else {
+                    str.split(arg).map { it.toNodeValue() }.toList().toNodeValue()
+                }
+            }, self)
         }
-        private val Join = BuiltinProcedureValue("join", listOf("this", "separator")) { context ->
-            val list = context.stack["this"]!!.asList()!!
-            val arg = context.stack["separator"]?.asString()
-            if (arg == null) {
-                list.joinToString(" ").toNodeValue()
-            } else {
-                list.joinToString(arg).toNodeValue()
-            }
+        private val Join = { self: NodeValue ->
+            BuiltinProcedureValue("join", listOf("separator"), { context ->
+                val list = context.stack["this"]!!
+                return@BuiltinProcedureValue if (list is Iterable<*>) {
+                    val arg = context.stack["separator"]?.asString()
+                    if (arg == null) {
+                        list.joinToString(" ").toNodeValue()
+                    } else {
+                        list.joinToString(arg).toNodeValue()
+                    }
+                } else throw RuntimeException("$list has no such method as \"join\"")
+            }, self)
         }
-        private val Find = BuiltinProcedureValue("find", listOf("this", "what")) { context ->
-            val expr = context.stack["this"]!!
-            val arg = context.stack["what"]!!
-            when (expr) {
-                is StringValue -> expr.value.indexOf(arg.asString()!!).toNodeValue()
-                is ListValue -> expr.value.indexOf(arg).toNodeValue()
-                else -> throw RuntimeException("$expr has no such method as \"find\"")
-            }
+        private val Find = { self: NodeValue ->
+            BuiltinProcedureValue("find", listOf("what"), { context ->
+                val expr = context.stack["this"]!!
+                val arg = context.stack["what"]!!
+                when (expr) {
+                    is StringValue -> expr.value.indexOf(arg.asString()!!).toNodeValue()
+                    is ListValue -> expr.value.indexOf(arg).toNodeValue()
+                    else -> throw RuntimeException("$expr has no such method as \"find\"")
+                }
+            }, self)
         }
-        private val Contains = BuiltinProcedureValue("contains", listOf("this", "what")) { context ->
-            val expr = context.stack["this"]!!
-            val arg = context.stack["what"]!!
-            when (expr) {
-                is StringValue -> expr.value.contains(arg.asString()!!).toNodeValue()
-                is ListValue -> expr.value.contains(arg).toNodeValue()
-                is RangeValue<*> -> expr.contains(arg).toNodeValue()
-                else -> throw RuntimeException("$expr has no such method as \"contains\"")
-            }
+        private val Contains = { self: NodeValue ->
+            BuiltinProcedureValue("contains", listOf("what"), { context ->
+                val expr = context.stack["this"]!!
+                val arg = context.stack["what"]!!
+                when (expr) {
+                    is StringValue -> expr.value.contains(arg.asString()!!).toNodeValue()
+                    is ListValue -> expr.value.contains(arg).toNodeValue()
+                    is RangeValue<*> -> expr.contains(arg).toNodeValue()
+                    else -> throw RuntimeException("$expr has no such method as \"contains\"")
+                }
+            }, self)
         }
-        private val Length = BuiltinProcedureValue("length", listOf("this")) { context ->
-            when (val expr = context.stack["this"]!!) {
-                is StringValue -> expr.value.length.toNodeValue()
-                is ListValue -> expr.value.size.toNodeValue()
-                else -> throw RuntimeException("$expr has no such method as \"length\"")
-            }
+        private val Length = { self: NodeValue ->
+            BuiltinProcedureValue("length", listOf(), { context ->
+                when (val expr = context.stack["this"]!!) {
+                    is StringValue -> expr.value.length.toNodeValue()
+                    is ListValue -> expr.value.size.toNodeValue()
+                    is RangeValue<*> -> expr.size.toNodeValue()
+                    else -> throw RuntimeException("$expr has no such method as \"length\"")
+                }
+            }, self)
         }
-        private val Time = BuiltinProcedureValue("time", listOf()) {
+        private val Time = BuiltinProcedureValue("time", listOf(), {
             System.currentTimeMillis().toNodeValue()
+        }, null)
+        private val Random = { self: NodeValue ->
+            BuiltinProcedureValue("random", listOf("first", "second"), { context ->
+                val collection = context.stack["this"]
+                return@BuiltinProcedureValue if (collection?.toBoolean() == true) {
+                    when (collection) {
+                        is StringValue -> collection.value.random().toString().toNodeValue()
+                        is ListValue -> collection.value.random()
+                        is RangeValue<*> -> collection.random()
+                        else -> throw RuntimeException("$collection has no such method as \"random\"")
+                    }
+                } else {
+                    val first = context.stack["first"]!!.asNumber()!!
+                    val second = context.stack["second"]!!.asNumber()!!
+                    (first until second).random().toNodeValue()
+                }
+            }, self)
         }
-        private val Random = BuiltinProcedureValue("random", listOf("first", "second")) { context ->
-            return@BuiltinProcedureValue when (val firstValue = context.stack["first"]!!) {
-                is StringValue -> { // str.random()
-                    firstValue.value.random().toString().toNodeValue()
-                }
-                is ListValue -> { // list.random()
-                    firstValue.value.random()
-                }
-                is NumberValue -> { // int.random()
-                    val secondValue = context.stack["second"]!!.asNumber()!!
-                    (firstValue.value until secondValue).random().toNodeValue()
-                }
-                else -> throw RuntimeException("$firstValue has no such method as \"random\"")
-            }
-        }
-        private val Range = BuiltinProcedureValue("range", listOf("begin", "end")) { context ->
+        private val Range = BuiltinProcedureValue("range", listOf("begin", "end"), { context ->
             val begin = context.stack["begin"]!!
             val end = context.stack["end"]
             return@BuiltinProcedureValue when (begin) {
@@ -572,8 +576,8 @@ sealed class ProcedureValue(protected val params: List<String>) : NodeValue() {
                 }
                 else -> throw RuntimeException("range: $begin must be a number or a string")
             }
-        }
-        private val RangeInclusive = BuiltinProcedureValue("rangeInclusive", listOf("begin", "end")) { context ->
+        }, null)
+        private val RangeInclusive = BuiltinProcedureValue("rangeInclusive", listOf("begin", "end"), { context ->
             val begin = context.stack["begin"]!!
             val end = context.stack["end"]
             return@BuiltinProcedureValue when (begin) {
@@ -587,14 +591,14 @@ sealed class ProcedureValue(protected val params: List<String>) : NodeValue() {
                 }
                 else -> throw RuntimeException("range: $begin must be a number or a string")
             }
-        }
-        private val Number = BuiltinProcedureValue("number", listOf("str")) { context ->
+        }, null)
+        private val Number = BuiltinProcedureValue("number", listOf("str"), { context ->
             context.stack["str"]!!.asString()!!.toLong().toNodeValue()
-        }
-        private val String = BuiltinProcedureValue("string", listOf("num")) { context ->
+        }, null)
+        private val String = BuiltinProcedureValue("string", listOf("num"), { context ->
             context.stack["num"]!!.asNumber()!!.toString().toNodeValue()
-        }
-        private val Object = BuiltinProcedureValue("object", listOf("fields")) { context ->
+        }, null)
+        private val Object = BuiltinProcedureValue("object", listOf("fields"), { context ->
             val fields = context.stack["fields"]?.asList() ?: return@BuiltinProcedureValue ObjectValue(emptyMap())
             val result = mutableMapOf<String, NodeValue>()
             for (field in fields) {
@@ -603,117 +607,129 @@ sealed class ProcedureValue(protected val params: List<String>) : NodeValue() {
                 result[key] = value
             }
             return@BuiltinProcedureValue ObjectValue(result)
-        }
-        private val Abs = BuiltinProcedureValue("abs", listOf("num")) { context ->
+        }, null)
+        private val Abs = BuiltinProcedureValue("abs", listOf("num"), { context ->
             context.stack["num"]!!.asNumber()!!.absoluteValue.toNodeValue()
+        }, null)
+        private val Enumerated = { self: NodeValue ->
+            BuiltinProcedureValue("enumerated", listOf(), { context ->
+                val list = context.stack["this"]!!
+                return@BuiltinProcedureValue if (list is Iterable<*>) {
+                    list.mapIndexed { index, value -> ListValue(listOf(index.toNodeValue(), value as NodeValue)) }
+                        .toNodeValue()
+                } else {
+                    throw RuntimeException("$list has no such method as \"enumerated\"")
+                }
+            }, self)
         }
-        private val Enumerated = BuiltinProcedureValue("enumerated", listOf("list")) { context ->
-            val list = context.stack["list"]!!
-            return@BuiltinProcedureValue if (list is Iterable<*>) {
-                list.mapIndexed { index, value -> ListValue(listOf(index.toNodeValue(), value as NodeValue)) }
-                    .toNodeValue()
-            } else {
-                throw RuntimeException("$list has no such method as \"enumerated\"")
-            }
-        }
-        private val Ord = BuiltinProcedureValue("ord", listOf("str")) { context ->
+        private val Ord = BuiltinProcedureValue("ord", listOf("str"), { context ->
             context.stack["str"]!!.asString()!!.first().code.toLong().toNodeValue()
-        }
-        private val Chr = BuiltinProcedureValue("chr", listOf("num")) { context ->
+        }, null)
+        private val Chr = BuiltinProcedureValue("chr", listOf("num"), { context ->
             context.stack["num"]!!.asNumber()!!.toInt().toChar().toString().toNodeValue()
-        }
-        private val Pow = BuiltinProcedureValue("pow", listOf("num", "exp")) { context ->
+        }, null)
+        private val Pow = BuiltinProcedureValue("pow", listOf("num", "exp"), { context ->
             val num = context.stack["num"]!!.asNumber()!!
             val exp = context.stack["exp"]!!.asNumber()!!
             num.toDouble().pow(exp.toDouble()).toLong().toNodeValue()
-        }
-        private val Sum = BuiltinProcedureValue("sum", listOf("list")) { context ->
-            val list = context.stack["list"]!!
-            return@BuiltinProcedureValue if (list is Iterable<*>) {
-                list.sumOf { (it as NodeValue).asNumber()!! }.toNodeValue()
-            } else {
-                throw RuntimeException("$list has no such method as \"sum\"")
-            }
-        }
-        private val Boolean = BuiltinProcedureValue("boolean", listOf("value")) { context ->
-            context.stack["value"]!!.toBoolean().toNodeValue()
-        }
-        private val Filter = BuiltinProcedureValue("filter", listOf("list", "predicate")) { context ->
-            val predicate = context.stack["predicate"]!!.asProcedure()!!
-            fun predicateCall(it: NodeValue) = predicate.call(null, context, ListValue(listOf(it)))
-            val list = context.stack["list"]!!
-            return@BuiltinProcedureValue if (list is Iterable<*>) {
-                @Suppress("UNCHECKED_CAST") (list.filter { predicateCall(it as NodeValue).toBoolean() } as List<NodeValue>).toNodeValue()
-            } else {
-                throw RuntimeException("$list has no such method as \"filter\"")
-            }
-        }
-        private val Reduce = BuiltinProcedureValue("reduce", listOf("list", "initial", "reducer")) { context ->
-            val reducer = context.stack["reducer"]!!.asProcedure()!!
-            fun reducerCall(acc: NodeValue, it: NodeValue) = reducer.call(null, context, listOf(acc, it).toNodeValue())
-            val list = context.stack["list"]!!
-            return@BuiltinProcedureValue if (list is Iterable<*>) {
-                var res = context.stack["initial"]!!
-                for (i in list) {
-                    res = reducerCall(res, i as NodeValue)
+        }, null)
+        private val Sum = { self: NodeValue ->
+            BuiltinProcedureValue("sum", listOf(), { context ->
+                val list = context.stack["this"]!!
+                return@BuiltinProcedureValue if (list is Iterable<*>) {
+                    list.sumOf { (it as NodeValue).asNumber()!! }.toNodeValue()
+                } else {
+                    throw RuntimeException("$list has no such method as \"sum\"")
                 }
-                res
-            } else {
-                throw RuntimeException("$list has no such method as \"reduce\"")
-            }
+            }, self)
         }
-        private val Map = BuiltinProcedureValue("map", listOf("list", "mapper")) { context ->
-            val mapper = context.stack["mapper"]!!.asProcedure()!!
-            fun mapperCall(it: NodeValue) = mapper.call(null, context, listOf(it).toNodeValue())
-            val collection = context.stack["list"]!!
-            return@BuiltinProcedureValue if (collection is Iterable<*>) {
-                (collection.map { mapperCall(it as NodeValue) }).toNodeValue()
-            } else {
-                throw RuntimeException("$collection has no such method as \"map\"")
-            }
+        private val Boolean = BuiltinProcedureValue("boolean", listOf("value"), { context ->
+            context.stack["value"]!!.toBoolean().toNodeValue()
+        }, null)
+        private val Filter = { self: NodeValue ->
+            BuiltinProcedureValue("filter", listOf("predicate"), { context ->
+                val predicate = context.stack["predicate"]!!.asProcedure()!!
+                fun predicateCall(it: NodeValue) = predicate.call(context, ListValue(listOf(it)))
+                val list = context.stack["this"]!!
+                return@BuiltinProcedureValue if (list is Iterable<*>) {
+                    @Suppress("UNCHECKED_CAST") (list.filter { predicateCall(it as NodeValue).toBoolean() } as List<NodeValue>).toNodeValue()
+                } else {
+                    throw RuntimeException("$list has no such method as \"filter\"")
+                }
+            }, self)
         }
-        private val Max = BuiltinProcedureValue("max", listOf("list")) { context ->
-            val list = context.stack["list"]!!.asList()!!
-            return@BuiltinProcedureValue list.maxByOrNull { it.asNumber()!! }!!
-        }
-        private val Min = BuiltinProcedureValue("min", listOf("list")) { context ->
-            val list = context.stack["list"]!!.asList()!!
-            return@BuiltinProcedureValue list.minByOrNull { it.asNumber()!! }!!
-        }
-        private val Reversed = BuiltinProcedureValue("reversed", listOf("list")) { context ->
-            return@BuiltinProcedureValue when (val list = context.stack["list"]!!) {
-                is ListValue -> list.value.reversed().toNodeValue()
-                is StringValue -> list.value.reversed().toNodeValue()
-                else -> throw RuntimeException("$list has no such method as \"reversed\"")
-            }
-        }
-        private val Sorted = BuiltinProcedureValue("sorted", listOf("list", "cmp")) { context ->
-            val list = context.stack["list"]!!.asList()!!
-            val cmp = context.stack["cmp"]?.asProcedure()
-            return@BuiltinProcedureValue if (cmp == null) {
-                list.sorted().toNodeValue()
-            } else {
-                list.sortedWith { a, b ->
-                    val res = cmp.call(null, context, ListValue(listOf(a, b)))
-                    if (res.toBoolean()) {
-                        1
-                    } else {
-                        -1
+        private val Reduce = { self: NodeValue ->
+            BuiltinProcedureValue("reduce", listOf("initial", "reducer"), { context ->
+                val reducer = context.stack["reducer"]!!.asProcedure()!!
+                fun reducerCall(acc: NodeValue, it: NodeValue) = reducer.call(context, listOf(acc, it).toNodeValue())
+                val list = context.stack["this"]!!
+                return@BuiltinProcedureValue if (list is Iterable<*>) {
+                    var res = context.stack["initial"]!!
+                    for (i in list) {
+                        res = reducerCall(res, i as NodeValue)
                     }
-                }.toNodeValue()
-            }
+                    res
+                } else {
+                    throw RuntimeException("$list has no such method as \"reduce\"")
+                }
+            }, self)
         }
-        val builtinProcedures = mapOf(
-            "slice" to Slice,
-            "split" to Split,
-            "join" to Join,
-            "find" to Find,
-            "contains" to Contains,
-            "length" to Length,
-            "len" to Length,
+        private val Map = { self: NodeValue ->
+            BuiltinProcedureValue("map", listOf("mapper"), { context ->
+                val mapper = context.stack["mapper"]!!.asProcedure()!!
+                fun mapperCall(it: NodeValue) = mapper.call(context, listOf(it).toNodeValue())
+                val collection = context.stack["this"]!!
+                return@BuiltinProcedureValue if (collection is Iterable<*>) {
+                    (collection.map { mapperCall(it as NodeValue) }).toNodeValue()
+                } else {
+                    throw RuntimeException("$collection has no such method as \"map\"")
+                }
+            }, self)
+        }
+        private val Max = { self: NodeValue ->
+            BuiltinProcedureValue("max", listOf("list"), { context ->
+                val list = (context.stack["this"] as? Iterable<*>) ?: (context.stack["list"]!! as Iterable<*>)
+                return@BuiltinProcedureValue list.maxByOrNull { it as NumberValue }!! as NodeValue
+            }, self)
+        }
+        private val Min = { self: NodeValue ->
+            BuiltinProcedureValue("max", listOf("list"), { context ->
+                val list = (context.stack["this"] as? Iterable<*>) ?: (context.stack["list"]!! as Iterable<*>)
+                return@BuiltinProcedureValue list.minByOrNull { it as NumberValue }!! as NodeValue
+            }, self)
+        }
+        private val Reversed = { self: NodeValue ->
+            BuiltinProcedureValue("reversed", listOf(), { context ->
+                return@BuiltinProcedureValue when (val list = context.stack["this"]!!) {
+                    is ListValue -> list.value.reversed().toNodeValue()
+                    is StringValue -> list.value.reversed().toNodeValue()
+                    is Iterable<*> -> {
+                        @Suppress("UNCHECKED_CAST") (list.reversed() as List<NodeValue>).toNodeValue()
+                    }
+                    else -> throw RuntimeException("$list has no such method as \"reversed\"")
+                }
+            }, self)
+        }
+        private val Sorted = { self: NodeValue ->
+            BuiltinProcedureValue("sorted", listOf("cmp"), { context ->
+                @Suppress("UNCHECKED_CAST") val list = context.stack["this"]!! as Iterable<NodeValue>
+                val cmp = context.stack["cmp"]?.asProcedure()
+                return@BuiltinProcedureValue if (cmp == null) {
+                    list.sorted().toNodeValue()
+                } else {
+                    list.sortedWith { a, b ->
+                        val res = cmp.call(context, ListValue(listOf(a, b)))
+                        if (res.toBoolean()) {
+                            1
+                        } else {
+                            -1
+                        }
+                    }.toNodeValue()
+                }
+            }, self)
+        }
+        val builtinFunctions = mapOf(
             "time" to Time,
-            "random" to Random,
-            "rand" to Random,
             "range" to Range,
             "rangeInclusive" to RangeInclusive,
             "number" to Number,
@@ -722,15 +738,26 @@ sealed class ProcedureValue(protected val params: List<String>) : NodeValue() {
             "str" to String,
             "object" to Object,
             "abs" to Abs,
-            "enumerated" to Enumerated,
-            "enumerate" to Enumerated,
             "ord" to Ord,
             "chr" to Chr,
             "char" to Chr,
             "pow" to Pow,
-            "sum" to Sum,
             "boolean" to Boolean,
             "bool" to Boolean,
+        )
+        val builtinMethods = mapOf(
+            "slice" to Slice,
+            "split" to Split,
+            "join" to Join,
+            "find" to Find,
+            "contains" to Contains,
+            "length" to Length,
+            "len" to Length,
+            "random" to Random,
+            "rand" to Random,
+            "enumerated" to Enumerated,
+            "enumerate" to Enumerated,
+            "sum" to Sum,
             "filter" to Filter,
             "reduce" to Reduce,
             "map" to Map,
@@ -762,7 +789,7 @@ sealed class ProcedureValue(protected val params: List<String>) : NodeValue() {
                 |Find the index of an element in a list or the index of a substring in a string. If it is not found, return -1.
                 |Usage: list.find(element)
                 |Example: [1, 2, 3, 4, 5].find(3) // 2
-                |Example: "hello world".find("o") // 4
+                |Example: "hello world".find("o w") // 4
                 |Example: [1, 2, 3, 4, 5].find(6) // -1
                 |""".trimMargin(),
             "contains" to """
@@ -790,16 +817,20 @@ sealed class ProcedureValue(protected val params: List<String>) : NodeValue() {
                 |Example: [1, 2, 3, 4, 5, 6].random() // 1
                 |Example: "hello world".random() // "e"
                 |Example: random(3, 5) // 4
+                |Example: random('a', 'z') // "d"
+                |Example: range(10).random() // 5
                 |""".trimMargin(),
             "range" to """
                 |Create a range expression from min to max (exclusive) that can be used in for statements.
                 |Usage: range(min, max)
                 |Example: for i in range(1, 5) say i // 1 2 3 4
+                |Example: for [i, letter] in range('a', 'f').enumerated() say string(i) + ": " + letter // 0: a 1: b 2: c 3: d 4: e
                 |""".trimMargin(),
             "rangeInclusive" to """
                 |Create a range expression from min to max (inclusive) that can be used in for statements.
                 |Usage: rangeInclusive(min, max)
                 |Example: for i in rangeInclusive(1, 5) say i // 1 2 3 4 5
+                |Example: range(range(4,7).random()).map({ rangeInclusive("a", "z").random() }).join("") // ojbkk
                 |""".trimMargin(),
             "number" to """
                 |Convert a string to a number.
@@ -813,7 +844,7 @@ sealed class ProcedureValue(protected val params: List<String>) : NodeValue() {
                 |""".trimMargin(),
             "abs" to """
                 |Get the absolute value of a number.
-                |Usage: abs(num) or num.abs()
+                |Usage: abs(num)
                 |Example: abs(-1) // 1
                 |""".trimMargin(),
             "enumerated" to """
@@ -845,21 +876,22 @@ sealed class ProcedureValue(protected val params: List<String>) : NodeValue() {
                 |Convert a number to a boolean.
                 |Usage: boolean(num)
                 |Example: boolean(1) // true
+                |Example: boolean(null) // false
                 |""".trimMargin(),
             "filter" to """
                 |Filter a list using a predicate.
                 |Usage: list.filter(predicate)
-                |Example: func even(this) this % 2 == 0; [1, 2, 3, 4, 5].filter(even) // [2, 4]
+                |Example: [1, 2, 3, 4, 5].filter({ $0 % 2 == 0 }) // [2, 4]
                 |""".trimMargin(),
             "reduce" to """
                 |Reduce a list using a function.
                 |Usage: list.reduce(initial, function)
-                |Example: func sum(this, that) this + that; [1, 2, 3].reduce(0, sum) // 6
+                |Example: [1, 2, 3].reduce(0, { $0 + $1 }) // 6
                 |""".trimMargin(),
             "map" to """
                 |Map a list using a function.
                 |Usage: list.map(function)
-                |Example: func square(this) this * this; [1, 2, 3].map(square) // [1, 4, 9]
+                |Example: [1, 2, 3].map({ n -> n * n }) // [1, 4, 9]
                 |""".trimMargin(),
             "max" to """
                 |Get the maximum value of a list.
@@ -881,27 +913,37 @@ sealed class ProcedureValue(protected val params: List<String>) : NodeValue() {
                 |Usage: list.sorted()
                 |Usage: list.sorted(comparator)
                 |Example: [3, 2, 1].sorted() // [1, 2, 3]
-                |Example: func reverse(this, that) this < that; [1, 2, 3].sorted(reverse) // [3, 2, 1]
+                |Example: [1, 2, 3].sorted({ a, b -> a < b}) // [3, 2, 1]
                 |""".trimMargin(),
         )
     }
 }
 
 class BuiltinProcedureValue(
-    private val name: String, params: List<String>, private val func: (context: ExecutionContext) -> NodeValue
-) : ProcedureValue(params) {
+    private val name: String,
+    params: List<String>,
+    private val func: (context: ExecutionContext) -> NodeValue,
+    self: NodeValue?
+) : ProcedureValue(params, self) {
     override fun toString(): String = "builtin($name)"
-    override fun execute(context: ExecutionContext): NodeValue {
-        context.stack.nameArgs(params)
+    override fun execute(context: ExecutionContext, self: NodeValue?): NodeValue {
+        context.stack.nameArgs(params, self)
         return func(context)
+    }
+    override fun copy(): ProcedureValue {
+        return BuiltinProcedureValue(name, params, func, self)
     }
 }
 
-class NodeProcedureValue(private val func: Node, params: List<String>) : ProcedureValue(params) {
+class NodeProcedureValue(private val func: Node, params: List<String>, self: NodeValue?) :
+    ProcedureValue(params, self) {
     override fun toString() = "procedure($func)"
-    override fun execute(context: ExecutionContext): NodeValue {
-        context.stack.nameArgs(params)
+    override fun execute(context: ExecutionContext, self: NodeValue?): NodeValue {
+        context.stack.nameArgs(params, self)
         return func.exec(context)
+    }
+    override fun copy(): ProcedureValue {
+        return NodeProcedureValue(func, params, self)
     }
 }
 
@@ -911,6 +953,8 @@ sealed class RangeValue<T : NodeValue>(
 ) : NodeValue(), Iterable<T> {
     override fun toBoolean() = true
     override fun toString() = "range($begin, $end)"
+    abstract fun random(): T
+    abstract val size: Long
 }
 
 @Serializable(with = NumberRangeValue.Serializer::class)
@@ -937,6 +981,20 @@ class NumberRangeValue(begin: NumberValue, end: NumberValue, inclusive: Boolean)
         } else {
             value.value in (begin.value until end.value)
         }
+    }
+
+    override fun random(): NumberValue {
+        return if (inclusive) {
+            NumberValue((begin.value..end.value).random())
+        } else {
+            NumberValue((begin.value until end.value).random())
+        }
+    }
+
+    override val size: Long = if (inclusive) {
+        end.value - begin.value + 1
+    } else {
+        end.value - begin.value
     }
 
     class Serializer : KSerializer<NumberRangeValue> {
@@ -988,6 +1046,21 @@ class CharRangeValue(begin: StringValue, end: StringValue, inclusive: Boolean) :
         }
     }
 
+    override fun random(): StringValue {
+        return if (inclusive) {
+            StringValue((begin.value[0]..end.value[0]).random().toString())
+        } else {
+            StringValue((begin.value[0] until end.value[0]).random().toString())
+        }
+    }
+
+    override val size: Long
+        get() = if (inclusive) {
+            end.value[0] - begin.value[0] + 1
+        } else {
+            end.value[0] - begin.value[0]
+        }.toLong()
+
     class Serializer : KSerializer<CharRangeValue> {
         override val descriptor: SerialDescriptor = buildClassSerialDescriptor("top.saucecode.CharRangeValue") {
             element<NumberValue>("begin")
@@ -1012,7 +1085,7 @@ class CharRangeValue(begin: StringValue, end: StringValue, inclusive: Boolean) :
 }
 
 @Serializable
-class NullValue : NodeValue() {
+object NullValue : NodeValue() {
     override fun toString() = "null"
     override fun toBoolean(): Boolean = false
 }
@@ -1076,7 +1149,7 @@ class RecursionTooDeepException(private val depth: Int) : Exception() {
     override val message: String = toString()
 }
 
-class Stack(rootScope: Scope, private val declarations: MutableMap<String, NodeValue>) {
+class Stack(rootScope: Scope, private val declarations: MutableMap<String, (NodeValue) -> ProcedureValue>) {
     private val scopes: MutableList<Scope>
 
     private var depth = 0
@@ -1102,7 +1175,7 @@ class Stack(rootScope: Scope, private val declarations: MutableMap<String, NodeV
     private val args: ListValue
         get() = scopes.last().args
 
-    fun nameArgs(params: List<String>) {
+    fun nameArgs(params: List<String>, self: NodeValue?) {
         val argc = min(params.size, args.size)
         for (i in 0 until argc) {
             scopes.last()[params[i]] = args[i]
@@ -1112,6 +1185,9 @@ class Stack(rootScope: Scope, private val declarations: MutableMap<String, NodeV
         }
         scopes.last()["\$"] = args
         args.forEachIndexed { index, nodeValue -> scopes.last()["\$$index"] = nodeValue }
+        if (self != null) {
+            scopes.last()["this"] = self
+        }
     }
 
     operator fun get(name: String): NodeValue? {
@@ -1121,7 +1197,13 @@ class Stack(rootScope: Scope, private val declarations: MutableMap<String, NodeV
                 return value
             }
         }
-        return declarations[name] ?: NodeValue.builtinSymbols[name] ?: ProcedureValue.builtinProcedures[name]
+        return NodeValue.builtinSymbols[name] ?: declarations[name]?.invoke(NullValue)
+        ?: ProcedureValue.builtinFunctions[name] ?: ProcedureValue.builtinMethods[name]?.invoke(NullValue)
+    }
+
+    fun getProcedure(name: String): ((NodeValue) -> ProcedureValue)? {
+        return declarations[name] ?: ProcedureValue.builtinMethods[name]
+        ?: ProcedureValue.builtinFunctions[name]?.let { it -> { _: NodeValue -> it } }
     }
 
     operator fun set(name: String, value: NodeValue) {
@@ -1166,7 +1248,7 @@ class IdentifierNode(token: Token) : Node() {
     }
 
     override fun exec(context: ExecutionContext): NodeValue {
-        return context.stack[name] ?: NullValue()
+        return context.stack[name] ?: NullValue
     }
 
     override fun assign(context: ExecutionContext, value: NodeValue) {
@@ -1255,9 +1337,15 @@ class SubscriptNode(private val begin: Node, private val extended: Boolean, priv
 
 class ObjectNode(private val items: List<Pair<IdentifierNode, Node>>) : Node() {
     override fun exec(context: ExecutionContext): ObjectValue {
-        return items.associate { (key, value) ->
-            key.name to value.exec(context)
+        val objVal =  items.associate { (key, value) ->
+            val res = value.exec(context)
+            if (res is ProcedureValue) {
+                key.name to res.copy()
+            } else {
+                key.name to res
+            }
         }.toNodeValue()
+        return objVal.bindSelf()
     }
 
     override fun toString(): String {
@@ -1283,6 +1371,7 @@ class AccessViewNode(private val list: Node, private val subscripts: List<Subscr
         val pointers: List<Pointer>
         val endsAtString: Boolean
         val newAttribute: Boolean
+        val methodCall: Boolean
         val lastSlice: IntRange?
 
         init {
@@ -1291,6 +1380,7 @@ class AccessViewNode(private val list: Node, private val subscripts: List<Subscr
             val pointers = mutableListOf<Pointer>()
             var endsAtString = false
             var newAttribute = false
+            var methodCall = false
             var lastRecursion = false
             var lastSlice: IntRange? = null
 
@@ -1306,6 +1396,7 @@ class AccessViewNode(private val list: Node, private val subscripts: List<Subscr
                         val newList = currentList[subscript.key]
                         if (newList == null) {
                             newAttribute = true
+                            methodCall = true
                             lastRecursion = true
                         } else {
                             currentList = newList
@@ -1313,57 +1404,81 @@ class AccessViewNode(private val list: Node, private val subscripts: List<Subscr
                     }
                     is ListValue -> {
                         val range = lastSlice ?: currentList.value.indices
-                        val subscript = accessor as NumberSubscriptValue
-                        if (subscript.extended) {
-                            val slice = range.safeSlice(subscript.begin, subscript.end)
-                            if (slice != null) {
-                                lastSlice = slice
-                            } else {
-                                isEmpty = true
-                                break
+                        when (accessor) {
+                            is NumberSubscriptValue -> {
+                                if (accessor.extended) {
+                                    val slice = range.safeSlice(accessor.begin, accessor.end)
+                                    if (slice != null) {
+                                        lastSlice = slice
+                                    } else {
+                                        isEmpty = true
+                                        break
+                                    }
+                                } else {
+                                    val index = range.safeSubscript(accessor.begin)
+                                    if (index != null) {
+                                        pointers.add(IndexPointer(index))
+                                        lastSlice = null
+                                        currentList = currentList.value[index]
+                                    } else {
+                                        isEmpty = true
+                                        break
+                                    }
+                                }
                             }
-                        } else {
-                            val index = range.safeSubscript(subscript.begin)
-                            if (index != null) {
-                                pointers.add(IndexPointer(index))
-                                lastSlice = null
-                                currentList = currentList.value[index]
-                            } else {
-                                isEmpty = true
-                                break
+                            is KeySubscriptValue -> {
+                                val key = accessor.key
+                                methodCall = true
+                                lastRecursion = true
+                                pointers.add(KeyPointer(key))
                             }
                         }
                     }
                     is StringValue -> {
                         endsAtString = true
                         val range = lastSlice ?: currentList.value.indices
-                        val subscript = accessor as NumberSubscriptValue
-                        if (subscript.extended) {
-                            val slice = range.safeSlice(subscript.begin, subscript.end)
-                            if (slice != null) {
-                                lastSlice = slice
-                            } else {
-                                isEmpty = true
-                                break
+                        when (accessor) {
+                            is NumberSubscriptValue -> {
+                                if (accessor.extended) {
+                                    val slice = range.safeSlice(accessor.begin, accessor.end)
+                                    if (slice != null) {
+                                        lastSlice = slice
+                                    } else {
+                                        isEmpty = true
+                                        break
+                                    }
+                                } else {
+                                    val index = range.safeSubscript(accessor.begin)
+                                    if (index != null) {
+                                        lastSlice = IntRange(index, index)
+//                                        lastRecursion = true
+                                    } else {
+                                        isEmpty = true
+                                        break
+                                    }
+                                }
                             }
-                        } else {
-                            val index = range.safeSubscript(subscript.begin)
-                            if (index != null) {
-                                lastSlice = IntRange(index, index)
+                            is KeySubscriptValue -> {
+                                val key = accessor.key
+                                methodCall = true
                                 lastRecursion = true
-                            } else {
-                                isEmpty = true
-                                break
+                                lastSlice = range
+                                pointers.add(KeyPointer(key))
                             }
                         }
                     }
-                    else -> throw RuntimeException("Failed subscripting on $currentList[$accessor]")
+                    else -> {
+                        methodCall = true
+                        lastRecursion = true
+                        pointers.add(KeyPointer((accessor as KeySubscriptValue).key))
+                    }
                 }
             }
             this.isEmpty = isEmpty
             this.pointers = pointers
             this.endsAtString = endsAtString
             this.newAttribute = newAttribute
+            this.methodCall = methodCall
             this.lastSlice = lastSlice
         }
 
@@ -1384,27 +1499,36 @@ class AccessViewNode(private val list: Node, private val subscripts: List<Subscr
         var list = list.exec(context)
         val subscripts = subscripts.map { it.exec(context) }
         val hierarchy = AccessorHierarchy(list, subscripts)
-        if (hierarchy.isEmpty) return NullValue()
-        for (pointer in hierarchy.pointers) {
+        if (hierarchy.isEmpty) return NullValue
+        fun handleLastSlice(l: NodeValue): NodeValue {
+            return if (hierarchy.endsAtString) {
+                val string = l.asString()!!
+                StringValue(string.substring(hierarchy.lastSlice!!))
+            } else {
+                if (hierarchy.lastSlice != null) {
+                    ListValue(l.asList()!!.slice(hierarchy.lastSlice))
+                } else {
+                    l
+                }
+            }
+        }
+        hierarchy.pointers.mapIndexed { index, pointer ->
+            if (hierarchy.methodCall && index == hierarchy.pointers.size - 1) {
+                list = handleLastSlice(list)
+                return context.stack.getProcedure((hierarchy.pointers.last() as AccessorHierarchy.KeyPointer).key)!!
+                    .invoke(list)
+            }
             list = when (pointer) {
                 is AccessorHierarchy.IndexPointer -> {
                     list.asList()!![pointer.index]
                 }
                 is AccessorHierarchy.KeyPointer -> {
-                    list.asObject()!![pointer.key]!!
+                    list.asObject()
+                        ?.let { it[pointer.key] }!! // ?: context.stack.getProcedure(pointer.key)?.invoke(list)!! // if getProcedure, hierarchy.methodCall must be true
                 }
             }
         }
-        return if (hierarchy.endsAtString) {
-            val string = list.asString()!!
-            StringValue(string.substring(hierarchy.lastSlice!!))
-        } else {
-            if (hierarchy.lastSlice != null) {
-                ListValue(list.asList()!!.slice(hierarchy.lastSlice))
-            } else {
-                list
-            }
-        }
+        return handleLastSlice(list)
     }
 
     override fun assign(context: ExecutionContext, value: NodeValue) {
@@ -1485,22 +1609,19 @@ class AccessViewNode(private val list: Node, private val subscripts: List<Subscr
     }
 
     override fun toString(): String {
-        return "listview($list, ${subscripts.joinToString("") { "[$it]" }})"
+        return "AccessView($list${subscripts.joinToString("") { "[$it]" }})"
     }
 }
 
-class ProcedureNode(private val caller: Node?, private val func: IdentifierNode, private val args: ListNode) : Node() {
+class ProcedureNode(private val func: Node, private val args: ListNode) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
-        val caller = caller?.exec(context)
+        val procedure = func.exec(context).asProcedure()!!
         val args = args.exec(context)
-        val procedure = (if (caller is ObjectValue) {
-                caller[func.name]?.asProcedure()
-            } else null) ?: context.stack[func.name]!!.asProcedure()!!
-        return procedure.call(caller, context, args)
+        return procedure.call(context, args)
     }
 
     override fun toString(): String {
-        return if (caller == null) "$func($args)" else "$caller.$func($args)"
+        return "$func($args)"
     }
 }
 
@@ -1528,9 +1649,8 @@ abstract class OperatorNode : Node() {
 
 class BinaryOperatorNode(private val components: List<Node>, private val ops: List<TokenType>) : OperatorNode() {
     private val opMap =
-        mapOf<TokenType, (ExecutionContext, Node, Node) -> NodeValue>(TokenType.PLUS to { context, left, right ->
-            left.exec(context) + right.exec(context)
-        },
+        mapOf<TokenType, (ExecutionContext, Node, Node) -> NodeValue>(
+            TokenType.PLUS to { context, left, right -> left.exec(context) + right.exec(context) },
             TokenType.MINUS to { context, left, right -> left.exec(context) - right.exec(context) },
             TokenType.MULT to { context, left, right -> left.exec(context) * right.exec(context) },
             TokenType.DIV to { context, left, right -> left.exec(context) / right.exec(context) },
@@ -1547,10 +1667,11 @@ class BinaryOperatorNode(private val components: List<Node>, private val ops: Li
             TokenType.LOGIC_OR to { context, left, right ->
                 (left.exec(context).toBoolean() || right.exec(context).toBoolean()).toNodeValue()
             },
-            TokenType.IN to { context, left, right -> (left.exec(context) in right.exec(context)).toNodeValue() })
+            TokenType.IN to { context, left, right -> (left.exec(context) in right.exec(context)).toNodeValue() }
+        )
 
     override fun exec(context: ExecutionContext): NodeValue {
-        return if (components.isEmpty()) NullValue()
+        return if (components.isEmpty()) NullValue
         else if (components.size == 1) {
             components[0].exec(context)
         } else {
@@ -1622,7 +1743,7 @@ class StmtActionNode(private val action: Token, private val expr: Node) : Node()
             }
             else -> throw IllegalArgumentException("Unknown action ${action.value}")
         }
-        return NullValue()
+        return NullValue
     }
 
     override fun toString(): String {
@@ -1637,7 +1758,7 @@ class StmtIfNode(
         return if (condition.exec(context).toBoolean()) {
             ifBody.exec(context)
         } else {
-            elseBody?.exec(context) ?: NullValue()
+            elseBody?.exec(context) ?: NullValue
         }
     }
 
@@ -1652,7 +1773,7 @@ class StmtInitNode(private val stmt: Node) : Node() {
         if (context.firstRun) {
             stmt.exec(context)
         }
-        return NullValue()
+        return NullValue
     }
 
     override fun toString(): String {
@@ -1698,7 +1819,7 @@ class StmtWhileNode(private val condition: Node, private val body: Node) : Node(
                 break
             }
         }
-        return NullValue()
+        return NullValue
     }
 
     override fun toString(): String {
@@ -1731,7 +1852,7 @@ class StmtBreakNode : Node() {
 class StmtForNode(private val iterator: Node, private val collection: Node, private val body: Node) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
         val collection = collection.exec(context)
-        var res: NodeValue = NullValue()
+        var res: NodeValue = NullValue
         if (collection is Iterable<*>) {
             for (item in collection) {
                 iterator.assign(context, item as NodeValue)
@@ -1752,7 +1873,7 @@ class StmtForNode(private val iterator: Node, private val collection: Node, priv
 
 class StmtListNode(private val stmts: List<Node>, private val newScope: Boolean) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
-        var res: NodeValue = NullValue()
+        var res: NodeValue = NullValue
         try {
             if (newScope) {
                 context.stack.push()
@@ -1807,8 +1928,8 @@ class Parser(private val tokens: List<Token>) {
 
     private fun isAtEnd() = current >= tokens.size
     private fun peek() = tokens[current]
-    private fun peekNext() = tokens[current + 1]
-    private fun peekNextNext() = tokens[current + 2]
+    private fun peekNext() = if (current < tokens.size - 1) tokens[current + 1] else null
+    private fun peekNextNext() = if (current < tokens.size - 2) tokens[current + 2] else null
 
     private fun parseIdentifier() = IdentifierNode(consume(TokenType.IDENTIFIER))
     private fun parseNumber() = NumberNode(consume(TokenType.NUMBER))
@@ -1860,7 +1981,7 @@ class Parser(private val tokens: List<Token>) {
                 consume(TokenType.PAREN_CLOSE)
                 consumeLineBreak()
                 val body = parseStmt()
-                declarations[func.name] = NodeProcedureValue(StmtFuncNode(body), params.map { it.name })
+                declarations[func.name] = { obj -> NodeProcedureValue(StmtFuncNode(body), params.map { it.name }, obj) }
                 func
             }
             TokenType.RETURN -> {
@@ -1943,7 +2064,7 @@ class Parser(private val tokens: List<Token>) {
     }
 
     private fun parseExpr(): Node {
-        if (peek().type == TokenType.BRACE_OPEN && peekNext().type != TokenType.BRACE_CLOSE && peekNextNext().type != TokenType.COLON) {
+        if ((peek().type == TokenType.BRACE_OPEN && peekNext()?.type != TokenType.BRACE_CLOSE && peekNextNext()?.type != TokenType.COLON) || peek().type == TokenType.FUNC) {
             return parseLambda()
         }
         return parseOperator()
@@ -1977,38 +2098,49 @@ class Parser(private val tokens: List<Token>) {
     }
 
     private fun parseLambda(): Node {
-        consume(TokenType.BRACE_OPEN)
-        val params = mutableListOf<IdentifierNode>()
-        if (peek().type == TokenType.IDENTIFIER && (peekNext().type == TokenType.COMMA || peekNext().type == TokenType.ARROW)) {
-            // lambda with params
-            params.add(parseIdentifier())
-            while (peek().type != TokenType.ARROW) {
-                consume(TokenType.COMMA)
-                params.add(parseIdentifier())
+        return when (peek().type) {
+            TokenType.FUNC -> {
+                consume(TokenType.FUNC)
+                consume(TokenType.PAREN_OPEN)
+                val params = mutableListOf<IdentifierNode>()
+                if (peek().type != TokenType.PAREN_CLOSE) {
+                    params.add(parseIdentifier())
+                    while (peek().type != TokenType.PAREN_CLOSE) {
+                        consume(TokenType.COMMA)
+                        params.add(parseIdentifier())
+                    }
+                }
+                consume(TokenType.PAREN_CLOSE)
+                consumeLineBreak()
+                val body = parseStmt()
+                NodeProcedureValue(StmtFuncNode(body), params.map { it.name }, null).toNode() // have to make sure caller is assigned to self
             }
-            consume(TokenType.ARROW)
+            TokenType.BRACE_OPEN -> {
+                consume(TokenType.BRACE_OPEN)
+                val params = mutableListOf<IdentifierNode>()
+                if (peek().type == TokenType.IDENTIFIER && (peekNext()?.type == TokenType.COMMA || peekNext()?.type == TokenType.ARROW)) {
+                    // lambda with params
+                    params.add(parseIdentifier())
+                    while (peek().type != TokenType.ARROW) {
+                        consume(TokenType.COMMA)
+                        params.add(parseIdentifier())
+                    }
+                    consume(TokenType.ARROW)
+                }
+                consumeLineBreak()
+                val body = parseStmt()
+                consume(TokenType.BRACE_CLOSE)
+                consumeLineBreak()
+                NodeProcedureValue(body, params.map { it.name }, null).toNode()
+            }
+            else -> throw UnexpectedTokenException(peek(), TokenType.FUNC)
         }
-        consumeLineBreak()
-        val body = parseStmt()
-        consume(TokenType.BRACE_CLOSE)
-        consumeLineBreak()
-        return NodeProcedureValue(body, params.map { it.name }).toNode()
     }
 
     private fun parseTermHead(): Node {
         val token = peek()
         return when (token.type) {
-            TokenType.IDENTIFIER -> {
-                val identifier = parseIdentifier()
-                if (peek().type == TokenType.PAREN_OPEN) {
-                    consume(TokenType.PAREN_OPEN)
-                    val arguments = parseParamList()
-                    consume(TokenType.PAREN_CLOSE)
-                    ProcedureNode(null, identifier, arguments)
-                } else {
-                    identifier
-                }
-            }
+            TokenType.IDENTIFIER -> parseIdentifier()
             TokenType.NUMBER -> parseNumber()
             TokenType.STRING -> parseString()
             TokenType.PAREN_OPEN -> {
@@ -2017,13 +2149,13 @@ class Parser(private val tokens: List<Token>) {
                 consume(TokenType.PAREN_CLOSE)
                 expr
             }
-            TokenType.BRACKET_OPEN -> {
+            TokenType.BRACKET_OPEN -> { // list literal
                 consume(TokenType.BRACKET_OPEN)
                 val list = parseParamList()
                 consume(TokenType.BRACKET_CLOSE)
                 list
             }
-            TokenType.BRACE_OPEN -> {
+            TokenType.BRACE_OPEN -> { // object literal
                 consume(TokenType.BRACE_OPEN)
                 val obj = if (peek().type == TokenType.BRACE_CLOSE) {
                     ObjectNode(emptyList())
@@ -2033,9 +2165,10 @@ class Parser(private val tokens: List<Token>) {
                     val items = mutableListOf(k to parseExpr())
                     while (peek().type != TokenType.BRACE_CLOSE) {
                         consume(TokenType.COMMA)
-                        val k = parseIdentifier()
+                        val key = parseIdentifier()
                         consume(TokenType.COLON)
-                        items.add(k to parseExpr())
+                        val expr = parseExpr()
+                        items.add(key to expr)
                     }
                     ObjectNode(items)
                 }
@@ -2065,14 +2198,7 @@ class Parser(private val tokens: List<Token>) {
             TokenType.DOT -> {
                 consume(TokenType.DOT)
                 val attribute = IdentifierNode(consume(TokenType.IDENTIFIER))
-                if (peek().type == TokenType.PAREN_OPEN) {
-                    consume(TokenType.PAREN_OPEN)
-                    val params = parseParamList()
-                    consume(TokenType.PAREN_CLOSE)
-                    ProcedureNode(termHead, attribute, params)
-                } else {
-                    AccessViewNode(termHead, SubscriptNode(attribute.name.toNodeValue().toNode(), false))
-                }
+                AccessViewNode(termHead, SubscriptNode(attribute.name.toNodeValue().toNode(), false))
             }
             TokenType.BRACKET_OPEN -> {
                 consume(TokenType.BRACKET_OPEN)
@@ -2092,32 +2218,34 @@ class Parser(private val tokens: List<Token>) {
                 consume(TokenType.BRACKET_CLOSE)
                 AccessViewNode(termHead, subscript)
             }
-//            TokenType.PAREN_OPEN -> {
-//                consume(TokenType.PAREN_OPEN)
-//                val params = parseParamList()
-//                consume(TokenType.PAREN_CLOSE)
-//                ProcedureNode(termHead, params)
-//            }
+            TokenType.PAREN_OPEN -> {
+                consume(TokenType.PAREN_OPEN)
+                val params = parseParamList()
+                consume(TokenType.PAREN_CLOSE)
+                ProcedureNode(termHead, params)
+            }
             else -> termHead
         }
     }
 
     private fun parseTerm(): Node {
         var term = parseTermHead()
-        while (peek().type == TokenType.DOT || peek().type == TokenType.BRACKET_OPEN) {
+        while (peek().type == TokenType.DOT || peek().type == TokenType.BRACKET_OPEN || peek().type == TokenType.PAREN_OPEN) {
             term = parseTermTail(term)
         }
         return term
     }
 
-    private var declarations: MutableMap<String, NodeValue> = mutableMapOf()
-    fun parse(): Pair<Node, MutableMap<String, NodeValue>> {
+    private var declarations: MutableMap<String, (NodeValue) -> ProcedureValue> = mutableMapOf()
+    fun parse(): Pair<Node, MutableMap<String, (NodeValue) -> ProcedureValue>> {
         declarations = mutableMapOf()
         return Pair(parseStmtList(false), declarations)
     }
 }
 
-abstract class ExecutionContext(rootScope: Scope, declarations: MutableMap<String, NodeValue>, val firstRun: Boolean) {
+abstract class ExecutionContext(
+    rootScope: Scope, declarations: MutableMap<String, (NodeValue) -> ProcedureValue>, val firstRun: Boolean
+) {
     val stack: Stack
 
     init {
@@ -2127,15 +2255,16 @@ abstract class ExecutionContext(rootScope: Scope, declarations: MutableMap<Strin
     abstract fun say(text: String)
 }
 
-class ConsoleContext(rootScope: Scope? = null, declarations: MutableMap<String, NodeValue>) :
+class ConsoleContext(rootScope: Scope? = null, declarations: MutableMap<String, (NodeValue) -> ProcedureValue>) :
     ExecutionContext(rootScope ?: Scope.createRoot(), declarations, true) {
     override fun say(text: String) {
         println(text)
     }
 }
 
-class ControlledContext(rootScope: Scope, declarations: MutableMap<String, NodeValue>, firstRun: Boolean) :
-    ExecutionContext(rootScope, declarations, firstRun) {
+class ControlledContext(
+    rootScope: Scope, declarations: MutableMap<String, (NodeValue) -> ProcedureValue>, firstRun: Boolean
+) : ExecutionContext(rootScope, declarations, firstRun) {
     private val record = mutableListOf<String>()
     override fun say(text: String) {
         record.add(text)
@@ -2150,7 +2279,7 @@ class ControlledContext(rootScope: Scope, declarations: MutableMap<String, NodeV
 
 class Interpreter(source: String, private val restricted: Boolean) {
     private val ast: Node
-    val declarations: MutableMap<String, NodeValue>
+    val declarations: MutableMap<String, (NodeValue) -> ProcedureValue>
 
     init {
         val tokens = Tokenizer(source).scan()
@@ -2174,7 +2303,7 @@ class Interpreter(source: String, private val restricted: Boolean) {
 
 class REPL {
     val rootScope = Scope.createRoot()
-    private val declarations = mutableMapOf<String, NodeValue>()
+    private val declarations = mutableMapOf<String, (NodeValue) -> ProcedureValue>()
 
     fun run() {
         val inputs = mutableListOf<String>()
