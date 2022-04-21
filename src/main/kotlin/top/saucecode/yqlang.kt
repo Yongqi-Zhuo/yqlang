@@ -474,6 +474,16 @@ fun Map<String, NodeValue>.toNodeValue() = ObjectValue(this)
 sealed class ProcedureValue(protected val params: List<String>) : NodeValue() {
     override fun toBoolean(): Boolean = true
     abstract fun execute(context: ExecutionContext): NodeValue
+    fun call(caller: NodeValue?, context: ExecutionContext, args: ListValue): NodeValue {
+        val res: NodeValue
+        try {
+            context.stack.push((if (caller == null) args else (listOf(caller) + args.value).toNodeValue()))
+            res = execute(context)
+        } finally {
+            context.stack.pop()
+        }
+        return res
+    }
 
     companion object {
         private val Slice = NodeProcedureValue(
@@ -629,7 +639,8 @@ sealed class ProcedureValue(protected val params: List<String>) : NodeValue() {
             context.stack["value"]!!.toBoolean().toNodeValue()
         }
         private val Filter = BuiltinProcedureValue("filter", listOf("list", "predicate")) { context ->
-            fun predicateCall(it: NodeValue) = ProcedureNode.call(context, it, "predicate", ListValue(emptyList()))
+            val predicate = context.stack["predicate"]!!.asProcedure()!!
+            fun predicateCall(it: NodeValue) = predicate.call(null, context, ListValue(listOf(it)))
             val list = context.stack["list"]!!
             return@BuiltinProcedureValue if (list is Iterable<*>) {
                 @Suppress("UNCHECKED_CAST") (list.filter { predicateCall(it as NodeValue).toBoolean() } as List<NodeValue>).toNodeValue()
@@ -638,9 +649,8 @@ sealed class ProcedureValue(protected val params: List<String>) : NodeValue() {
             }
         }
         private val Reduce = BuiltinProcedureValue("reduce", listOf("list", "initial", "reducer")) { context ->
-            fun reducerCall(acc: NodeValue, it: NodeValue) =
-                ProcedureNode.call(context, acc, "reducer", ListValue(listOf(it)))
-
+            val reducer = context.stack["reducer"]!!.asProcedure()!!
+            fun reducerCall(acc: NodeValue, it: NodeValue) = reducer.call(null, context, listOf(acc, it).toNodeValue())
             val list = context.stack["list"]!!
             return@BuiltinProcedureValue if (list is Iterable<*>) {
                 var res = context.stack["initial"]!!
@@ -653,7 +663,8 @@ sealed class ProcedureValue(protected val params: List<String>) : NodeValue() {
             }
         }
         private val Map = BuiltinProcedureValue("map", listOf("list", "mapper")) { context ->
-            fun mapperCall(it: NodeValue) = ProcedureNode.call(context, it, "mapper", ListValue(emptyList()))
+            val mapper = context.stack["mapper"]!!.asProcedure()!!
+            fun mapperCall(it: NodeValue) = mapper.call(null, context, listOf(it).toNodeValue())
             val collection = context.stack["list"]!!
             return@BuiltinProcedureValue if (collection is Iterable<*>) {
                 (collection.map { mapperCall(it as NodeValue) }).toNodeValue()
@@ -678,11 +689,12 @@ sealed class ProcedureValue(protected val params: List<String>) : NodeValue() {
         }
         private val Sorted = BuiltinProcedureValue("sorted", listOf("list", "cmp")) { context ->
             val list = context.stack["list"]!!.asList()!!
-            return@BuiltinProcedureValue if (context.stack["cmp"] == null) {
+            val cmp = context.stack["cmp"]?.asProcedure()
+            return@BuiltinProcedureValue if (cmp == null) {
                 list.sorted().toNodeValue()
             } else {
                 list.sortedWith { a, b ->
-                    val res = ProcedureNode.call(context, null, "cmp", ListValue(listOf(a, b)))
+                    val res = cmp.call(null, context, ListValue(listOf(a, b)))
                     if (res.toBoolean()) {
                         1
                     } else {
@@ -1479,35 +1491,12 @@ class AccessViewNode(private val list: Node, private val subscripts: List<Subscr
 
 class ProcedureNode(private val caller: Node?, private val func: IdentifierNode, private val args: ListNode) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
-        val args = args.exec(context).value
-        return when (func.name) {
-            "defined" -> {
-                val idName = (caller as IdentifierNode).name
-                (context.stack[idName] != null).toNodeValue()
-            }
-            else -> {
-                val procedure = context.stack[func.name]!!.asProcedure()!!
-                val res: NodeValue
-                val callerValue = caller?.exec(context)?.let { listOf(it) }
-                try {
-                    context.stack.push((if (callerValue == null) args else callerValue + args).toNodeValue())
-                    res = procedure.execute(context)
-                } finally {
-                    context.stack.pop()
-                }
-                res
-            }
-        }
-    }
-
-    companion object {
-        fun call(context: ExecutionContext, caller: NodeValue?, funcName: String, args: ListValue): NodeValue {
-            return ProcedureNode(
-                caller?.toNode(),
-                IdentifierNode(Token(TokenType.IDENTIFIER, funcName)),
-                ListNode(args.value.map { it.toNode() })
-            ).exec(context)
-        }
+        val caller = caller?.exec(context)
+        val args = args.exec(context)
+        val procedure = (if (caller is ObjectValue) {
+                caller[func.name]?.asProcedure()
+            } else null) ?: context.stack[func.name]!!.asProcedure()!!
+        return procedure.call(caller, context, args)
     }
 
     override fun toString(): String {
@@ -2103,6 +2092,12 @@ class Parser(private val tokens: List<Token>) {
                 consume(TokenType.BRACKET_CLOSE)
                 AccessViewNode(termHead, subscript)
             }
+//            TokenType.PAREN_OPEN -> {
+//                consume(TokenType.PAREN_OPEN)
+//                val params = parseParamList()
+//                consume(TokenType.PAREN_CLOSE)
+//                ProcedureNode(termHead, params)
+//            }
             else -> termHead
         }
     }
