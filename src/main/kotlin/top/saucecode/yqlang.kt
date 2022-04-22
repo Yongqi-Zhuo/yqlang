@@ -207,6 +207,7 @@ class Tokenizer(private val input: String) {
                         "in" -> tokens.add(Token(TokenType.IN, "in"))
                         "init" -> tokens.add(Token(TokenType.INIT, "init"))
                         "say" -> tokens.add(Token(TokenType.ACTION, "say"))
+                        "nudge" -> tokens.add(Token(TokenType.ACTION, "nudge"))
                         // "text" -> tokens.add(Token(TokenType.IDENTIFIER, "text")) // events are special identifiers
                         else -> tokens.add(Token(TokenType.IDENTIFIER, value))
                     }
@@ -728,6 +729,10 @@ sealed class ProcedureValue(protected val params: List<String>, protected var se
                 }
             }, self)
         }
+        private val GetNickname = BuiltinProcedureValue("getNickname", listOf("id"), { context ->
+            val user = context.stack["id"]!!.asNumber()!!
+            return@BuiltinProcedureValue context.nickname(user).toNodeValue()
+        }, null)
         val builtinFunctions = mapOf(
             "time" to Time,
             "range" to Range,
@@ -841,6 +846,11 @@ sealed class ProcedureValue(protected val params: List<String>, protected var se
                 |Convert a number to a string.
                 |Usage: string(num)
                 |Example: string(123) // "123"
+                |""".trimMargin(),
+            "object" to """
+                |Convert a key-value list to an object.
+                |Usage: object(list)
+                |Example: object([["a", 1], ["b", 2]]) // {a: 1, b: 2}
                 |""".trimMargin(),
             "abs" to """
                 |Get the absolute value of a number.
@@ -1090,7 +1100,7 @@ object NullValue : NodeValue() {
     override fun toBoolean(): Boolean = false
 }
 
-class Scope(private val symbols: MutableMap<String, NodeValue>, val args: ListValue = ListValue(emptyList())) {
+class Scope(val symbols: MutableMap<String, NodeValue>, val args: ListValue = ListValue(emptyList())) {
     operator fun get(name: String): NodeValue? {
         return symbols[name]
     }
@@ -1741,6 +1751,9 @@ class StmtActionNode(private val action: Token, private val expr: Node) : Node()
             "say" -> {
                 context.say(value.toString())
             }
+            "nudge" -> {
+                context.nudge(value.asNumber()!!)
+            }
             else -> throw IllegalArgumentException("Unknown action ${action.value}")
         }
         return NullValue
@@ -2253,6 +2266,8 @@ abstract class ExecutionContext(
     }
 
     abstract fun say(text: String)
+    abstract fun nudge(target: Long)
+    abstract fun nickname(id: Long): String
 }
 
 class ConsoleContext(rootScope: Scope? = null, declarations: MutableMap<String, (NodeValue) -> ProcedureValue>) :
@@ -2260,9 +2275,17 @@ class ConsoleContext(rootScope: Scope? = null, declarations: MutableMap<String, 
     override fun say(text: String) {
         println(text)
     }
+
+    override fun nudge(target: Long) {
+        println("Nudge $target")
+    }
+
+    override fun nickname(id: Long): String {
+        return "$id"
+    }
 }
 
-class ControlledContext(
+open class ControlledContext(
     rootScope: Scope, declarations: MutableMap<String, (NodeValue) -> ProcedureValue>, firstRun: Boolean
 ) : ExecutionContext(rootScope, declarations, firstRun) {
     private val record = mutableListOf<String>()
@@ -2270,8 +2293,16 @@ class ControlledContext(
         record.add(text)
     }
 
-    fun dumpOutput(): String {
-        val str = record.joinToString("\n")
+    override fun nudge(target: Long) {
+        record.add("Nudge $target")
+    }
+
+    override fun nickname(id: Long): String {
+        return "$id"
+    }
+
+    open fun dumpOutput(): String {
+        val str = if(record.isEmpty()) "" else record.joinToString("\n")
         record.clear()
         return str
     }
