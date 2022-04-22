@@ -238,7 +238,7 @@ sealed class NodeValue : Comparable<NodeValue> {
                     is BooleanValue -> NumberValue(this.value.toLong() + that.value.toLong())
                     is NumberValue -> NumberValue(this.value.toLong() + that.value)
                     is StringValue -> StringValue(this.value.toString() + that.value)
-                    is ListValue -> ListValue(listOf(this) + that.value)
+                    is ListValue -> ListValue(mutableListOf<NodeValue>(this).apply { addAll(that.value) })
                     else -> throw IllegalArgumentException("Invalid operation: $this + $that")
                 }
             }
@@ -247,7 +247,7 @@ sealed class NodeValue : Comparable<NodeValue> {
                     is BooleanValue -> NumberValue(this.value + that.value.toLong())
                     is NumberValue -> NumberValue(this.value + that.value)
                     is StringValue -> StringValue(this.value.toString() + that.value)
-                    is ListValue -> ListValue(listOf(this) + that.value)
+                    is ListValue -> ListValue(mutableListOf<NodeValue>(this).apply { addAll(that.value) })
                     else -> throw IllegalArgumentException("Invalid operation: $this + $that")
                 }
             }
@@ -256,16 +256,25 @@ sealed class NodeValue : Comparable<NodeValue> {
                     is BooleanValue -> StringValue(this.value + that.value.toString())
                     is NumberValue -> StringValue(this.value + that.value.toString())
                     is StringValue -> StringValue(this.value + that.value)
-                    is ListValue -> ListValue(listOf(this) + that.value)
+                    is ListValue -> ListValue(mutableListOf<NodeValue>(this).apply { addAll(that.value) })
+                    is ObjectValue -> StringValue(this.value + that.toString())
                     else -> throw IllegalArgumentException("Invalid operation: $this + $that")
                 }
             }
             is ListValue -> {
                 when (that) {
-                    is BooleanValue -> ListValue(this.value + listOf(that))
-                    is NumberValue -> ListValue(this.value + listOf(that))
-                    is StringValue -> ListValue(this.value + listOf(that))
-                    is ListValue -> ListValue(this.value + that.value)
+                    is BooleanValue -> ListValue(this.value.toMutableList().apply { add(that) })
+                    is NumberValue -> ListValue(this.value.toMutableList().apply { add(that) })
+                    is StringValue -> ListValue(this.value.toMutableList().apply { add(that) })
+                    is ListValue -> ListValue(this.value.toMutableList().apply { addAll(that.value) })
+                    is ObjectValue -> ListValue(this.value.toMutableList().apply { add(that) })
+                    else -> throw IllegalArgumentException("Invalid operation: $this + $that")
+                }
+            }
+            is ObjectValue -> {
+                when (that) {
+                    is StringValue -> StringValue(toString() + that.value)
+                    is ListValue -> ListValue(mutableListOf<NodeValue>(this).apply { addAll(that.value) })
                     else -> throw IllegalArgumentException("Invalid operation: $this + $that")
                 }
             }
@@ -389,17 +398,21 @@ data class StringValue(val value: String) : NodeValue(), Iterable<StringValue> {
 fun String.toNodeValue() = StringValue(this)
 
 @Serializable
-data class ListValue(val value: List<NodeValue>) : NodeValue(), Iterable<NodeValue> {
+data class ListValue(val value: MutableList<NodeValue>) : NodeValue(), Iterable<NodeValue> {
     override fun toString() = "[${value.joinToString(", ")}]"
     override fun toBoolean(): Boolean = value.isNotEmpty()
     val size: Int get() = value.size
     operator fun get(index: Int): NodeValue = value[index]
+    operator fun set(index: Int, value: NodeValue) {
+        this.value[index] = value
+    }
+
     override fun iterator(): Iterator<NodeValue> {
         return value.iterator()
     }
 }
 
-fun List<NodeValue>.toNodeValue() = ListValue(this)
+fun List<NodeValue>.toNodeValue() = ListValue(if (this is MutableList) this else this.toMutableList())
 
 @Serializable
 data class NumberValue(val value: Long) : NodeValue() {
@@ -435,15 +448,19 @@ data class KeySubscriptValue(val key: String) : SubscriptValue() {
 }
 
 @Serializable
-data class ObjectValue(val attributes: Map<String, NodeValue> = mapOf()) : NodeValue() {
+data class ObjectValue(private val attributes: MutableMap<String, NodeValue> = mutableMapOf()) : NodeValue() {
     override fun toBoolean(): Boolean = attributes.isNotEmpty()
     operator fun get(key: String): NodeValue? = attributes[key]
-    fun keys(): List<String> = attributes.keys.toList()
+    operator fun set(key: String, value: NodeValue) {
+        attributes[key] = value
+    }
+
     override fun toString(): String {
         return "{" + attributes.map { "${it.key}: ${it.value}" }.joinToString(", ") + "}"
     }
+
     fun bindSelf(): ObjectValue {
-        for ((key, value) in attributes) {
+        for ((_, value) in attributes) {
             if (value is ProcedureValue) {
                 value.bind(this)
             }
@@ -452,7 +469,7 @@ data class ObjectValue(val attributes: Map<String, NodeValue> = mapOf()) : NodeV
     }
 }
 
-fun Map<String, NodeValue>.toNodeValue() = ObjectValue(this)
+fun MutableMap<String, NodeValue>.toNodeValue() = ObjectValue(this)
 
 sealed class ProcedureValue(protected val params: List<String>, protected var self: NodeValue?) : NodeValue() {
     override fun toBoolean(): Boolean = true
@@ -467,10 +484,12 @@ sealed class ProcedureValue(protected val params: List<String>, protected var se
         }
         return res
     }
+
     fun bind(self: NodeValue?): ProcedureValue {
         this.self = self
         return this
     }
+
     abstract fun copy(): ProcedureValue
 
     companion object {
@@ -600,7 +619,7 @@ sealed class ProcedureValue(protected val params: List<String>, protected var se
             context.stack["num"]!!.asNumber()!!.toString().toNodeValue()
         }, null)
         private val Object = BuiltinProcedureValue("object", listOf("fields"), { context ->
-            val fields = context.stack["fields"]?.asList() ?: return@BuiltinProcedureValue ObjectValue(emptyMap())
+            val fields = context.stack["fields"]?.asList() ?: return@BuiltinProcedureValue ObjectValue()
             val result = mutableMapOf<String, NodeValue>()
             for (field in fields) {
                 val key = field.asList()!![0].asString()!!
@@ -616,8 +635,13 @@ sealed class ProcedureValue(protected val params: List<String>, protected var se
             BuiltinProcedureValue("enumerated", listOf(), { context ->
                 val list = context.stack["this"]!!
                 return@BuiltinProcedureValue if (list is Iterable<*>) {
-                    list.mapIndexed { index, value -> ListValue(listOf(index.toNodeValue(), value as NodeValue)) }
-                        .toNodeValue()
+                    list.mapIndexed { index, value ->
+                        ListValue(
+                            mutableListOf(
+                                index.toNodeValue(), value as NodeValue
+                            )
+                        )
+                    }.toNodeValue()
                 } else {
                     throw RuntimeException("$list has no such method as \"enumerated\"")
                 }
@@ -650,7 +674,7 @@ sealed class ProcedureValue(protected val params: List<String>, protected var se
         private val Filter = { self: NodeValue ->
             BuiltinProcedureValue("filter", listOf("predicate"), { context ->
                 val predicate = context.stack["predicate"]!!.asProcedure()!!
-                fun predicateCall(it: NodeValue) = predicate.call(context, ListValue(listOf(it)))
+                fun predicateCall(it: NodeValue) = predicate.call(context, ListValue(mutableListOf(it)))
                 val list = context.stack["this"]!!
                 return@BuiltinProcedureValue if (list is Iterable<*>) {
                     @Suppress("UNCHECKED_CAST") (list.filter { predicateCall(it as NodeValue).toBoolean() } as List<NodeValue>).toNodeValue()
@@ -719,7 +743,7 @@ sealed class ProcedureValue(protected val params: List<String>, protected var se
                     list.sorted().toNodeValue()
                 } else {
                     list.sortedWith { a, b ->
-                        val res = cmp.call(context, ListValue(listOf(a, b)))
+                        val res = cmp.call(context, ListValue(mutableListOf(a, b)))
                         if (res.toBoolean()) {
                             1
                         } else {
@@ -749,6 +773,7 @@ sealed class ProcedureValue(protected val params: List<String>, protected var se
             "pow" to Pow,
             "boolean" to Boolean,
             "bool" to Boolean,
+            "getNickname" to GetNickname,
         )
         val builtinMethods = mapOf(
             "slice" to Slice,
@@ -925,6 +950,11 @@ sealed class ProcedureValue(protected val params: List<String>, protected var se
                 |Example: [3, 2, 1].sorted() // [1, 2, 3]
                 |Example: [1, 2, 3].sorted({ a, b -> a < b}) // [3, 2, 1]
                 |""".trimMargin(),
+            "getNickname" to """
+                |Get the nickname of a user by QQ ID.
+                |Usage: getNickname(user)
+                |Example: getNickname(10086) // "中国移动"
+                |""".trimMargin(),
         )
     }
 }
@@ -940,6 +970,7 @@ class BuiltinProcedureValue(
         context.stack.nameArgs(params, self)
         return func(context)
     }
+
     override fun copy(): ProcedureValue {
         return BuiltinProcedureValue(name, params, func, self)
     }
@@ -952,6 +983,7 @@ class NodeProcedureValue(private val func: Node, params: List<String>, self: Nod
         context.stack.nameArgs(params, self)
         return func.exec(context)
     }
+
     override fun copy(): ProcedureValue {
         return NodeProcedureValue(func, params, self)
     }
@@ -1100,7 +1132,7 @@ object NullValue : NodeValue() {
     override fun toBoolean(): Boolean = false
 }
 
-class Scope(val symbols: MutableMap<String, NodeValue>, val args: ListValue = ListValue(emptyList())) {
+class Scope(val symbols: MutableMap<String, NodeValue>, val args: ListValue = ListValue(mutableListOf())) {
     operator fun get(name: String): NodeValue? {
         return symbols[name]
     }
@@ -1347,7 +1379,7 @@ class SubscriptNode(private val begin: Node, private val extended: Boolean, priv
 
 class ObjectNode(private val items: List<Pair<IdentifierNode, Node>>) : Node() {
     override fun exec(context: ExecutionContext): ObjectValue {
-        val objVal =  items.associate { (key, value) ->
+        val objVal = items.associateTo(mutableMapOf()) { (key, value) ->
             val res = value.exec(context)
             if (res is ProcedureValue) {
                 key.name to res.copy()
@@ -1363,6 +1395,220 @@ class ObjectNode(private val items: List<Pair<IdentifierNode, Node>>) : Node() {
     }
 }
 
+sealed class AccessView(protected val parent: AccessView?, protected val context: ExecutionContext) {
+    enum class AccessState {
+        NONE, SLICE, INDEX
+    }
+
+    abstract var value: NodeValue
+    abstract fun subscript(accessor: SubscriptValue): AccessView
+
+    companion object {
+        fun create(value: NodeValue, parent: AccessView?, context: ExecutionContext): AccessView {
+            return when (value) {
+                is ListValue -> ListAccessView(value, parent, context)
+                is StringValue -> StringAccessView(value, parent, context)
+                is ObjectValue -> ObjectAccessView(value, parent, context)
+                else -> NonCollectionAccessView(value, parent, context)
+            }
+        }
+    }
+}
+
+class NullAccessView(parent: AccessView?, context: ExecutionContext) : AccessView(parent, context) {
+    override var value: NodeValue
+        get() = NullValue
+        set(_) = throw IllegalArgumentException("Failed subscription")
+
+    override fun subscript(accessor: SubscriptValue): AccessView =
+        throw IllegalArgumentException("Cannot subscript null")
+}
+
+class NonCollectionAccessView(private val self: NodeValue, parent: AccessView?, context: ExecutionContext) :
+    AccessView(parent, context) {
+    override var value: NodeValue
+        get() = self
+        set(newValue) {
+            parent!!.value = newValue
+        }
+
+    override fun subscript(accessor: SubscriptValue): AccessView {
+        if (accessor is KeySubscriptValue) {
+            return MethodCallAccessView(accessor.key, this, context)
+        } else throw IllegalArgumentException("Cannot subscript non-collection")
+    }
+}
+
+class MethodCallAccessView(private val funcName: String, parent: AccessView, context: ExecutionContext) :
+    AccessView(parent, context) {
+    override var value: NodeValue
+        get() = context.stack.getProcedure(funcName)?.invoke(parent!!.value)!!
+        set(newValue) {
+            parent!!.value = newValue
+        }
+
+    override fun subscript(accessor: SubscriptValue): AccessView =
+        throw IllegalArgumentException("MethodCall cannot be subscripted")
+}
+
+class ListAccessView(private val list: ListValue, parent: AccessView?, context: ExecutionContext) :
+    AccessView(parent, context) {
+    private var accessState: AccessState = AccessState.NONE
+    private var range: IntRange? = null
+    private var index: Int? = null
+    override var value: NodeValue
+        get() = when (accessState) {
+            AccessState.NONE -> list
+            AccessState.SLICE -> list.value.slice(range!!).toNodeValue()
+            AccessState.INDEX -> list[index!!]
+        }
+        set(value) {
+            when (accessState) {
+                AccessState.NONE -> parent!!.value = value
+                AccessState.SLICE -> {
+                    list.value.subList(range!!.first, range!!.last + 1).clear()
+                    when (value) {
+                        is ListValue -> value.value.reversed().forEach { list.value.add(range!!.first, it) }
+                        else -> list.value.add(range!!.first, value)
+                    }
+                }
+                AccessState.INDEX -> list[index!!] = value
+            }
+        }
+
+    override fun subscript(accessor: SubscriptValue): AccessView {
+        when (accessor) {
+            is KeySubscriptValue -> {
+                return MethodCallAccessView(accessor.key, this, context)
+            }
+            is NumberSubscriptValue -> {
+                if (accessState == AccessState.NONE) {
+                    accessState = AccessState.SLICE
+                    range = 0 until list.size
+                }
+                if (accessor.extended) {
+                    val slice = range!!.safeSlice(accessor.begin, accessor.end)
+                    return if (slice != null) {
+                        range = slice
+                        this
+                    } else {
+                        NullAccessView(this, context)
+                    }
+                } else {
+                    val index = range!!.safeSubscript(accessor.begin)
+                    return if (index != null) {
+                        accessState = AccessState.INDEX
+                        range = null
+                        this.index = index
+                        create(list[index], this, context)
+                    } else {
+                        NullAccessView(this, context)
+                    }
+                }
+            }
+        }
+    }
+}
+
+class StringAccessView(private val string: StringValue, parent: AccessView?, context: ExecutionContext) :
+    AccessView(parent, context) {
+    private var accessState: AccessState = AccessState.NONE
+    private var range: IntRange? = null
+    private var index: Int? = null
+    override var value: NodeValue
+        get() = when (accessState) {
+            AccessState.NONE -> string
+            AccessState.SLICE -> string.value.substring(range!!).toNodeValue()
+            AccessState.INDEX -> string.value[index!!].toString().toNodeValue()
+        }
+        set(value) {
+            when (accessState) {
+                AccessState.NONE -> parent!!.value = value
+                AccessState.SLICE -> {
+                    val begin = range!!.first
+                    val end = range!!.last + 1
+                    val first = if (begin > 0) string.value.substring(0, begin) else ""
+                    val second = if (end < string.value.length) string.value.substring(end) else ""
+                    parent!!.value = (first + value.toString() + second).toNodeValue()
+                }
+                AccessState.INDEX -> {
+                    val first = if (index!! > 0) string.value.substring(0, index!!) else ""
+                    val second = if (index!! + 1 < string.value.length) string.value.substring(index!! + 1) else ""
+                    parent!!.value = (first + value.toString() + second).toNodeValue()
+                }
+            }
+        }
+
+    override fun subscript(accessor: SubscriptValue): AccessView {
+        when (accessor) {
+            is KeySubscriptValue -> {
+                return MethodCallAccessView(accessor.key, this, context)
+            }
+            is NumberSubscriptValue -> {
+                if (accessState == AccessState.NONE) {
+                    accessState = AccessState.SLICE
+                    range = 0 until string.value.length
+                }
+                if (accessor.extended) {
+                    val slice = range!!.safeSlice(accessor.begin, accessor.end)
+                    return if (slice != null) {
+                        range = slice
+                        this
+                    } else {
+                        NullAccessView(this, context)
+                    }
+                } else {
+                    val index = range!!.safeSubscript(accessor.begin)
+                    return if (index != null) {
+                        accessState = AccessState.INDEX
+                        this.index = index
+                        range = null
+                        this
+                    } else {
+                        NullAccessView(this, context)
+                    }
+                }
+            }
+        }
+    }
+}
+
+class ObjectAccessView(private val objectValue: ObjectValue, parent: AccessView?, context: ExecutionContext) :
+    AccessView(parent, context) {
+    private var accessed: Boolean = false
+    private var key: String? = null
+    override var value: NodeValue
+        get() = if (accessed) objectValue[key!!]!! else objectValue
+        set(value) {
+            if (accessed) {
+                if (value is ProcedureValue) {
+                    objectValue[key!!] = value.copy().bind(objectValue)
+                } else {
+                    objectValue[key!!] = value
+                }
+            } else {
+                parent!!.value = value
+            }
+        }
+
+    override fun subscript(accessor: SubscriptValue): AccessView {
+        return when (accessor) {
+            is KeySubscriptValue -> {
+                if (!accessed) accessed = true
+                key = accessor.key
+                if (objectValue[accessor.key] == null) {
+                    MethodCallAccessView(accessor.key, this, context)
+                } else {
+                    create(objectValue[accessor.key]!!, this, context)
+                }
+            }
+            is NumberSubscriptValue -> {
+                NullAccessView(this, context)
+            }
+        }
+    }
+}
+
 class AccessViewNode(private val list: Node, private val subscripts: List<SubscriptNode>) : Node() {
     constructor(
         existing: Node, subscript: SubscriptNode
@@ -1371,251 +1617,20 @@ class AccessViewNode(private val list: Node, private val subscripts: List<Subscr
         if (existing is AccessViewNode) existing.subscripts + subscript else listOf(subscript)
     )
 
-    private class AccessorHierarchy(list: NodeValue, subscripts: List<SubscriptValue>) {
-
-        sealed class Pointer
-        data class IndexPointer(val index: Int) : Pointer()
-        data class KeyPointer(val key: String) : Pointer()
-
-        val isEmpty: Boolean
-        val pointers: List<Pointer>
-        val endsAtString: Boolean
-        val newAttribute: Boolean
-        val methodCall: Boolean
-        val lastSlice: IntRange?
-
-        init {
-            var currentList = list
-            var isEmpty = false
-            val pointers = mutableListOf<Pointer>()
-            var endsAtString = false
-            var newAttribute = false
-            var methodCall = false
-            var lastRecursion = false
-            var lastSlice: IntRange? = null
-
-            for (accessor in subscripts) {
-                if (lastRecursion) {
-                    isEmpty = true
-                    break
-                }
-                when (currentList) {
-                    is ObjectValue -> {
-                        val subscript = accessor as KeySubscriptValue
-                        pointers.add(KeyPointer(subscript.key))
-                        val newList = currentList[subscript.key]
-                        if (newList == null) {
-                            newAttribute = true
-                            methodCall = true
-                            lastRecursion = true
-                        } else {
-                            currentList = newList
-                        }
-                    }
-                    is ListValue -> {
-                        val range = lastSlice ?: currentList.value.indices
-                        when (accessor) {
-                            is NumberSubscriptValue -> {
-                                if (accessor.extended) {
-                                    val slice = range.safeSlice(accessor.begin, accessor.end)
-                                    if (slice != null) {
-                                        lastSlice = slice
-                                    } else {
-                                        isEmpty = true
-                                        break
-                                    }
-                                } else {
-                                    val index = range.safeSubscript(accessor.begin)
-                                    if (index != null) {
-                                        pointers.add(IndexPointer(index))
-                                        lastSlice = null
-                                        currentList = currentList.value[index]
-                                    } else {
-                                        isEmpty = true
-                                        break
-                                    }
-                                }
-                            }
-                            is KeySubscriptValue -> {
-                                val key = accessor.key
-                                methodCall = true
-                                lastRecursion = true
-                                pointers.add(KeyPointer(key))
-                            }
-                        }
-                    }
-                    is StringValue -> {
-                        endsAtString = true
-                        val range = lastSlice ?: currentList.value.indices
-                        when (accessor) {
-                            is NumberSubscriptValue -> {
-                                if (accessor.extended) {
-                                    val slice = range.safeSlice(accessor.begin, accessor.end)
-                                    if (slice != null) {
-                                        lastSlice = slice
-                                    } else {
-                                        isEmpty = true
-                                        break
-                                    }
-                                } else {
-                                    val index = range.safeSubscript(accessor.begin)
-                                    if (index != null) {
-                                        lastSlice = IntRange(index, index)
-//                                        lastRecursion = true
-                                    } else {
-                                        isEmpty = true
-                                        break
-                                    }
-                                }
-                            }
-                            is KeySubscriptValue -> {
-                                val key = accessor.key
-                                methodCall = true
-                                lastRecursion = true
-                                lastSlice = range
-                                pointers.add(KeyPointer(key))
-                            }
-                        }
-                    }
-                    else -> {
-                        methodCall = true
-                        lastRecursion = true
-                        pointers.add(KeyPointer((accessor as KeySubscriptValue).key))
-                    }
-                }
-            }
-            this.isEmpty = isEmpty
-            this.pointers = pointers
-            this.endsAtString = endsAtString
-            this.newAttribute = newAttribute
-            this.methodCall = methodCall
-            this.lastSlice = lastSlice
-        }
-
-        fun containPath(path: List<Pointer>): Boolean {
-            if (path.size != pointers.size) {
-                return false
-            }
-            for (i in pointers.indices) {
-                if (pointers[i] != path[i]) {
-                    return false
-                }
-            }
-            return true
-        }
-    }
-
     override fun exec(context: ExecutionContext): NodeValue {
-        var list = list.exec(context)
-        val subscripts = subscripts.map { it.exec(context) }
-        val hierarchy = AccessorHierarchy(list, subscripts)
-        if (hierarchy.isEmpty) return NullValue
-        fun handleLastSlice(l: NodeValue): NodeValue {
-            return if (hierarchy.endsAtString) {
-                val string = l.asString()!!
-                StringValue(string.substring(hierarchy.lastSlice!!))
-            } else {
-                if (hierarchy.lastSlice != null) {
-                    ListValue(l.asList()!!.slice(hierarchy.lastSlice))
-                } else {
-                    l
-                }
-            }
+        var accessor = AccessView.create(list.exec(context), null, context)
+        for (subscript in subscripts) {
+            accessor = accessor.subscript(subscript.exec(context))
         }
-        hierarchy.pointers.mapIndexed { index, pointer ->
-            if (hierarchy.methodCall && index == hierarchy.pointers.size - 1) {
-                list = handleLastSlice(list)
-                return context.stack.getProcedure((hierarchy.pointers.last() as AccessorHierarchy.KeyPointer).key)!!
-                    .invoke(list)
-            }
-            list = when (pointer) {
-                is AccessorHierarchy.IndexPointer -> {
-                    list.asList()!![pointer.index]
-                }
-                is AccessorHierarchy.KeyPointer -> {
-                    list.asObject()
-                        ?.let { it[pointer.key] }!! // ?: context.stack.getProcedure(pointer.key)?.invoke(list)!! // if getProcedure, hierarchy.methodCall must be true
-                }
-            }
-        }
-        return handleLastSlice(list)
+        return accessor.value
     }
 
     override fun assign(context: ExecutionContext, value: NodeValue) {
-        if (list !is IdentifierNode) {
-            throw RuntimeException("Can only assign to identifiers, not $list")
+        var accessor = AccessView.create(list.exec(context), null, context)
+        for (subscript in subscripts) {
+            accessor = accessor.subscript(subscript.exec(context))
         }
-        val listValue = list.exec(context)
-        val subscripts = subscripts.map { it.exec(context) }
-        val hierarchy = AccessorHierarchy(listValue, subscripts)
-        if (hierarchy.isEmpty) throw RuntimeException("Failed subscripting on $list${subscripts.joinToString("") { "[$it]" }}")
-        val path = mutableListOf<AccessorHierarchy.Pointer>()
-        fun copyValue(cur: NodeValue): NodeValue {
-            if (hierarchy.containPath(path)) {
-                // Do the real assignment
-                if (hierarchy.endsAtString) {
-                    val string = cur.asString()!!
-                    val slice = hierarchy.lastSlice!!
-                    val newString = if (slice.first > 0) string.substring(
-                        0, slice.first
-                    ) else "" + value.toString() + if (slice.last + 1 < string.length) string.substring(slice.last + 1) else ""
-                    return StringValue(newString)
-                } else {
-                    if (hierarchy.lastSlice != null) {
-                        val list = cur.asList()!!
-                        val slice = hierarchy.lastSlice
-                        val newList = mutableListOf<NodeValue>()
-                        if (slice.first > 0) {
-                            newList.addAll(list.slice(0 until slice.first))
-                        }
-                        when (value) {
-                            is ListValue -> {
-                                newList.addAll(value.value)
-                            }
-                            else -> {
-                                newList.add(value)
-                            }
-                        }
-                        if (slice.last + 1 < list.size) {
-                            newList.addAll(list.slice(slice.last + 1 until list.size))
-                        }
-                        return ListValue(newList)
-                    } else {
-                        return value
-                    }
-                }
-            } else {
-                return when (cur) {
-                    is ListValue -> {
-                        val newList = mutableListOf<NodeValue>()
-                        for (i in cur.value.indices) {
-                            path.add(AccessorHierarchy.IndexPointer(i))
-                            newList.add(copyValue(cur.value[i]))
-                            path.removeLast()
-                        }
-                        ListValue(newList)
-                    }
-                    is ObjectValue -> {
-                        val newAttributes = mutableMapOf<String, NodeValue>()
-                        for (i in cur.keys()) {
-                            path.add(AccessorHierarchy.KeyPointer(i))
-                            newAttributes[i] = copyValue(cur[i]!!)
-                            path.removeLast()
-                        }
-                        if (hierarchy.newAttribute) {
-                            if (hierarchy.containPath(path + hierarchy.pointers.last())) {
-                                newAttributes[(hierarchy.pointers.last() as AccessorHierarchy.KeyPointer).key] = value
-                            }
-                        }
-                        ObjectValue(newAttributes)
-                    }
-                    else -> cur
-                }
-            }
-        }
-
-        val newValue = copyValue(listValue)
-        list.assign(context, newValue)
+        accessor.value = value
     }
 
     override fun toString(): String {
@@ -1659,8 +1674,9 @@ abstract class OperatorNode : Node() {
 
 class BinaryOperatorNode(private val components: List<Node>, private val ops: List<TokenType>) : OperatorNode() {
     private val opMap =
-        mapOf<TokenType, (ExecutionContext, Node, Node) -> NodeValue>(
-            TokenType.PLUS to { context, left, right -> left.exec(context) + right.exec(context) },
+        mapOf<TokenType, (ExecutionContext, Node, Node) -> NodeValue>(TokenType.PLUS to { context, left, right ->
+            left.exec(context) + right.exec(context)
+        },
             TokenType.MINUS to { context, left, right -> left.exec(context) - right.exec(context) },
             TokenType.MULT to { context, left, right -> left.exec(context) * right.exec(context) },
             TokenType.DIV to { context, left, right -> left.exec(context) / right.exec(context) },
@@ -1677,8 +1693,7 @@ class BinaryOperatorNode(private val components: List<Node>, private val ops: Li
             TokenType.LOGIC_OR to { context, left, right ->
                 (left.exec(context).toBoolean() || right.exec(context).toBoolean()).toNodeValue()
             },
-            TokenType.IN to { context, left, right -> (left.exec(context) in right.exec(context)).toNodeValue() }
-        )
+            TokenType.IN to { context, left, right -> (left.exec(context) in right.exec(context)).toNodeValue() })
 
     override fun exec(context: ExecutionContext): NodeValue {
         return if (components.isEmpty()) NullValue
@@ -2077,8 +2092,14 @@ class Parser(private val tokens: List<Token>) {
     }
 
     private fun parseExpr(): Node {
-        if ((peek().type == TokenType.BRACE_OPEN && peekNext()?.type != TokenType.BRACE_CLOSE && peekNextNext()?.type != TokenType.COLON) || peek().type == TokenType.FUNC) {
-            return parseLambda()
+        if (peek().type == TokenType.BRACE_OPEN) {
+            var pointer = current + 1
+            while (pointer < tokens.size && tokens[pointer].type !in listOf(TokenType.BRACE_CLOSE, TokenType.NEWLINE, TokenType.COLON)) {
+                if (tokens[pointer].type == TokenType.ARROW) {
+                    return parseLambda()
+                }
+                pointer++
+            }
         }
         return parseOperator()
     }
@@ -2126,7 +2147,9 @@ class Parser(private val tokens: List<Token>) {
                 consume(TokenType.PAREN_CLOSE)
                 consumeLineBreak()
                 val body = parseStmt()
-                NodeProcedureValue(StmtFuncNode(body), params.map { it.name }, null).toNode() // have to make sure caller is assigned to self
+                NodeProcedureValue(
+                    StmtFuncNode(body), params.map { it.name }, null
+                ).toNode() // have to make sure caller is assigned to self
             }
             TokenType.BRACE_OPEN -> {
                 consume(TokenType.BRACE_OPEN)
@@ -2302,7 +2325,7 @@ open class ControlledContext(
     }
 
     open fun dumpOutput(): String {
-        val str = if(record.isEmpty()) "" else record.joinToString("\n")
+        val str = if (record.isEmpty()) "" else record.joinToString("\n")
         record.clear()
         return str
     }

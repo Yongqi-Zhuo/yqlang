@@ -72,6 +72,15 @@
 
   实参会按照顺序传递给每一个形参。如果是以函数方式调用子过程（`funcName(args)`），那么不会设置`this`变量，它将保持之前的值；如果是以方法方式调用子过程（`object.funcName(args)`），那么在函数作用域中`this`会指代调用者。
 
+* 初始化语句：`init <stmt>`。当且仅当程序被第一次运行时执行，可以用来初始化变量。例子：
+
+  ```
+  init counter = 0
+  if text {
+    if text == "水多少啦" say "已经水了" + counter + "条啦"
+    counter += 1
+  }
+  ```
 ### 数据类型
 
 `yqlang`目前允许用户使用的数据类型包括：`String`，`List`，`Number`，`Boolean`，`Procedure`，`Object`。
@@ -113,14 +122,14 @@ obj.show() // [114, 514, 1919, 810]
 目前`yqbot`包括的`yqlang`指令都以`/yqlang`开头。列表如下
 - `/yqlang run <code>` 表示运行一次`yqlang`代码。
 - `/yqlang add <code>` 表示将代码保存，每次有新的事件时都执行一次。如同之前提到过的，事件目前包含新消息和时钟，例如消息文字会保存在顶级作用域的`text`变量中。
-- `/yqlang list` 查看现有的已保存的程序的列表。
+- `/yqlang list` 查看现有的已保存的程序的列表。另外，还能看到每个程序的全局变量，这算是一个debug feature。
 - `/yqlang remove <index>` 删除某一个编号的程序。
 - `/yqlang help` 查看内置函数的列表。
 - `/yqlang help <builtin>` 查询某一内置函数的使用方法。
 
 ### 事件
 
-现在有两种事件。
+当`yqlang`程序被激活，那么一定是因为有事件发生。请通过`if <event>`来检测事件。
 - 消息。消息被转换成文字，并存储于`text`变量中；信息发送者的QQ号保存在`sender`变量中；每次有新消息时都会调用一次。
 
   例子：
@@ -136,6 +145,20 @@ obj.show() // [114, 514, 1919, 810]
   例子：
   ```
   if clock say "每分钟都要记得喝水哦！" + clock
+  ```
+  
+- 被戳一戳。当bot被戳一戳，那么戳bot的用户QQ号就会存储在`nudged`变量中。
+
+  例子：
+  ```
+  init loved = []
+  if nudged {
+    loved += nudged
+    say "mua, " + getNickname(nudged) // mua, 爱可超我
+  }
+  if text == "yqbot喜欢我吗" {
+    if sender in loved say "嗯！" else say "当然不啦"
+  }
   ```
 
 ## 高级语法
