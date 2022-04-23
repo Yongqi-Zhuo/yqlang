@@ -93,6 +93,8 @@ class ListNode(private val items: List<Node>) : Node() {
         }
     }
 
+    constructor(vararg items: String) : this(items.map { IdentifierNode(Token(TokenType.IDENTIFIER, it)) })
+
     override fun toString(): String {
         return "[${items.joinToString(", ")}]"
     }

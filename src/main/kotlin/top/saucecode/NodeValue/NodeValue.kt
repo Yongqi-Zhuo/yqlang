@@ -153,8 +153,4 @@ sealed class NodeValue : Comparable<NodeValue> {
         }
     }
 
-    companion object {
-        val builtinSymbols = mapOf("true" to true.toNodeValue(), "false" to false.toNodeValue(), "null" to NullValue)
-    }
-
 }

@@ -40,8 +40,6 @@ class Parser(private val tokens: List<Token>) {
 
     private fun isAtEnd() = current >= tokens.size
     private fun peek() = tokens[current]
-    private fun peekNext() = if (current < tokens.size - 1) tokens[current + 1] else null
-    private fun peekNextNext() = if (current < tokens.size - 2) tokens[current + 2] else null
 
     private fun parseIdentifier() = IdentifierNode(consume(TokenType.IDENTIFIER))
     private fun parseNumber() = NumberNode(consume(TokenType.NUMBER))
@@ -82,18 +80,11 @@ class Parser(private val tokens: List<Token>) {
                 consume(TokenType.FUNC)
                 val func = parseIdentifier()
                 consume(TokenType.PAREN_OPEN)
-                val params = mutableListOf<IdentifierNode>()
-                if (peek().type != TokenType.PAREN_CLOSE) {
-                    params.add(parseIdentifier())
-                    while (peek().type != TokenType.PAREN_CLOSE) {
-                        consume(TokenType.COMMA)
-                        params.add(parseIdentifier())
-                    }
-                }
+                val params = parseParamList()
                 consume(TokenType.PAREN_CLOSE)
                 consumeLineBreak()
                 val body = parseStmt()
-                declarations[func.name] = { obj -> NodeProcedureValue(StmtFuncNode(body), params.map { it.name }, obj) }
+                declarations[func.name] = { obj -> NodeProcedureValue(StmtFuncNode(body), params, obj) }
                 func
             }
             TokenType.RETURN -> {
@@ -175,8 +166,32 @@ class Parser(private val tokens: List<Token>) {
         return StmtIfNode(condition, ifBody)
     }
 
+    // assume that the brace has not been consumed
+    private fun checkObjectLiteral(): Boolean {
+        var pointer = current + 1
+        var foundKey = false
+        while (pointer < tokens.size) {
+            val tokenType = tokens[pointer].type
+            if (tokenType == TokenType.NEWLINE) {
+                pointer++
+                continue
+            }
+            if (!foundKey) {
+                if (tokenType == TokenType.IDENTIFIER) {
+                    foundKey = true
+                } else {
+                    return false
+                }
+            } else {
+                return tokenType == TokenType.COLON
+            }
+            pointer++
+        }
+        return false
+    }
+
     private fun parseExpr(): Node {
-        if ((peek().type == TokenType.BRACE_OPEN && peekNext()?.type != TokenType.BRACE_CLOSE && peekNextNext()?.type != TokenType.COLON) || peek().type == TokenType.FUNC) {
+        if ((peek().type == TokenType.BRACE_OPEN && !checkObjectLiteral()) || peek().type == TokenType.FUNC) {
             return parseLambda()
         }
         return parseOperator()
@@ -209,43 +224,56 @@ class Parser(private val tokens: List<Token>) {
         }
     }
 
+    // Assume that the brace has been consumed
+    private fun checkLambdaParams(): Boolean {
+        var pointer = current
+        var braceDepth = 0
+        while (pointer < tokens.size) {
+            when (tokens[pointer].type) {
+                TokenType.BRACE_OPEN -> braceDepth++
+                TokenType.BRACE_CLOSE -> {
+                    braceDepth--
+                    if (braceDepth < 0) {
+                        return false
+                    }
+                }
+                TokenType.ARROW -> {
+                    if (braceDepth == 0) {
+                        return true
+                    }
+                }
+                else -> {}
+            }
+            pointer++
+        }
+        return false
+    }
+
     private fun parseLambda(): Node {
         return when (peek().type) {
             TokenType.FUNC -> {
                 consume(TokenType.FUNC)
                 consume(TokenType.PAREN_OPEN)
-                val params = mutableListOf<IdentifierNode>()
-                if (peek().type != TokenType.PAREN_CLOSE) {
-                    params.add(parseIdentifier())
-                    while (peek().type != TokenType.PAREN_CLOSE) {
-                        consume(TokenType.COMMA)
-                        params.add(parseIdentifier())
-                    }
-                }
+                val params = parseParamList()
                 consume(TokenType.PAREN_CLOSE)
                 consumeLineBreak()
                 val body = parseStmt()
-                NodeProcedureValue(
-                    StmtFuncNode(body), params.map { it.name }, null
-                ).toNode() // have to make sure caller is assigned to self
+                // have to make sure caller is assigned to self
+                NodeProcedureValue(StmtFuncNode(body), params, null).toNode()
             }
             TokenType.BRACE_OPEN -> {
                 consume(TokenType.BRACE_OPEN)
-                val params = mutableListOf<IdentifierNode>()
-                if (peek().type == TokenType.IDENTIFIER && (peekNext()?.type == TokenType.COMMA || peekNext()?.type == TokenType.ARROW)) {
+                val params = if (checkLambdaParams()) {
                     // lambda with params
-                    params.add(parseIdentifier())
-                    while (peek().type != TokenType.ARROW) {
-                        consume(TokenType.COMMA)
-                        params.add(parseIdentifier())
-                    }
+                    val paramList = parseParamList()
                     consume(TokenType.ARROW)
-                }
+                    paramList
+                } else ListNode(emptyList())
                 consumeLineBreak()
                 val body = parseStmt()
                 consume(TokenType.BRACE_CLOSE)
                 consumeLineBreak()
-                NodeProcedureValue(body, params.map { it.name }, null).toNode()
+                NodeProcedureValue(body, params, null).toNode()
             }
             else -> throw UnexpectedTokenException(peek(), TokenType.FUNC)
         }
@@ -271,6 +299,7 @@ class Parser(private val tokens: List<Token>) {
             }
             TokenType.BRACE_OPEN -> { // object literal
                 consume(TokenType.BRACE_OPEN)
+                consumeLineBreak()
                 val obj = if (peek().type == TokenType.BRACE_CLOSE) {
                     ObjectNode(emptyList())
                 } else {
@@ -296,9 +325,10 @@ class Parser(private val tokens: List<Token>) {
 
     private fun parseParamList(): ListNode {
         val params = mutableListOf<Node>()
-        if (peek().type != TokenType.PAREN_CLOSE && peek().type != TokenType.BRACKET_CLOSE) {
+        val delimiters = listOf(TokenType.PAREN_CLOSE, TokenType.BRACKET_CLOSE, TokenType.ARROW)
+        if (peek().type !in delimiters) {
             params.add(parseExpr())
-            while (peek().type != TokenType.PAREN_CLOSE && peek().type != TokenType.BRACKET_CLOSE) {
+            while (peek().type !in delimiters) {
                 consume(TokenType.COMMA)
                 params.add(parseExpr())
             }
@@ -309,12 +339,12 @@ class Parser(private val tokens: List<Token>) {
     private fun parseTermTail(termHead: Node): Node {
         val token = peek()
         return when (token.type) {
-            TokenType.DOT -> {
+            TokenType.DOT -> { // attribute access
                 consume(TokenType.DOT)
                 val attribute = IdentifierNode(consume(TokenType.IDENTIFIER))
                 AccessViewNode(termHead, SubscriptNode(attribute.name.toNodeValue().toNode(), false))
             }
-            TokenType.BRACKET_OPEN -> {
+            TokenType.BRACKET_OPEN -> { // subscript access
                 consume(TokenType.BRACKET_OPEN)
                 val begin = if (peek().type == TokenType.COLON) {
                     0.toNodeValue().toNode()
@@ -332,7 +362,7 @@ class Parser(private val tokens: List<Token>) {
                 consume(TokenType.BRACKET_CLOSE)
                 AccessViewNode(termHead, subscript)
             }
-            TokenType.PAREN_OPEN -> {
+            TokenType.PAREN_OPEN -> { // function call
                 consume(TokenType.PAREN_OPEN)
                 val params = parseParamList()
                 consume(TokenType.PAREN_CLOSE)

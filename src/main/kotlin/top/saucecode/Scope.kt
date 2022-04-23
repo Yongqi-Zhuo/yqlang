@@ -3,8 +3,8 @@ package top.saucecode
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.serializer
+import top.saucecode.Node.ListNode
 import top.saucecode.NodeValue.*
-import kotlin.math.min
 
 class Scope(val symbols: MutableMap<String, NodeValue>, val args: ListValue = ListValue(mutableListOf())) {
     operator fun get(name: String): NodeValue? {
@@ -91,19 +91,15 @@ class Stack(rootScope: Scope, private val declarations: MutableMap<String, (Node
     private val args: ListValue
         get() = scopes.last().args
 
-    fun nameArgs(params: List<String>, self: NodeValue?) {
-        val argc = min(params.size, args.size)
-        for (i in 0 until argc) {
-            scopes.last()[params[i]] = args[i]
-        }
-        if (argc > params.size) {
-            scopes.last()["\$varargs"] = args.value.slice(params.size until args.size).toList().toNodeValue()
-        }
-        scopes.last()["\$"] = args
-        args.forEachIndexed { index, nodeValue -> scopes.last()["\$$index"] = nodeValue }
+    fun nameArgs(context: ExecutionContext, params: ListNode, self: NodeValue?) {
+        local = true
+        params.assign(context, args)
+        this["\$"] = args
+        args.forEachIndexed { index, nodeValue -> this["\$$index"] = nodeValue }
         if (self != null) {
-            scopes.last()["this"] = self
+            this["this"] = self
         }
+        local = false
     }
 
     operator fun get(name: String): NodeValue? {
@@ -113,16 +109,21 @@ class Stack(rootScope: Scope, private val declarations: MutableMap<String, (Node
                 return value
             }
         }
-        return NodeValue.builtinSymbols[name] ?: declarations[name]?.invoke(NullValue)
-        ?: ProcedureValue.builtinFunctions[name] ?: ProcedureValue.builtinMethods[name]?.invoke(NullValue)
+        return Constants.builtinSymbols[name] ?: declarations[name]?.invoke(NullValue)
+        ?: Constants.builtinFunctions[name] ?: Constants.builtinMethods[name]?.invoke(NullValue)
     }
 
     fun getProcedure(name: String): ((NodeValue) -> ProcedureValue)? {
-        return declarations[name] ?: ProcedureValue.builtinMethods[name]
-        ?: ProcedureValue.builtinFunctions[name]?.let { it -> { _: NodeValue -> it } }
+        return declarations[name] ?: Constants.builtinMethods[name]
+        ?: Constants.builtinFunctions[name]?.let { it -> { _: NodeValue -> it } }
     }
 
+    private var local: Boolean = false
     operator fun set(name: String, value: NodeValue) {
+        if (local) {
+            scopes.last()[name] = value
+            return
+        }
         if (name[0] == '$') {
             scopes.last()[name] = value
         } else {

@@ -61,11 +61,12 @@ class NumberRangeValue(begin: NumberValue, end: NumberValue, inclusive: Boolean)
     }
 
     class Serializer : KSerializer<NumberRangeValue> {
-        override val descriptor: SerialDescriptor = buildClassSerialDescriptor("top.saucecode.NodeValue.NumberRangeValue") {
-            element<NumberValue>("begin")
-            element<NumberValue>("end")
-            element<Boolean>("inclusive")
-        }
+        override val descriptor: SerialDescriptor =
+            buildClassSerialDescriptor("top.saucecode.NodeValue.NumberRangeValue") {
+                element<NumberValue>("begin")
+                element<NumberValue>("end")
+                element<Boolean>("inclusive")
+            }
 
         override fun deserialize(decoder: Decoder): NumberRangeValue = decoder.decodeStructure(descriptor) {
             NumberRangeValue(
@@ -125,11 +126,12 @@ class CharRangeValue(begin: StringValue, end: StringValue, inclusive: Boolean) :
         }.toLong()
 
     class Serializer : KSerializer<CharRangeValue> {
-        override val descriptor: SerialDescriptor = buildClassSerialDescriptor("top.saucecode.NodeValue.CharRangeValue") {
-            element<NumberValue>("begin")
-            element<NumberValue>("end")
-            element<Boolean>("inclusive")
-        }
+        override val descriptor: SerialDescriptor =
+            buildClassSerialDescriptor("top.saucecode.NodeValue.CharRangeValue") {
+                element<NumberValue>("begin")
+                element<NumberValue>("end")
+                element<Boolean>("inclusive")
+            }
 
         override fun deserialize(decoder: Decoder): CharRangeValue = decoder.decodeStructure(descriptor) {
             CharRangeValue(
