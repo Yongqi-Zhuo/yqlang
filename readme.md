@@ -54,7 +54,7 @@
     ```
   值得注意的是，可以用大括号`{ }`包含多个语句，这样它们就会被看作一个语句。
 
-* 子过程声明语句：`func <id>(<id>, <id>, ...) <stmt>`。
+* 子过程声明语句：`func <id>(<id>, <id>, ...) <stmt>`。语句的值会作为返回值，但是也可以通过`return <expr>`返回值。注意不允许空返回值，至少要写`return null`。
   
   例子：
     ```
@@ -81,15 +81,28 @@
     counter += 1
   }
   ```
-### 数据类型
+
+### 数据类型和表达式
 
 `yqlang`目前允许用户使用的数据类型包括：`String`，`List`，`Number`，`Boolean`，`Procedure`，`Object`。
 
-`String`和`List`支持下标和切片（`slice`）访问，比如：`"hello"[1] == "e"`，`[1, "a", true][1:3] == ["a", true]`。值得注意的是，没有字符类型，所以经过下标访问后的字符串也是字符串。但是有一个比较好玩的赋值特性，支持片段替换`a="apple"; a[3:4]="rov"; a=="approve"`。
+要获取`String`类型的值，可以通过两种方法：
+- 字面量。字符串字面量的内容通过**英文**双引号（`"`）或**英文**单引号（`'`）括起来，如果内容中包含引号或者不可显示字符，那么需要用反斜杠`\ `转义。比如`"\"hello\"\n'world'"`。
+- 通过函数调用获取。常见的有`join(list)`，`string(num)`等。
+
+注意，`yqlang`是没有字符类型的，单字符也是`String`类型。但是，由于经过了一些特殊处理，你可以使用`rangeInclusive('a', 'z')`这样的调用来获取一个字符范围，并且可以用`ord('a')`这样的调用来获取ASCII码（如果是Unicode字符，会获得UTF-16编码），并且通过`char(90)`转换回字符。
+
+要获取`List`类型的值，可以通过两种方法：
+- 字面量。`List`字面量通过方括号括起来，比如`[1, "a"]`。
+- 函数调用。比如`text.split()`。
+
+`List`类型支持许多函数式特性的调用，比如`[1, 2, 3, 4, 5].filter({ $0 % 2 == 0})`会得到`[2, 4]`。
+
+`String`和`List`支持下标和切片（`slice`）访问，比如：`"hello"[1] == "e"`，`[1, "a", true][1:3] == ["a", true]`。切片访问后，这个表达式仍然是左值，语义是片段替换，比如`a="apple"; a[3:4]="rov"; a=="approve"`。
 
 `Number`目前不支持浮点数，是64位整数。
 
-`Boolean`在运算时如果遇到`Number`会被自动提升成`Number`，比如
+`Boolean`字面量包括`true`和`false`。`Boolean`在运算时如果遇到`Number`会被自动提升成`Number`，比如
 ```
 hasYqbot = text.contains("yqbot")
 love = 2 * hasYqbot + 1
@@ -103,7 +116,6 @@ func add(x, y) x + y
 ```
 另外，匿名函数也被支持。比如
 ```
-add = func(x, y) x + y
 [1, 2, 3].map({ $0 * $0 }) // [1, 4, 9]
 [1, 4, 2, 3].sorted({ a, b -> a < b }) // [4, 3, 2, 1]
 ```
@@ -114,6 +126,14 @@ obj = { content: 1, show: func() say this.content }
 obj.content = [114, 514, 1919, 810]
 obj.show() // [114, 514, 1919, 810]
 ```
+以下两种访问对象属性的方法是完全相同的：
+```
+obj.attr
+obj["attr"]
+```
+但是用字符串作为key来访问可以避开标识符不能以数字开头的限制，所以可以通过`obj[string(233)]`这样的语法来实现任意类型作为key。
+
+当一个`Object`的一个属性被赋值为`Procedure`后，那么`Procedure`中的`this`会被自动绑定到这个`Object`。
 
 ## `yqbot`对`yqlang`的集成
 
