@@ -266,6 +266,7 @@ cmake-build-*/
 
 # Package Files #
 *.jar
+!gradle/wrapper/gradle-wrapper.jar
 *.nar
 *.zip
 *.tar.gz
