@@ -1,5 +1,6 @@
 package top.saucecode.Node
 
+import kotlinx.serialization.Serializable
 import top.saucecode.ExecutionContext
 import top.saucecode.NodeValue.*
 import top.saucecode.safeSlice
@@ -52,7 +53,10 @@ class NonCollectionAccessView(private val self: NodeValue, parent: AccessView?, 
 class MethodCallAccessView(private val funcName: String, parent: AccessView, context: ExecutionContext) :
     AccessView(parent, context) {
     override var value: NodeValue
-        get() = context.stack.getProcedure(funcName)?.invoke(parent!!.value)!!
+        get() {
+            val func = context.stack.getProcedure(funcName)!!.copy()
+            return func.bind(parent!!.value)
+        }
         set(newValue) {
             parent!!.value = newValue
         }
@@ -219,6 +223,7 @@ class ObjectAccessView(private val objectValue: ObjectValue, parent: AccessView?
     }
 }
 
+@Serializable
 class AccessViewNode(private val list: Node, private val subscripts: List<SubscriptNode>) : Node() {
     constructor(
         existing: Node, subscript: SubscriptNode

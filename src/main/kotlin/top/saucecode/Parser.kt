@@ -2,7 +2,6 @@ package top.saucecode
 
 import top.saucecode.Node.*
 import top.saucecode.NodeValue.NodeProcedureValue
-import top.saucecode.NodeValue.NodeValue
 import top.saucecode.NodeValue.ProcedureValue
 import top.saucecode.NodeValue.toNodeValue
 
@@ -84,7 +83,7 @@ class Parser(private val tokens: List<Token>) {
                 consume(TokenType.PAREN_CLOSE)
                 consumeLineBreak()
                 val body = parseStmt()
-                declarations[func.name] = { obj -> NodeProcedureValue(StmtFuncNode(body), params, obj) }
+                declarations[func.name] = NodeProcedureValue(StmtFuncNode(body), params, null)
                 func
             }
             TokenType.RETURN -> {
@@ -219,7 +218,7 @@ class Parser(private val tokens: List<Token>) {
                     ops.add(consume(peek().type).type)
                     nodes.add(parseOperator(precedence - 1))
                 }
-                BinaryOperatorNode(nodes, ops)
+                if (ops.size == 0) nodes[0] else BinaryOperatorNode(nodes, ops)
             }
         }
     }
@@ -380,8 +379,8 @@ class Parser(private val tokens: List<Token>) {
         return term
     }
 
-    private var declarations: MutableMap<String, (NodeValue) -> ProcedureValue> = mutableMapOf()
-    fun parse(): Pair<Node, MutableMap<String, (NodeValue) -> ProcedureValue>> {
+    private var declarations: MutableMap<String, ProcedureValue> = mutableMapOf()
+    fun parse(): Pair<Node, MutableMap<String, ProcedureValue>> {
         declarations = mutableMapOf()
         return Pair(parseStmtList(false), declarations)
     }

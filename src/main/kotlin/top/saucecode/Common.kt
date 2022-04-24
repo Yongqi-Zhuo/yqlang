@@ -1,10 +1,7 @@
 package top.saucecode
 
 import kotlinx.serialization.Serializable
-import top.saucecode.Node.AccessViewNode
-import top.saucecode.Node.IdentifierNode
 import top.saucecode.Node.ListNode
-import top.saucecode.Node.SubscriptNode
 import top.saucecode.NodeValue.*
 import java.util.regex.Pattern
 import kotlin.math.absoluteValue
@@ -16,7 +13,6 @@ enum class TokenType {
     NEWLINE, SEMICOLON, COLON, ASSIGN, DOT, COMMA, INIT, // Statements
     IF, ELSE, FUNC, RETURN, WHILE, CONTINUE, BREAK, FOR, IN, // Control flow
     ARROW, // Lambda arrow
-
     // Operators begin
     NOT, // Unary NOT, unary MINUS cannot be discriminated by tokenizer
     MULT, DIV, MOD, // MULT_OP
@@ -26,7 +22,6 @@ enum class TokenType {
     EQUAL, NOT_EQUAL, // EQ_OP
     LOGIC_AND, // LOGIC_OP
     LOGIC_OR, // LOGIC_OP
-
     // Operators end
     ACTION, IDENTIFIER, NUMBER, STRING, EOF;
 
@@ -93,7 +88,6 @@ fun IntRange.safeSlice(begin: Int, end: Int?): IntRange? {
     return first + b until first + e
 }
 
-@Serializable
 data class Token(val type: TokenType, val value: String) {
     override fun toString(): String {
         return if (type == TokenType.STRING) "$type: \"$value\"" else "$type: $value"
@@ -103,95 +97,72 @@ data class Token(val type: TokenType, val value: String) {
 class Constants {
     companion object {
         val builtinSymbols = mapOf("true" to true.toNodeValue(), "false" to false.toNodeValue(), "null" to NullValue)
-        private val Slice = { self: NodeValue ->
-            NodeProcedureValue(
-                AccessViewNode(
-                    IdentifierNode(Token(TokenType.IDENTIFIER, "this")), SubscriptNode(
-                        IdentifierNode(Token(TokenType.IDENTIFIER, "begin")),
-                        true,
-                        IdentifierNode(Token(TokenType.IDENTIFIER, "end"))
-                    )
-                ), ListNode("begin", "end"), self
-            )
-        }
         private val whiteSpace = Pattern.compile("\\s+")
-        private val Split = { self: NodeValue ->
-            BuiltinProcedureValue("split", ListNode("separator"), { context ->
-                val str = context.stack["this"]!!.asString()!!
+        private val Split = BuiltinProcedureValue("split", ListNode("separator"), { context ->
+            val str = context.stack["this"]!!.asString()!!
+            val arg = context.stack["separator"]?.asString()
+            if (arg == null) {
+                whiteSpace.split(str).filter { it.isNotEmpty() }.map { it.toNodeValue() }.toList().toNodeValue()
+            } else {
+                str.split(arg).map { it.toNodeValue() }.toList().toNodeValue()
+            }
+        }, null)
+        private val Join = BuiltinProcedureValue("join", ListNode("separator"), { context ->
+            val list = context.stack["this"]!!
+            return@BuiltinProcedureValue if (list is Iterable<*>) {
                 val arg = context.stack["separator"]?.asString()
                 if (arg == null) {
-                    whiteSpace.split(str).filter { it.isNotEmpty() }.map { it.toNodeValue() }.toList().toNodeValue()
+                    list.joinToString(" ").toNodeValue()
                 } else {
-                    str.split(arg).map { it.toNodeValue() }.toList().toNodeValue()
+                    list.joinToString(arg).toNodeValue()
                 }
-            }, self)
-        }
-        private val Join = { self: NodeValue ->
-            BuiltinProcedureValue("join", ListNode("separator"), { context ->
-                val list = context.stack["this"]!!
-                return@BuiltinProcedureValue if (list is Iterable<*>) {
-                    val arg = context.stack["separator"]?.asString()
-                    if (arg == null) {
-                        list.joinToString(" ").toNodeValue()
-                    } else {
-                        list.joinToString(arg).toNodeValue()
-                    }
-                } else throw RuntimeException("$list has no such method as \"join\"")
-            }, self)
-        }
-        private val Find = { self: NodeValue ->
-            BuiltinProcedureValue("find", ListNode("what"), { context ->
-                val expr = context.stack["this"]!!
-                val arg = context.stack["what"]!!
-                when (expr) {
-                    is StringValue -> expr.value.indexOf(arg.asString()!!).toNodeValue()
-                    is ListValue -> expr.value.indexOf(arg).toNodeValue()
-                    else -> throw RuntimeException("$expr has no such method as \"find\"")
-                }
-            }, self)
-        }
-        private val Contains = { self: NodeValue ->
-            BuiltinProcedureValue("contains", ListNode("what"), { context ->
-                val expr = context.stack["this"]!!
-                val arg = context.stack["what"]!!
-                when (expr) {
-                    is StringValue -> expr.value.contains(arg.asString()!!).toNodeValue()
-                    is ListValue -> expr.value.contains(arg).toNodeValue()
-                    is RangeValue<*> -> expr.contains(arg).toNodeValue()
-                    else -> throw RuntimeException("$expr has no such method as \"contains\"")
-                }
-            }, self)
-        }
-        private val Length = { self: NodeValue ->
-            BuiltinProcedureValue("length", ListNode(), { context ->
-                when (val expr = context.stack["this"]!!) {
-                    is StringValue -> expr.value.length.toNodeValue()
-                    is ListValue -> expr.value.size.toNodeValue()
-                    is RangeValue<*> -> expr.size.toNodeValue()
-                    else -> throw RuntimeException("$expr has no such method as \"length\"")
-                }
-            }, self)
-        }
+            } else throw RuntimeException("$list has no such method as \"join\"")
+        }, null)
+        private val Find = BuiltinProcedureValue("find", ListNode("what"), { context ->
+            val expr = context.stack["this"]!!
+            val arg = context.stack["what"]!!
+            when (expr) {
+                is StringValue -> expr.value.indexOf(arg.asString()!!).toNodeValue()
+                is ListValue -> expr.value.indexOf(arg).toNodeValue()
+                else -> throw RuntimeException("$expr has no such method as \"find\"")
+            }
+        }, null)
+        private val Contains = BuiltinProcedureValue("contains", ListNode("what"), { context ->
+            val expr = context.stack["this"]!!
+            val arg = context.stack["what"]!!
+            when (expr) {
+                is StringValue -> expr.value.contains(arg.asString()!!).toNodeValue()
+                is ListValue -> expr.value.contains(arg).toNodeValue()
+                is RangeValue<*> -> expr.contains(arg).toNodeValue()
+                else -> throw RuntimeException("$expr has no such method as \"contains\"")
+            }
+        }, null)
+        private val Length = BuiltinProcedureValue("length", ListNode(), { context ->
+            when (val expr = context.stack["this"]!!) {
+                is StringValue -> expr.value.length.toNodeValue()
+                is ListValue -> expr.value.size.toNodeValue()
+                is RangeValue<*> -> expr.size.toNodeValue()
+                else -> throw RuntimeException("$expr has no such method as \"length\"")
+            }
+        }, null)
         private val Time = BuiltinProcedureValue("time", ListNode(), {
             System.currentTimeMillis().toNodeValue()
         }, null)
-        private val Random = { self: NodeValue ->
-            BuiltinProcedureValue("random", ListNode("first", "second"), { context ->
-                val collection = context.stack["this"]
-                return@BuiltinProcedureValue if (collection?.toBoolean() == true) {
-                    when (collection) {
-                        is StringValue -> collection.value.random().toString().toNodeValue()
-                        is ListValue -> collection.value.random()
-                        is RangeValue<*> -> collection.random()
-                        else -> throw RuntimeException("$collection has no such method as \"random\"")
-                    }
-                } else {
-                    val first = context.stack["first"]!!.asNumber()!!
-                    val second = context.stack["second"]!!.asNumber()!!
-                    (first until second).random().toNodeValue()
+        private val Random = BuiltinProcedureValue("random", ListNode("first", "second"), { context ->
+            val collection = context.stack["this"]
+            return@BuiltinProcedureValue if (collection?.toBoolean() == true) {
+                when (collection) {
+                    is StringValue -> collection.value.random().toString().toNodeValue()
+                    is ListValue -> collection.value.random()
+                    is RangeValue<*> -> collection.random()
+                    else -> throw RuntimeException("$collection has no such method as \"random\"")
                 }
-            }, self)
-        }
+            } else {
+                val first = context.stack["first"]!!.asNumber()!!
+                val second = context.stack["second"]!!.asNumber()!!
+                (first until second).random().toNodeValue()
+            }
+        }, null)
         private val Range = BuiltinProcedureValue("range", ListNode("begin", "end"), { context ->
             val begin = context.stack["begin"]!!
             val end = context.stack["end"]
@@ -241,22 +212,20 @@ class Constants {
         private val Abs = BuiltinProcedureValue("abs", ListNode("num"), { context ->
             context.stack["num"]!!.asNumber()!!.absoluteValue.toNodeValue()
         }, null)
-        private val Enumerated = { self: NodeValue ->
-            BuiltinProcedureValue("enumerated", ListNode(), { context ->
-                val list = context.stack["this"]!!
-                return@BuiltinProcedureValue if (list is Iterable<*>) {
-                    list.mapIndexed { index, value ->
-                        ListValue(
-                            mutableListOf(
-                                index.toNodeValue(), value as NodeValue
-                            )
+        private val Enumerated = BuiltinProcedureValue("enumerated", ListNode(), { context ->
+            val list = context.stack["this"]!!
+            return@BuiltinProcedureValue if (list is Iterable<*>) {
+                list.mapIndexed { index, value ->
+                    ListValue(
+                        mutableListOf(
+                            index.toNodeValue(), value as NodeValue
                         )
-                    }.toNodeValue()
-                } else {
-                    throw RuntimeException("$list has no such method as \"enumerated\"")
-                }
-            }, self)
-        }
+                    )
+                }.toNodeValue()
+            } else {
+                throw RuntimeException("$list has no such method as \"enumerated\"")
+            }
+        }, null)
         private val Ord = BuiltinProcedureValue("ord", ListNode("str"), { context ->
             context.stack["str"]!!.asString()!!.first().code.toLong().toNodeValue()
         }, null)
@@ -268,106 +237,91 @@ class Constants {
             val exp = context.stack["exp"]!!.asNumber()!!
             num.toDouble().pow(exp.toDouble()).toLong().toNodeValue()
         }, null)
-        private val Sum = { self: NodeValue ->
-            BuiltinProcedureValue("sum", ListNode(), { context ->
-                val list = context.stack["this"]!!
-                return@BuiltinProcedureValue if (list is Iterable<*>) {
-                    list.sumOf { (it as NodeValue).asNumber()!! }.toNodeValue()
-                } else {
-                    throw RuntimeException("$list has no such method as \"sum\"")
-                }
-            }, self)
-        }
+        private val Sum = BuiltinProcedureValue("sum", ListNode(), { context ->
+            val list = context.stack["this"]!!
+            return@BuiltinProcedureValue if (list is Iterable<*>) {
+                list.sumOf { (it as NodeValue).asNumber()!! }.toNodeValue()
+            } else {
+                throw RuntimeException("$list has no such method as \"sum\"")
+            }
+        }, null)
         private val Boolean = BuiltinProcedureValue("boolean", ListNode("value"), { context ->
             context.stack["value"]!!.toBoolean().toNodeValue()
         }, null)
-        private val Filter = { self: NodeValue ->
-            BuiltinProcedureValue("filter", ListNode("predicate"), { context ->
-                val predicate = context.stack["predicate"]!!.asProcedure()!!
-                fun predicateCall(it: NodeValue) = predicate.call(context, ListValue(mutableListOf(it)))
-                val list = context.stack["this"]!!
-                return@BuiltinProcedureValue if (list is Iterable<*>) {
-                    @Suppress("UNCHECKED_CAST") (list.filter { predicateCall(it as NodeValue).toBoolean() } as List<NodeValue>).toNodeValue()
-                } else {
-                    throw RuntimeException("$list has no such method as \"filter\"")
+        private val Filter = BuiltinProcedureValue("filter", ListNode("predicate"), { context ->
+            val predicate = context.stack["predicate"]!!.asProcedure()!!
+            fun predicateCall(it: NodeValue) = predicate.call(context, ListValue(mutableListOf(it)))
+            val list = context.stack["this"]!!
+            return@BuiltinProcedureValue if (list is Iterable<*>) {
+                @Suppress("UNCHECKED_CAST") (list.filter { predicateCall(it as NodeValue).toBoolean() } as List<NodeValue>).toNodeValue()
+            } else {
+                throw RuntimeException("$list has no such method as \"filter\"")
+            }
+        }, null)
+        private val Reduce = BuiltinProcedureValue("reduce", ListNode("initial", "reducer"), { context ->
+            val reducer = context.stack["reducer"]!!.asProcedure()!!
+            fun reducerCall(acc: NodeValue, it: NodeValue) = reducer.call(context, listOf(acc, it).toNodeValue())
+            val list = context.stack["this"]!!
+            return@BuiltinProcedureValue if (list is Iterable<*>) {
+                var res = context.stack["initial"]!!
+                for (i in list) {
+                    res = reducerCall(res, i as NodeValue)
                 }
-            }, self)
-        }
-        private val Reduce = { self: NodeValue ->
-            BuiltinProcedureValue("reduce", ListNode("initial", "reducer"), { context ->
-                val reducer = context.stack["reducer"]!!.asProcedure()!!
-                fun reducerCall(acc: NodeValue, it: NodeValue) = reducer.call(context, listOf(acc, it).toNodeValue())
-                val list = context.stack["this"]!!
-                return@BuiltinProcedureValue if (list is Iterable<*>) {
-                    var res = context.stack["initial"]!!
-                    for (i in list) {
-                        res = reducerCall(res, i as NodeValue)
+                res
+            } else {
+                throw RuntimeException("$list has no such method as \"reduce\"")
+            }
+        }, null)
+        private val Map = BuiltinProcedureValue("map", ListNode("mapper"), { context ->
+            val mapper = context.stack["mapper"]!!.asProcedure()!!
+            fun mapperCall(it: NodeValue) = mapper.call(context, listOf(it).toNodeValue())
+            val collection = context.stack["this"]!!
+            return@BuiltinProcedureValue if (collection is Iterable<*>) {
+                (collection.map { mapperCall(it as NodeValue) }).toNodeValue()
+            } else {
+                throw RuntimeException("$collection has no such method as \"map\"")
+            }
+        }, null)
+        private val Max = BuiltinProcedureValue("max", ListNode("list"), { context ->
+            val list = (context.stack["this"] as? Iterable<*>) ?: (context.stack["list"]!! as Iterable<*>)
+            return@BuiltinProcedureValue list.maxByOrNull { it as NumberValue }!! as NodeValue
+        }, null)
+        private val Min = BuiltinProcedureValue("max", ListNode("list"), { context ->
+            val list = (context.stack["this"] as? Iterable<*>) ?: (context.stack["list"]!! as Iterable<*>)
+            return@BuiltinProcedureValue list.minByOrNull { it as NumberValue }!! as NodeValue
+        }, null)
+        private val Reversed = BuiltinProcedureValue("reversed", ListNode(), { context ->
+            return@BuiltinProcedureValue when (val list = context.stack["this"]!!) {
+                is ListValue -> list.value.reversed().toNodeValue()
+                is StringValue -> list.value.reversed().toNodeValue()
+                is Iterable<*> -> {
+                    @Suppress("UNCHECKED_CAST") (list.reversed() as List<NodeValue>).toNodeValue()
+                }
+                else -> throw RuntimeException("$list has no such method as \"reversed\"")
+            }
+        }, null)
+        private val Sorted = BuiltinProcedureValue("sorted", ListNode("cmp"), { context ->
+            @Suppress("UNCHECKED_CAST") val list = context.stack["this"]!! as Iterable<NodeValue>
+            val cmp = context.stack["cmp"]?.asProcedure()
+            return@BuiltinProcedureValue if (cmp == null) {
+                list.sorted().toNodeValue()
+            } else {
+                list.sortedWith { a, b ->
+                    val res = cmp.call(context, ListValue(mutableListOf(a, b)))
+                    if (res.toBoolean()) {
+                        1
+                    } else {
+                        -1
                     }
-                    res
-                } else {
-                    throw RuntimeException("$list has no such method as \"reduce\"")
-                }
-            }, self)
-        }
-        private val Map = { self: NodeValue ->
-            BuiltinProcedureValue("map", ListNode("mapper"), { context ->
-                val mapper = context.stack["mapper"]!!.asProcedure()!!
-                fun mapperCall(it: NodeValue) = mapper.call(context, listOf(it).toNodeValue())
-                val collection = context.stack["this"]!!
-                return@BuiltinProcedureValue if (collection is Iterable<*>) {
-                    (collection.map { mapperCall(it as NodeValue) }).toNodeValue()
-                } else {
-                    throw RuntimeException("$collection has no such method as \"map\"")
-                }
-            }, self)
-        }
-        private val Max = { self: NodeValue ->
-            BuiltinProcedureValue("max", ListNode("list"), { context ->
-                val list = (context.stack["this"] as? Iterable<*>) ?: (context.stack["list"]!! as Iterable<*>)
-                return@BuiltinProcedureValue list.maxByOrNull { it as NumberValue }!! as NodeValue
-            }, self)
-        }
-        private val Min = { self: NodeValue ->
-            BuiltinProcedureValue("max", ListNode("list"), { context ->
-                val list = (context.stack["this"] as? Iterable<*>) ?: (context.stack["list"]!! as Iterable<*>)
-                return@BuiltinProcedureValue list.minByOrNull { it as NumberValue }!! as NodeValue
-            }, self)
-        }
-        private val Reversed = { self: NodeValue ->
-            BuiltinProcedureValue("reversed", ListNode(), { context ->
-                return@BuiltinProcedureValue when (val list = context.stack["this"]!!) {
-                    is ListValue -> list.value.reversed().toNodeValue()
-                    is StringValue -> list.value.reversed().toNodeValue()
-                    is Iterable<*> -> {
-                        @Suppress("UNCHECKED_CAST") (list.reversed() as List<NodeValue>).toNodeValue()
-                    }
-                    else -> throw RuntimeException("$list has no such method as \"reversed\"")
-                }
-            }, self)
-        }
-        private val Sorted = { self: NodeValue ->
-            BuiltinProcedureValue("sorted", ListNode("cmp"), { context ->
-                @Suppress("UNCHECKED_CAST") val list = context.stack["this"]!! as Iterable<NodeValue>
-                val cmp = context.stack["cmp"]?.asProcedure()
-                return@BuiltinProcedureValue if (cmp == null) {
-                    list.sorted().toNodeValue()
-                } else {
-                    list.sortedWith { a, b ->
-                        val res = cmp.call(context, ListValue(mutableListOf(a, b)))
-                        if (res.toBoolean()) {
-                            1
-                        } else {
-                            -1
-                        }
-                    }.toNodeValue()
-                }
-            }, self)
-        }
+                }.toNodeValue()
+            }
+        }, null)
         private val GetNickname = BuiltinProcedureValue("getNickname", ListNode("id"), { context ->
             val user = context.stack["id"]!!.asNumber()!!
             return@BuiltinProcedureValue context.nickname(user).toNodeValue()
         }, null)
-        val builtinFunctions = mapOf(
+        val builtinProcedures = mapOf(
+            // functions
             "time" to Time,
             "range" to Range,
             "rangeInclusive" to RangeInclusive,
@@ -384,9 +338,7 @@ class Constants {
             "boolean" to Boolean,
             "bool" to Boolean,
             "getNickname" to GetNickname,
-        )
-        val builtinMethods = mapOf(
-            "slice" to Slice,
+            // methods
             "split" to Split,
             "join" to Join,
             "find" to Find,
@@ -407,12 +359,6 @@ class Constants {
             "sorted" to Sorted
         )
         val builtinProceduresHelps = mapOf(
-            "slice" to """
-                |Retrieve a slice of a list or a string. 
-                |Usage: list.slice(begin, end)
-                |Example: [1, 2, 3, 4, 5].slice(1, 3) // [2, 3]
-                |Note that list.slice(begin, end) == list[begin : end].
-                |""".trimMargin(),
             "split" to """
                 |Split a string into a list of substrings. If the argument is omitted, the string is split on whitespace.
                 |Usage: str.split(sep)

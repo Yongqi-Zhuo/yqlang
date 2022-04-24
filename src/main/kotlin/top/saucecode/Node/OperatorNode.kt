@@ -1,15 +1,18 @@
 package top.saucecode.Node
 
+import kotlinx.serialization.Serializable
 import top.saucecode.ExecutionContext
 import top.saucecode.NodeValue.NodeValue
 import top.saucecode.NodeValue.NullValue
 import top.saucecode.NodeValue.toNodeValue
 import top.saucecode.TokenType
 
-abstract class OperatorNode : Node() {
+@Serializable
+sealed class OperatorNode : Node() {
     enum class OperatorType {
         UNARY, BINARY
     }
+
     data class Precedence(val operators: List<TokenType>, val opType: OperatorType)
     companion object {
         val PrecedenceList = listOf(
@@ -28,37 +31,44 @@ abstract class OperatorNode : Node() {
     }
 }
 
+@Serializable
 class BinaryOperatorNode(private val components: List<Node>, private val ops: List<TokenType>) : OperatorNode() {
-    private val opMap =
-        mapOf<TokenType, (ExecutionContext, Node, Node) -> NodeValue>(
-            TokenType.PLUS
-                    to { context, left, right -> left.exec(context) + right.exec(context) },
-            TokenType.MINUS
-                    to { context, left, right -> left.exec(context) - right.exec(context) },
-            TokenType.MULT
-                    to { context, left, right -> left.exec(context) * right.exec(context) },
-            TokenType.DIV
-                    to { context, left, right -> left.exec(context) / right.exec(context) },
-            TokenType.MOD
-                    to { context, left, right -> left.exec(context) % right.exec(context) },
-            TokenType.EQUAL
-                    to { context, left, right -> (left.exec(context) == right.exec(context)).toNodeValue() },
-            TokenType.NOT_EQUAL
-                    to { context, left, right -> (left.exec(context) != right.exec(context)).toNodeValue() },
-            TokenType.GREATER
-                    to { context, left, right -> (left.exec(context) > right.exec(context)).toNodeValue() },
-            TokenType.LESS
-                    to { context, left, right -> (left.exec(context) < right.exec(context)).toNodeValue() },
-            TokenType.GREATER_EQ
-                    to { context, left, right -> (left.exec(context) >= right.exec(context)).toNodeValue() },
-            TokenType.LESS_EQ
-                    to { context, left, right -> (left.exec(context) <= right.exec(context)).toNodeValue() },
-            TokenType.LOGIC_AND
-                    to { context, left, right -> (left.exec(context).toBoolean() && right.exec(context).toBoolean()).toNodeValue() },
-            TokenType.LOGIC_OR
-                    to { context, left, right -> (left.exec(context).toBoolean() || right.exec(context).toBoolean()).toNodeValue() },
-            TokenType.IN
-                    to { context, left, right -> (left.exec(context) in right.exec(context)).toNodeValue() })
+    companion object {
+        private val opMap =
+            mapOf<TokenType, (ExecutionContext, Node, Node) -> NodeValue>(
+                TokenType.PLUS
+                        to { context, left, right -> left.exec(context) + right.exec(context) },
+                TokenType.MINUS
+                        to { context, left, right -> left.exec(context) - right.exec(context) },
+                TokenType.MULT
+                        to { context, left, right -> left.exec(context) * right.exec(context) },
+                TokenType.DIV
+                        to { context, left, right -> left.exec(context) / right.exec(context) },
+                TokenType.MOD
+                        to { context, left, right -> left.exec(context) % right.exec(context) },
+                TokenType.EQUAL
+                        to { context, left, right -> (left.exec(context) == right.exec(context)).toNodeValue() },
+                TokenType.NOT_EQUAL
+                        to { context, left, right -> (left.exec(context) != right.exec(context)).toNodeValue() },
+                TokenType.GREATER
+                        to { context, left, right -> (left.exec(context) > right.exec(context)).toNodeValue() },
+                TokenType.LESS
+                        to { context, left, right -> (left.exec(context) < right.exec(context)).toNodeValue() },
+                TokenType.GREATER_EQ
+                        to { context, left, right -> (left.exec(context) >= right.exec(context)).toNodeValue() },
+                TokenType.LESS_EQ
+                        to { context, left, right -> (left.exec(context) <= right.exec(context)).toNodeValue() },
+                TokenType.LOGIC_AND
+                        to { context, left, right ->
+                    (left.exec(context).toBoolean() && right.exec(context).toBoolean()).toNodeValue()
+                },
+                TokenType.LOGIC_OR
+                        to { context, left, right ->
+                    (left.exec(context).toBoolean() || right.exec(context).toBoolean()).toNodeValue()
+                },
+                TokenType.IN
+                        to { context, left, right -> (left.exec(context) in right.exec(context)).toNodeValue() })
+    }
 
     override fun exec(context: ExecutionContext): NodeValue {
         return if (components.isEmpty()) NullValue
@@ -91,11 +101,14 @@ class BinaryOperatorNode(private val components: List<Node>, private val ops: Li
     }
 }
 
+@Serializable
 class UnaryOperatorNode(private val component: Node, private val op: TokenType) : OperatorNode() {
-    private val opMap = mapOf<TokenType, (ExecutionContext, Node) -> NodeValue>(
-        TokenType.MINUS to { context, node -> -node.exec(context) },
-        TokenType.NOT to { context, node -> !node.exec(context) },
-    )
+    companion object {
+        private val opMap = mapOf<TokenType, (ExecutionContext, Node) -> NodeValue>(
+            TokenType.MINUS to { context, node -> -node.exec(context) },
+            TokenType.NOT to { context, node -> !node.exec(context) },
+        )
+    }
 
     override fun exec(context: ExecutionContext): NodeValue {
         return opMap[op]!!(context, component)

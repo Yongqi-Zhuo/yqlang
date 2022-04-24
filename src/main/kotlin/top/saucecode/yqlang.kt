@@ -1,13 +1,12 @@
 package top.saucecode
 
 import top.saucecode.Node.Node
-import top.saucecode.NodeValue.NodeValue
 import top.saucecode.NodeValue.ProcedureValue
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 
 abstract class ExecutionContext(
-    rootScope: Scope, declarations: MutableMap<String, (NodeValue) -> ProcedureValue>, val firstRun: Boolean
+    rootScope: Scope, declarations: MutableMap<String, ProcedureValue>, val firstRun: Boolean
 ) {
     val stack: Stack
 
@@ -20,7 +19,7 @@ abstract class ExecutionContext(
     abstract fun nickname(id: Long): String
 }
 
-class ConsoleContext(rootScope: Scope? = null, declarations: MutableMap<String, (NodeValue) -> ProcedureValue>) :
+class ConsoleContext(rootScope: Scope? = null, declarations: MutableMap<String, ProcedureValue>) :
     ExecutionContext(rootScope ?: Scope.createRoot(), declarations, true) {
     override fun say(text: String) {
         println(text)
@@ -36,7 +35,7 @@ class ConsoleContext(rootScope: Scope? = null, declarations: MutableMap<String, 
 }
 
 open class ControlledContext(
-    rootScope: Scope, declarations: MutableMap<String, (NodeValue) -> ProcedureValue>, firstRun: Boolean
+    rootScope: Scope, declarations: MutableMap<String, ProcedureValue>, firstRun: Boolean
 ) : ExecutionContext(rootScope, declarations, firstRun) {
     private val record = mutableListOf<String>()
     override fun say(text: String) {
@@ -60,7 +59,7 @@ open class ControlledContext(
 
 class Interpreter(source: String, private val restricted: Boolean) {
     private val ast: Node
-    val declarations: MutableMap<String, (NodeValue) -> ProcedureValue>
+    val declarations: MutableMap<String, ProcedureValue>
 
     init {
         val tokens = Tokenizer(source).scan()
@@ -84,7 +83,7 @@ class Interpreter(source: String, private val restricted: Boolean) {
 
 class REPL {
     val rootScope = Scope.createRoot()
-    private val declarations = mutableMapOf<String, (NodeValue) -> ProcedureValue>()
+    private val declarations = mutableMapOf<String, ProcedureValue>()
 
     fun run() {
         val inputs = mutableListOf<String>()

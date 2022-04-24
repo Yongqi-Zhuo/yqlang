@@ -4,7 +4,10 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.serializer
 import top.saucecode.Node.ListNode
-import top.saucecode.NodeValue.*
+import top.saucecode.NodeValue.ListValue
+import top.saucecode.NodeValue.NodeValue
+import top.saucecode.NodeValue.ProcedureValue
+import top.saucecode.NodeValue.toNodeValue
 
 class Scope(val symbols: MutableMap<String, NodeValue>, val args: ListValue = ListValue(mutableListOf())) {
     operator fun get(name: String): NodeValue? {
@@ -48,8 +51,8 @@ class Scope(val symbols: MutableMap<String, NodeValue>, val args: ListValue = Li
             try {
                 val jsonValue = Json.encodeToString(value)
                 filteredSymbols[key] = jsonValue
-            } catch (_: Exception) {
-
+            } catch (e: Exception) {
+                println(e.message)
             }
         }
         return Json.encodeToString(filteredSymbols)
@@ -65,7 +68,7 @@ class RecursionTooDeepException(private val depth: Int) : Exception() {
     override val message: String = toString()
 }
 
-class Stack(rootScope: Scope, private val declarations: MutableMap<String, (NodeValue) -> ProcedureValue>) {
+class Stack(rootScope: Scope, private val declarations: MutableMap<String, ProcedureValue>) {
     private val scopes: MutableList<Scope>
 
     private var depth = 0
@@ -109,13 +112,11 @@ class Stack(rootScope: Scope, private val declarations: MutableMap<String, (Node
                 return value
             }
         }
-        return Constants.builtinSymbols[name] ?: declarations[name]?.invoke(NullValue)
-        ?: Constants.builtinFunctions[name] ?: Constants.builtinMethods[name]?.invoke(NullValue)
+        return declarations[name] ?: Constants.builtinSymbols[name] ?: Constants.builtinProcedures[name]
     }
 
-    fun getProcedure(name: String): ((NodeValue) -> ProcedureValue)? {
-        return declarations[name] ?: Constants.builtinMethods[name]
-        ?: Constants.builtinFunctions[name]?.let { it -> { _: NodeValue -> it } }
+    fun getProcedure(name: String): ProcedureValue? {
+        return declarations[name] ?: Constants.builtinProcedures[name]
     }
 
     private var local: Boolean = false

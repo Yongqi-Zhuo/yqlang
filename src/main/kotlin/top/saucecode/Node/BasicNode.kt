@@ -1,11 +1,13 @@
 package top.saucecode.Node
 
+import kotlinx.serialization.Serializable
 import top.saucecode.ExecutionContext
 import top.saucecode.NodeValue.*
 import top.saucecode.Token
 import top.saucecode.TokenType
 import kotlin.math.min
 
+@Serializable
 class ValueNode(private val value: NodeValue) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
         return value
@@ -16,15 +18,10 @@ class ValueNode(private val value: NodeValue) : Node() {
     }
 }
 
-class IdentifierNode(token: Token) : Node() {
-    val name: String
+@Serializable
+class IdentifierNode(val name: String) : Node() {
 
-    init {
-        if (token.type != TokenType.IDENTIFIER) {
-            throw IllegalArgumentException("Expected IDENTIFIER, got ${token.type}")
-        }
-        name = token.value
-    }
+    constructor(token: Token) : this(token.value)
 
     override fun exec(context: ExecutionContext): NodeValue {
         return context.stack[name] ?: NullValue
@@ -40,15 +37,10 @@ class IdentifierNode(token: Token) : Node() {
 
 }
 
-class NumberNode(token: Token) : Node() {
-    private val value: Int
+@Serializable
+class NumberNode(private val value: Long) : Node() {
 
-    init {
-        if (token.type != TokenType.NUMBER) {
-            throw IllegalArgumentException("Expected NUMBER, got ${token.type}")
-        }
-        value = token.value.toInt()
-    }
+    constructor(token: Token) : this(token.value.toLong())
 
     override fun exec(context: ExecutionContext): NodeValue {
         return value.toNodeValue()
@@ -59,15 +51,10 @@ class NumberNode(token: Token) : Node() {
     }
 }
 
-class StringNode(token: Token) : Node() {
-    private val value: String
+@Serializable
+class StringNode(private val value: String) : Node() {
 
-    init {
-        if (token.type != TokenType.STRING) {
-            throw IllegalArgumentException("Expected STRING, got ${token.type}")
-        }
-        value = token.value
-    }
+    constructor(token: Token) : this(token.value)
 
     override fun exec(context: ExecutionContext): NodeValue {
         return value.toNodeValue()
@@ -78,6 +65,7 @@ class StringNode(token: Token) : Node() {
     }
 }
 
+@Serializable
 class ListNode(private val items: List<Node>) : Node() {
     override fun exec(context: ExecutionContext): ListValue {
         return items.map { it.exec(context) }.toNodeValue()
@@ -100,6 +88,7 @@ class ListNode(private val items: List<Node>) : Node() {
     }
 }
 
+@Serializable
 class SubscriptNode(private val begin: Node, private val extended: Boolean, private val end: Node? = null) : Node() {
     override fun exec(context: ExecutionContext): SubscriptValue {
         return when (val begin = begin.exec(context)) {
@@ -116,17 +105,12 @@ class SubscriptNode(private val begin: Node, private val extended: Boolean, priv
     }
 }
 
+@Serializable
 class ObjectNode(private val items: List<Pair<IdentifierNode, Node>>) : Node() {
     override fun exec(context: ExecutionContext): ObjectValue {
-        val objVal = items.associateTo(mutableMapOf()) { (key, value) ->
-            val res = value.exec(context)
-            if (res is ProcedureValue) {
-                key.name to res.copy()
-            } else {
-                key.name to res
-            }
+        return items.associateTo(mutableMapOf()) { (key, value) ->
+            key.name to value.exec(context)
         }.toNodeValue()
-        return objVal.bindSelf()
     }
 
     override fun toString(): String {
@@ -134,6 +118,7 @@ class ObjectNode(private val items: List<Pair<IdentifierNode, Node>>) : Node() {
     }
 }
 
+@Serializable
 class ProcedureNode(private val func: Node, private val args: ListNode) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
         val procedure = func.exec(context).asProcedure()!!

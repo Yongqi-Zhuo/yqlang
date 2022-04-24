@@ -22,7 +22,7 @@ data class StringValue(val value: String) : NodeValue(), Iterable<StringValue> {
 fun String.toNodeValue() = StringValue(this)
 
 @Serializable
-data class ListValue(val value: MutableList<NodeValue>) : NodeValue(), Iterable<NodeValue> {
+class ListValue(val value: MutableList<NodeValue>) : NodeValue(), Iterable<NodeValue> {
     override fun toString() = "[${value.joinToString(", ")}]"
     override fun toBoolean(): Boolean = value.isNotEmpty()
     val size: Int get() = value.size
@@ -72,7 +72,15 @@ data class KeySubscriptValue(val key: String) : SubscriptValue() {
 }
 
 @Serializable
-data class ObjectValue(private val attributes: MutableMap<String, NodeValue> = mutableMapOf()) : NodeValue() {
+class ObjectValue(private val attributes: MutableMap<String, NodeValue> = mutableMapOf()) : NodeValue() {
+    init {
+        for (key in attributes.keys) {
+            if (attributes[key] is ProcedureValue) {
+                attributes[key] = (attributes[key] as ProcedureValue).copy().bind(this)
+            }
+        }
+    }
+
     override fun toBoolean(): Boolean = attributes.isNotEmpty()
     operator fun get(key: String): NodeValue? = attributes[key]
     operator fun set(key: String, value: NodeValue) {
@@ -81,15 +89,6 @@ data class ObjectValue(private val attributes: MutableMap<String, NodeValue> = m
 
     override fun toString(): String {
         return "{" + attributes.map { "${it.key}: ${it.value}" }.joinToString(", ") + "}"
-    }
-
-    fun bindSelf(): ObjectValue {
-        for ((_, value) in attributes) {
-            if (value is ProcedureValue) {
-                value.bind(this)
-            }
-        }
-        return this
     }
 }
 

@@ -1,11 +1,12 @@
 package top.saucecode.Node
 
+import kotlinx.serialization.Serializable
 import top.saucecode.ExecutionContext
 import top.saucecode.NodeValue.NodeValue
 import top.saucecode.NodeValue.NullValue
 import top.saucecode.Token
-import top.saucecode.TokenType
 
+@Serializable
 class StmtAssignNode(private val lvalue: Node, private val expr: Node) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
         val value = expr.exec(context)
@@ -18,29 +19,30 @@ class StmtAssignNode(private val lvalue: Node, private val expr: Node) : Node() 
     }
 }
 
-class StmtActionNode(private val action: Token, private val expr: Node) : Node() {
+@Serializable
+class StmtActionNode(private val action: String, private val expr: Node) : Node() {
+    constructor(action: Token, expr: Node) : this(action.value, expr)
+
     override fun exec(context: ExecutionContext): NodeValue {
-        if (action.type != TokenType.ACTION) {
-            throw IllegalArgumentException("Expected ACTION, got ${action.type}")
-        }
         val value = expr.exec(context)
-        when (action.value) {
+        when (action) {
             "say" -> {
                 context.say(value.toString())
             }
             "nudge" -> {
                 context.nudge(value.asNumber()!!)
             }
-            else -> throw IllegalArgumentException("Unknown action ${action.value}")
+            else -> throw IllegalArgumentException("Unknown action ${action}")
         }
         return NullValue
     }
 
     override fun toString(): String {
-        return "action(${action.value}, $expr)"
+        return "action(${action}, $expr)"
     }
 }
 
+@Serializable
 class StmtIfNode(
     private val condition: Node, private val ifBody: Node, private val elseBody: Node? = null
 ) : Node() {
@@ -58,6 +60,7 @@ class StmtIfNode(
     }
 }
 
+@Serializable
 class StmtInitNode(private val stmt: Node) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
         if (context.firstRun) {
@@ -72,6 +75,8 @@ class StmtInitNode(private val stmt: Node) : Node() {
 }
 
 class ReturnException(val value: NodeValue) : Exception()
+
+@Serializable
 class StmtFuncNode(private val content: Node) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
         val res: NodeValue?
@@ -88,6 +93,7 @@ class StmtFuncNode(private val content: Node) : Node() {
     }
 }
 
+@Serializable
 class StmtReturnNode(private val expr: Node) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
         throw ReturnException(expr.exec(context))
@@ -98,6 +104,7 @@ class StmtReturnNode(private val expr: Node) : Node() {
     }
 }
 
+@Serializable
 class StmtWhileNode(private val condition: Node, private val body: Node) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
         while (condition.exec(context).toBoolean()) {
@@ -118,6 +125,8 @@ class StmtWhileNode(private val condition: Node, private val body: Node) : Node(
 }
 
 class ContinueException : Exception()
+
+@Serializable
 class StmtContinueNode : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
         throw ContinueException()
@@ -129,6 +138,8 @@ class StmtContinueNode : Node() {
 }
 
 class BreakException : Exception()
+
+@Serializable
 class StmtBreakNode : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
         throw BreakException()
@@ -139,6 +150,7 @@ class StmtBreakNode : Node() {
     }
 }
 
+@Serializable
 class StmtForNode(private val iterator: Node, private val collection: Node, private val body: Node) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
         val collection = collection.exec(context)
@@ -161,6 +173,7 @@ class StmtForNode(private val iterator: Node, private val collection: Node, priv
     }
 }
 
+@Serializable
 class StmtListNode(private val stmts: List<Node>, private val newScope: Boolean) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
         var res: NodeValue = NullValue
