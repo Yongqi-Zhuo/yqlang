@@ -99,13 +99,15 @@ class Constants {
         val builtinSymbols = mapOf("true" to true.toNodeValue(), "false" to false.toNodeValue(), "null" to NullValue)
         private val whiteSpace = Pattern.compile("\\s+")
         private val Split = BuiltinProcedureValue("split", ListNode("separator"), { context ->
-            val str = context.stack["this"]!!.asString()!!
-            val arg = context.stack["separator"]?.asString()
+            val str = context.stack["this"]!! as StringValue
+            val arg = context.stack["separator"]
             if (arg == null) {
-                whiteSpace.split(str).filter { it.isNotEmpty() }.map { it.toNodeValue() }.toList().toNodeValue()
+                return@BuiltinProcedureValue whiteSpace.split(str.value).filter { it.isNotEmpty() }.map { it.toNodeValue() }.toList().toNodeValue()
             } else {
-                str.split(arg).map { it.toNodeValue() }.toList().toNodeValue()
+                if (arg is StringValue) return@BuiltinProcedureValue str.value.split(arg.value).map { it.toNodeValue() }.toList().toNodeValue()
+                else if (arg is RegExValue) return@BuiltinProcedureValue arg.split(str)
             }
+            throw RuntimeException("$str has no such method as \"split\"")
         }, null)
         private val Join = BuiltinProcedureValue("join", ListNode("separator"), { context ->
             val list = context.stack["this"]!!
@@ -121,29 +123,40 @@ class Constants {
         private val Find = BuiltinProcedureValue("find", ListNode("what"), { context ->
             val expr = context.stack["this"]!!
             val arg = context.stack["what"]!!
-            when (expr) {
-                is StringValue -> expr.value.indexOf(arg.asString()!!).toNodeValue()
-                is ListValue -> expr.value.indexOf(arg).toNodeValue()
-                else -> throw RuntimeException("$expr has no such method as \"find\"")
+            if (expr is StringValue) {
+                if (arg is StringValue) return@BuiltinProcedureValue expr.value.indexOf(arg.asString()!!).toNodeValue()
+                else if (arg is RegExValue) return@BuiltinProcedureValue arg.find(expr)
             }
+            else if (expr is ListValue) return@BuiltinProcedureValue expr.value.indexOf(arg).toNodeValue()
+            throw RuntimeException("$expr has no such method as \"find\"")
+        }, null)
+        private val FindAll = BuiltinProcedureValue("findAll", ListNode("what"), { context ->
+            val expr = context.stack["this"]!!
+            val arg = context.stack["what"]!!
+            if (expr is StringValue) {
+                if (arg is StringValue) return@BuiltinProcedureValue expr.value.indices.filter { expr.value.substring(it).startsWith(arg.asString()!!) }.map { it.toNodeValue() }.toNodeValue()
+                else if (arg is RegExValue) return@BuiltinProcedureValue arg.findAll(expr)
+            }
+            else if (expr is ListValue) return@BuiltinProcedureValue expr.value.indices.filter { expr.value[it] == arg }.map { it.toNodeValue() }.toNodeValue()
+            throw RuntimeException("$expr has no such method as \"findAll\"")
         }, null)
         private val Contains = BuiltinProcedureValue("contains", ListNode("what"), { context ->
             val expr = context.stack["this"]!!
             val arg = context.stack["what"]!!
-            when (expr) {
-                is StringValue -> expr.value.contains(arg.asString()!!).toNodeValue()
-                is ListValue -> expr.value.contains(arg).toNodeValue()
-                is RangeValue<*> -> expr.contains(arg).toNodeValue()
-                else -> throw RuntimeException("$expr has no such method as \"contains\"")
+            if (expr is StringValue) {
+                if (arg is StringValue) return@BuiltinProcedureValue expr.value.contains(arg.asString()!!).toNodeValue()
+                else if (arg is RegExValue) return@BuiltinProcedureValue arg.contains(expr)
             }
+            else if (expr is ListValue) return@BuiltinProcedureValue expr.value.contains(arg).toNodeValue()
+            else if (expr is RangeValue<*>) return@BuiltinProcedureValue expr.contains(arg).toNodeValue()
+            throw RuntimeException("$expr has no such method as \"contains\"")
         }, null)
         private val Length = BuiltinProcedureValue("length", ListNode(), { context ->
-            when (val expr = context.stack["this"]!!) {
-                is StringValue -> expr.value.length.toNodeValue()
-                is ListValue -> expr.value.size.toNodeValue()
-                is RangeValue<*> -> expr.size.toNodeValue()
-                else -> throw RuntimeException("$expr has no such method as \"length\"")
-            }
+            val expr = context.stack["this"]!!
+            if (expr is StringValue) return@BuiltinProcedureValue expr.value.length.toNodeValue()
+            else if (expr is ListValue) return@BuiltinProcedureValue expr.value.size.toNodeValue()
+            else if (expr is RangeValue<*>) return@BuiltinProcedureValue expr.size.toNodeValue()
+            throw RuntimeException("$expr has no such method as \"length\"")
         }, null)
         private val Time = BuiltinProcedureValue("time", ListNode(), {
             System.currentTimeMillis().toNodeValue()
@@ -320,6 +333,34 @@ class Constants {
             val user = context.stack["id"]!!.asNumber()!!
             return@BuiltinProcedureValue context.nickname(user).toNodeValue()
         }, null)
+        private val Re = BuiltinProcedureValue("re", ListNode("pattern"), { context ->
+            val pattern = context.stack["pattern"]!!.asString()!!
+            return@BuiltinProcedureValue RegExValue(pattern)
+        }, null)
+        private val Match = BuiltinProcedureValue("match", ListNode("re"), { context ->
+            val str = context.stack["this"]!! as StringValue
+            val re = context.stack["re"]!!.asRegEx()!!
+            return@BuiltinProcedureValue re.match(str)
+        }, null)
+        private val MatchAll = BuiltinProcedureValue("matchAll", ListNode("re"), { context ->
+            val str = context.stack["this"]!! as StringValue
+            val re = context.stack["re"]!!.asRegEx()!!
+            return@BuiltinProcedureValue re.matchAll(str)
+        }, null)
+        private val MatchEntire = BuiltinProcedureValue("matchEntire", ListNode("re"), { context ->
+            val str = context.stack["this"]!! as StringValue
+            val re = context.stack["re"]!!.asRegEx()!!
+            return@BuiltinProcedureValue re.matchEntire(str)
+        }, null)
+        private val Replace = BuiltinProcedureValue("replace", ListNode("re", "replacement"), { context ->
+            val str = context.stack["this"]!! as StringValue
+            val replacement = context.stack["replacement"]!! as StringValue
+            return@BuiltinProcedureValue when (val re = context.stack["re"]!!) {
+                is RegExValue -> re.replace(str, replacement)
+                is StringValue -> str.value.replace(re.value, replacement.value).toNodeValue()
+                else -> throw RuntimeException("$re has no such method as \"replace\"")
+            }
+        }, null)
         val builtinProcedures = mapOf(
             // functions
             "time" to Time,
@@ -338,10 +379,12 @@ class Constants {
             "boolean" to Boolean,
             "bool" to Boolean,
             "getNickname" to GetNickname,
+            "re" to Re,
             // methods
             "split" to Split,
             "join" to Join,
             "find" to Find,
+            "findAll" to FindAll,
             "contains" to Contains,
             "length" to Length,
             "len" to Length,
@@ -356,14 +399,19 @@ class Constants {
             "max" to Max,
             "min" to Min,
             "reversed" to Reversed,
-            "sorted" to Sorted
+            "sorted" to Sorted,
+            "match" to Match,
+            "matchAll" to MatchAll,
+            "matchEntire" to MatchEntire,
+            "replace" to Replace
         )
         val builtinProceduresHelps = mapOf(
             "split" to """
-                |Split a string into a list of substrings. If the argument is omitted, the string is split on whitespace.
+                |Split a string into a list of substrings. If the argument is omitted, the string is split on whitespace. Regular expressions are supported.
                 |Usage: str.split(sep)
                 |Example: "hello world".split() // ["hello", "world"]
                 |Example: "ah_ha_ha".split("_") // ["ah", "ha", "ha"]
+                |Example: "so,,,  so , many  separators".split(re(r"[\s,]*")) // ["so", "so", "many", "separators"]
                 |""".trimMargin(),
             "join" to """
                 |Join a list of strings into a string. If the argument is omitted, the elements are joined with a space.
@@ -372,11 +420,20 @@ class Constants {
                 |Example: ["hello", "world"].join("-") // "hello-world
                 |""".trimMargin(),
             "find" to """
-                |Find the index of an element in a list or the index of a substring in a string. If it is not found, return -1.
+                |Find the index of an element in a list or the index of a substring in a string. If it is not found, return -1. Regular expressions are supported.
                 |Usage: list.find(element)
                 |Example: [1, 2, 3, 4, 5].find(3) // 2
                 |Example: "hello world".find("o w") // 4
                 |Example: [1, 2, 3, 4, 5].find(6) // -1
+                |Example: "Email: pony@qq.com, thank you.".find(re(r"\w+@[\w.]+")) // 7
+                |""".trimMargin(),
+            "findAll" to """
+                |Find all the indices of an element in a list or the indices of a substring in a string.
+                |Usage: list.findAll(element)
+                |Example: [3, 2, 3, 4, 3].findAll(3) // [0, 2, 4]
+                |Example: "wowowow".findAll("ow") // [1, 3, 5]
+                |Example: [1, 2, 3, 4, 5].findAll(6) // []
+                |Example: "2022-01-01, 2022-01-02 and 2022-01-03 are available.".findAll(re(r"\d{4}-\d{2}-\d{2}")) // [0, 12, 27]
                 |""".trimMargin(),
             "contains" to """
                 |Check if an element is in a list or a substring is in a string.
@@ -510,6 +567,26 @@ class Constants {
                 |Get the nickname of a user by QQ ID.
                 |Usage: getNickname(user)
                 |Example: getNickname(10086) // "中国移动"
+                |""".trimMargin(),
+            "match" to """
+                |Search for the first match in a string with a regular expression. Groups are along returned. If there is no match, null is returned.
+                |Usage: str.match(regex)
+                |Example: "hello world".match(re(r"(\w+) (\w+)")) // ["hello world", "hello", "world"]
+                |""".trimMargin(),
+            "matchAll" to """
+                |Search for all matches in a string with a regular expression. Groups are along returned. If there is no match, an empty list is returned.
+                |Usage: str.matchAll(regex)
+                |Example: "hello to this world".matchAll(re(r"(\w+) (\w+)")) // [[hello to, hello, to], [this world, this, world]]
+                |""".trimMargin(),
+            "matchEntire" to """
+                |Test whether a string matches a regular expression.
+                |Usage: str.matchEntire(regex)
+                |Example: "hello world".matchEntire(re(r"(\w+) (\w+)")) // true
+                |""".trimMargin(),
+            "replace" to """
+                |Replace all matches in a string with a regular expression or a regular string.
+                |Usage: str.replace(regex, replacement)
+                |Example: "hello world".replace(re(r"(\w+) (\w+)"), "$2 $1") // "world hello"
                 |""".trimMargin(),
         )
     }

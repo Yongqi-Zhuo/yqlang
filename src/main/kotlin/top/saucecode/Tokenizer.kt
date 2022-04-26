@@ -29,6 +29,37 @@ class Tokenizer(private val input: String) {
                 throw IllegalArgumentException("Unexpected character: $currentChar")
             }
         }
+
+        fun scanString(delimiter: Char = '"', escape: Boolean = true): String {
+            var str = ""
+            var toEscape = false
+            advance()
+            while (index < input.length) {
+                if (escape && toEscape) {
+                    toEscape = false
+                    when (currentChar) {
+                        'n' -> str += '\n'
+                        'r' -> str += '\r'
+                        't' -> str += '\t'
+                        '\\' -> str += '\\'
+                        delimiter -> str += delimiter
+                        else -> str += "\\$currentChar"
+                    }
+                } else if (escape && currentChar == '\\') {
+                    toEscape = true
+                } else if (currentChar == delimiter) {
+                    break
+                } else {
+                    str += currentChar
+                }
+                advance()
+            }
+            advance()
+            return str
+        }
+
+        var rawStringFlag = false
+
         while (index < input.length) {
             when {
                 currentChar == '{' -> pushAndAdvance(Token(TokenType.BRACE_OPEN, "{"))
@@ -74,58 +105,20 @@ class Tokenizer(private val input: String) {
                     }
                 }
                 currentChar == '"' -> {
-                    var str = ""
-                    var escape = false
-                    advance()
-                    while (index < input.length) {
-                        if (escape) {
-                            escape = false
-                            when (currentChar) {
-                                'n' -> str += '\n'
-                                'r' -> str += '\r'
-                                't' -> str += '\t'
-                                '\\' -> str += '\\'
-                                '"' -> str += '"'
-                                else -> str += "\\$currentChar"
-                            }
-                        } else if (currentChar == '\\') {
-                            escape = true
-                        } else if (currentChar == '"') {
-                            break
-                        } else {
-                            str += currentChar
-                        }
-                        advance()
+                    if (rawStringFlag) {
+                        tokens.add(Token(TokenType.STRING, scanString('"', false)))
+                        rawStringFlag = false
+                    } else {
+                        tokens.add(Token(TokenType.STRING, scanString('"', true)))
                     }
-                    tokens.add(Token(TokenType.STRING, str))
-                    advance()
                 }
                 currentChar == '\'' -> {
-                    var str = ""
-                    var escape = false
-                    advance()
-                    while (index < input.length) {
-                        if (escape) {
-                            escape = false
-                            when (currentChar) {
-                                'n' -> str += '\n'
-                                'r' -> str += '\r'
-                                't' -> str += '\t'
-                                '\\' -> str += '\\'
-                                '\'' -> str += '\''
-                                else -> str += "\\$currentChar"
-                            }
-                        } else if (currentChar == '\\') {
-                            escape = true
-                        } else if (currentChar == '\'') {
-                            break
-                        } else {
-                            str += currentChar
-                        }
-                        advance()
+                    if (rawStringFlag) {
+                        tokens.add(Token(TokenType.STRING, scanString('\'', false)))
+                        rawStringFlag = false
+                    } else {
+                        tokens.add(Token(TokenType.STRING, scanString('\'', true)))
                     }
-                    tokens.add(Token(TokenType.STRING, str))
-                    advance()
                 }
                 currentChar.isDigit() -> {
                     val start = index
@@ -135,7 +128,12 @@ class Tokenizer(private val input: String) {
                     val value = input.substring(start, index)
                     tokens.add(Token(TokenType.NUMBER, value))
                 }
-                currentChar.isLetter() || currentChar == '_' || currentChar == '$' -> {
+                currentChar.isLetterOrDigit() || currentChar == '_' || currentChar == '$' -> {
+                    if (currentChar == 'r' && index < input.length - 1 && (input[index + 1] in listOf('"', '\''))) {
+                        rawStringFlag = true
+                        advance()
+                        continue
+                    }
                     val start = index
                     do {
                         advance()

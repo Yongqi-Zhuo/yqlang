@@ -11,6 +11,7 @@ sealed class NodeValue : Comparable<NodeValue> {
     fun asList() = (this as? ListValue)?.value
     fun asObject() = this as? ObjectValue
     fun asProcedure() = (this as? ProcedureValue)
+    fun asRegEx() = (this as? RegExValue)
     fun toNode() = ValueNode(this)
     operator fun plus(that: NodeValue): NodeValue {
         return when (this) {
