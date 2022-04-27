@@ -333,9 +333,10 @@ class Constants {
             val user = context.stack["id"]!!.asNumber()!!
             return@BuiltinProcedureValue context.nickname(user).toNodeValue()
         }, null)
-        private val Re = BuiltinProcedureValue("re", ListNode("pattern"), { context ->
+        private val Re = BuiltinProcedureValue("re", ListNode("pattern", "flags"), { context ->
             val pattern = context.stack["pattern"]!!.asString()!!
-            return@BuiltinProcedureValue RegExValue(pattern)
+            val flags = context.stack["flags"]?.asString() ?: ""
+            return@BuiltinProcedureValue RegExValue(pattern, flags)
         }, null)
         private val Match = BuiltinProcedureValue("match", ListNode("re"), { context ->
             val str = context.stack["this"]!! as StringValue
@@ -568,10 +569,19 @@ class Constants {
                 |Usage: getNickname(user)
                 |Example: getNickname(10086) // "中国移动"
                 |""".trimMargin(),
+            "re" to """
+                |Create a regular expression. Available flags are: "g" for global, "i" for ignore case, "m" for multi-line, "s" for dot matches all.
+                |Usage: re(pattern)
+                |Usage: re(pattern, flags)
+                |Example: re("[a-z]") // /[a-z]/
+                |Example: re("[a-z]", "gi") // /[a-z]/i
+                |""".trimMargin(),
             "match" to """
                 |Search for the first match in a string with a regular expression. Groups are along returned. If there is no match, null is returned.
+                |Note that if the "g" flag is set, groups will not be returned.
                 |Usage: str.match(regex)
                 |Example: "hello world".match(re(r"(\w+) (\w+)")) // ["hello world", "hello", "world"]
+                |Example: "Good morning, madam!".match(re(r"[a-z]+", "ig")) // ["Good", "morning", "madam"]
                 |""".trimMargin(),
             "matchAll" to """
                 |Search for all matches in a string with a regular expression. Groups are along returned. If there is no match, an empty list is returned.

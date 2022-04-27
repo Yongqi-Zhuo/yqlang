@@ -10,16 +10,39 @@ import kotlinx.serialization.encoding.decodeStructure
 import kotlinx.serialization.encoding.encodeStructure
 
 @Serializable(with = RegExValue.Serializer::class)
-data class RegExValue(private val pattern: String) : NodeValue() {
+class RegExValue(private val pattern: String, private val rawFlags: String) : NodeValue() {
+    enum class Flag(val value: RegexOption?) {
+        GLOBAL(null),
+        IGNORE_CASE(RegexOption.IGNORE_CASE),
+        MULTILINE(RegexOption.MULTILINE),
+        DOT_MATCHES_ALL(RegexOption.DOT_MATCHES_ALL);
+        companion object {
+            fun fromChar(c: Char): Flag? {
+                return when (c) {
+                    'g' -> GLOBAL
+                    'i' -> IGNORE_CASE
+                    'm' -> MULTILINE
+                    's' -> DOT_MATCHES_ALL
+                    else -> null
+                }
+            }
+        }
+    }
     override fun toBoolean(): Boolean = pattern.isNotEmpty()
     private val regex: Regex
+    private val flags: Set<Flag> = rawFlags.mapNotNull { Flag.fromChar(it) }.toSet()
     init {
-        regex = Regex(pattern)
+        regex = Regex(pattern, flags.mapNotNull { it.value }.toSet())
     }
 
     fun match(input: StringValue): NodeValue {
-        val matches = regex.find(input.value) ?: return NullValue
-        return matches.groupValues.map { it.toNodeValue() }.toNodeValue()
+        if (Flag.GLOBAL !in flags) {
+            val matches = regex.find(input.value) ?: return NullValue
+            return matches.groupValues.map { it.toNodeValue() }.toNodeValue()
+        } else {
+            val matches = regex.findAll(input.value)
+            return matches.toList().map { it.value.toNodeValue() }.toNodeValue()
+        }
     }
 
     fun matchAll(input: StringValue): NodeValue {
@@ -57,14 +80,16 @@ data class RegExValue(private val pattern: String) : NodeValue() {
     class Serializer : KSerializer<RegExValue> {
         override val descriptor = buildClassSerialDescriptor("top.saucecode.NodeValue.RegExValue") {
             element<String>("pattern")
+            element<String>("rawFlags")
         }
         override fun deserialize(decoder: Decoder): RegExValue = decoder.decodeStructure(descriptor) {
-            RegExValue(decodeStringElement(descriptor, 0))
+            RegExValue(decodeStringElement(descriptor, 0), decodeStringElement(descriptor, 1))
         }
         override fun serialize(encoder: Encoder, value: RegExValue) = encoder.encodeStructure(descriptor) {
             encodeStringElement(descriptor, 0, value.pattern)
+            encodeStringElement(descriptor, 1, value.rawFlags)
         }
     }
 
-    override fun toString(): String = "regex($pattern)"
+    override fun toString(): String = "/$pattern/$rawFlags)"
 }
