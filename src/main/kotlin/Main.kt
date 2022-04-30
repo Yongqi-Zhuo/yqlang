@@ -1,4 +1,5 @@
 import top.saucecode.*
+import top.saucecode.NodeValue.StringValue
 
 fun main() {
 //    val inputs = mutableListOf<String>()
@@ -22,12 +23,13 @@ fun main() {
 //    val interpreter = Interpreter(input, false)
 //    val st = SymbolTable.createRoot(mapOf("text" to StringValue("this is a brand-new world the world of parsing")))
 //    st.remove("unknown")
-//    val context = ConsoleContext(st, interpreter.declarations)
+//    val context = ConsoleContext(st)
 //    interpreter.run(context)
 
     val repl = REPL()
     repl.run()
     println(repl.rootScope.serialize())
+
 //    while(true) {
 //        val line = readLine() ?: break
 //        println(Scope.deserialize(line))

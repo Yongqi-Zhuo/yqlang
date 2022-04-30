@@ -2,7 +2,6 @@ package top.saucecode
 
 import top.saucecode.Node.*
 import top.saucecode.NodeValue.NodeProcedureValue
-import top.saucecode.NodeValue.ProcedureValue
 import top.saucecode.NodeValue.toNodeValue
 
 class UnexpectedTokenException(val token: Token, private val expected: TokenType? = null) : Exception() {
@@ -50,6 +49,13 @@ class Parser(private val tokens: List<Token>) {
         while (peek().type != TokenType.EOF && peek().type != TokenType.BRACE_CLOSE) {
             stmts.add(parseStmt())
         }
+        stmts.sortWith { a, b ->
+            when {
+                a is StmtDeclNode && b !is StmtDeclNode -> -1
+                a !is StmtDeclNode && b is StmtDeclNode -> 1
+                else -> 0
+            }
+        }
         return StmtListNode(stmts, newScope)
     }
 
@@ -83,8 +89,7 @@ class Parser(private val tokens: List<Token>) {
                 consume(TokenType.PAREN_CLOSE)
                 consumeLineBreak()
                 val body = parseStmt()
-                declarations[func.name] = NodeProcedureValue(StmtFuncNode(body), params, null)
-                func
+                StmtDeclNode(func.name, body, params)
             }
             TokenType.RETURN -> {
                 consume(TokenType.RETURN)
@@ -101,12 +106,12 @@ class Parser(private val tokens: List<Token>) {
             TokenType.CONTINUE -> {
                 consume(TokenType.CONTINUE)
                 consumeLineBreak()
-                StmtContinueNode()
+                StmtContinueNode
             }
             TokenType.BREAK -> {
                 consume(TokenType.BREAK)
                 consumeLineBreak()
-                StmtBreakNode()
+                StmtBreakNode
             }
             TokenType.FOR -> {
                 consume(TokenType.FOR)
@@ -258,7 +263,7 @@ class Parser(private val tokens: List<Token>) {
                 consumeLineBreak()
                 val body = parseStmt()
                 // have to make sure caller is assigned to self
-                NodeProcedureValue(StmtFuncNode(body), params, null).toNode()
+                NodeProcedureValue(body, params, null).toNode()
             }
             TokenType.BRACE_OPEN -> {
                 consume(TokenType.BRACE_OPEN)
@@ -379,9 +384,7 @@ class Parser(private val tokens: List<Token>) {
         return term
     }
 
-    private var declarations: MutableMap<String, ProcedureValue> = mutableMapOf()
-    fun parse(): Pair<Node, MutableMap<String, ProcedureValue>> {
-        declarations = mutableMapOf()
-        return Pair(parseStmtList(false), declarations)
+    fun parse(): Node {
+        return parseStmtList(false)
     }
 }

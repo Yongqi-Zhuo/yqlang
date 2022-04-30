@@ -6,7 +6,6 @@ import kotlinx.serialization.serializer
 import top.saucecode.Node.ListNode
 import top.saucecode.NodeValue.ListValue
 import top.saucecode.NodeValue.NodeValue
-import top.saucecode.NodeValue.ProcedureValue
 import top.saucecode.NodeValue.toNodeValue
 
 class Scope(val symbols: MutableMap<String, NodeValue>, val args: ListValue = ListValue(mutableListOf())) {
@@ -68,7 +67,7 @@ class RecursionTooDeepException(private val depth: Int) : Exception() {
     override val message: String = toString()
 }
 
-class Stack(rootScope: Scope, private val declarations: MutableMap<String, ProcedureValue>) {
+class Stack(rootScope: Scope) {
     private val scopes: MutableList<Scope>
 
     private var depth = 0
@@ -112,11 +111,7 @@ class Stack(rootScope: Scope, private val declarations: MutableMap<String, Proce
                 return value
             }
         }
-        return declarations[name] ?: Constants.builtinSymbols[name] ?: Constants.builtinProcedures[name]
-    }
-
-    fun getProcedure(name: String): ProcedureValue? {
-        return declarations[name] ?: Constants.builtinProcedures[name]
+        return Constants.builtinSymbols[name] ?: Constants.builtinProcedures[name]
     }
 
     private var local: Boolean = false
@@ -136,5 +131,11 @@ class Stack(rootScope: Scope, private val declarations: MutableMap<String, Proce
             }
             scopes.last()[name] = value
         }
+    }
+
+    fun declare(name: String, value: NodeValue) {
+        local = true
+        this[name] = value
+        local = false
     }
 }

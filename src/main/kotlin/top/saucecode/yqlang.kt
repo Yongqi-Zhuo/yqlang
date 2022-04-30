@@ -1,17 +1,14 @@
 package top.saucecode
 
 import top.saucecode.Node.Node
-import top.saucecode.NodeValue.ProcedureValue
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 
-abstract class ExecutionContext(
-    rootScope: Scope, declarations: MutableMap<String, ProcedureValue>, val firstRun: Boolean
-) {
+abstract class ExecutionContext(rootScope: Scope, val firstRun: Boolean) {
     val stack: Stack
 
     init {
-        stack = Stack(rootScope, declarations)
+        stack = Stack(rootScope)
     }
 
     abstract fun say(text: String)
@@ -19,8 +16,7 @@ abstract class ExecutionContext(
     abstract fun nickname(id: Long): String
 }
 
-class ConsoleContext(rootScope: Scope? = null, declarations: MutableMap<String, ProcedureValue>) :
-    ExecutionContext(rootScope ?: Scope.createRoot(), declarations, true) {
+class ConsoleContext(rootScope: Scope? = null) : ExecutionContext(rootScope ?: Scope.createRoot(), true) {
     override fun say(text: String) {
         println(text)
     }
@@ -34,9 +30,7 @@ class ConsoleContext(rootScope: Scope? = null, declarations: MutableMap<String, 
     }
 }
 
-open class ControlledContext(
-    rootScope: Scope, declarations: MutableMap<String, ProcedureValue>, firstRun: Boolean
-) : ExecutionContext(rootScope, declarations, firstRun) {
+open class ControlledContext(rootScope: Scope, firstRun: Boolean) : ExecutionContext(rootScope, firstRun) {
     private val record = mutableListOf<String>()
     override fun say(text: String) {
         record.add(text)
@@ -59,14 +53,12 @@ open class ControlledContext(
 
 class Interpreter(source: String, private val restricted: Boolean) {
     private val ast: Node
-    val declarations: MutableMap<String, ProcedureValue>
 
     init {
         val tokens = Tokenizer(source).scan()
         val parser = Parser(tokens)
         val res = parser.parse()
-        ast = res.first
-        declarations = res.second
+        ast = res
     }
 
     fun run(context: ExecutionContext) {
@@ -83,7 +75,6 @@ class Interpreter(source: String, private val restricted: Boolean) {
 
 class REPL {
     val rootScope = Scope.createRoot()
-    private val declarations = mutableMapOf<String, ProcedureValue>()
 
     fun run() {
         val inputs = mutableListOf<String>()
@@ -110,10 +101,9 @@ class REPL {
                 continue
             }
             inputs.clear()
-            declarations.putAll(ast.second)
-            val context = ControlledContext(rootScope, declarations, true)
+            val context = ControlledContext(rootScope, true)
             try {
-                val res = ast.first.exec(context)
+                val res = ast.exec(context)
                 val output = context.dumpOutput()
                 if (output.isNotEmpty()) {
                     println(output)

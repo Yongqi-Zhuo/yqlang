@@ -12,11 +12,12 @@ import top.saucecode.Constants
 import top.saucecode.ExecutionContext
 import top.saucecode.Node.ListNode
 import top.saucecode.Node.Node
+import top.saucecode.Node.ReturnException
 
 @Serializable
 sealed class ProcedureValue(protected val params: ListNode, protected var self: NodeValue?) : NodeValue() {
     override fun toBoolean(): Boolean = true
-    abstract fun execute(context: ExecutionContext): NodeValue
+    abstract fun execute(context: ExecutionContext): NodeValue // Must nameArgs and catch ReturnException
     fun call(context: ExecutionContext, args: ListValue): NodeValue {
         val res: NodeValue
         try {
@@ -46,7 +47,11 @@ class BuiltinProcedureValue(
     override fun toString(): String = "builtin($name)"
     override fun execute(context: ExecutionContext): NodeValue {
         context.stack.nameArgs(context, params, self)
-        return func(context)
+        return try {
+            func(context)
+        } catch (e: ReturnException) {
+            e.value
+        }
     }
 
     override fun copy(): ProcedureValue {
@@ -75,7 +80,11 @@ class NodeProcedureValue(private val func: Node, params: ListNode, self: NodeVal
     override fun toString() = "procedure($func)"
     override fun execute(context: ExecutionContext): NodeValue {
         context.stack.nameArgs(context, params, self)
-        return func.exec(context)
+        return try {
+            func.exec(context)
+        } catch (e: ReturnException) {
+            e.value
+        }
     }
 
     override fun copy(): ProcedureValue {

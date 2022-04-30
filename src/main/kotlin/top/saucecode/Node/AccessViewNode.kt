@@ -54,7 +54,7 @@ class MethodCallAccessView(private val funcName: String, parent: AccessView, con
     AccessView(parent, context) {
     override var value: NodeValue
         get() {
-            val func = context.stack.getProcedure(funcName)!!.copy()
+            val func = (context.stack[funcName]!! as ProcedureValue).copy()
             return func.bind(parent!!.value)
         }
         set(newValue) {

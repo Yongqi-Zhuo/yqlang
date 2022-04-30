@@ -2,6 +2,7 @@ package top.saucecode.Node
 
 import kotlinx.serialization.Serializable
 import top.saucecode.ExecutionContext
+import top.saucecode.NodeValue.NodeProcedureValue
 import top.saucecode.NodeValue.NodeValue
 import top.saucecode.NodeValue.NullValue
 import top.saucecode.Token
@@ -32,7 +33,7 @@ class StmtActionNode(private val action: String, private val expr: Node) : Node(
             "nudge" -> {
                 context.nudge(value.asNumber()!!)
             }
-            else -> throw IllegalArgumentException("Unknown action ${action}")
+            else -> throw IllegalArgumentException("Unknown action $action")
         }
         return NullValue
     }
@@ -74,24 +75,20 @@ class StmtInitNode(private val stmt: Node) : Node() {
     }
 }
 
-class ReturnException(val value: NodeValue) : Exception()
-
 @Serializable
-class StmtFuncNode(private val content: Node) : Node() {
+class StmtDeclNode(private val name: String, private val body: Node, private val params: ListNode) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
-        val res: NodeValue?
-        try {
-            res = content.exec(context)
-        } catch (e: ReturnException) {
-            return e.value
-        }
-        return res
+        val procedure = NodeProcedureValue(body, params, null)
+        context.stack.declare(name, procedure)
+        return procedure
     }
 
     override fun toString(): String {
-        return "func($content)"
+        return "decl($name, $body, $params)"
     }
 }
+
+class ReturnException(val value: NodeValue) : Exception()
 
 @Serializable
 class StmtReturnNode(private val expr: Node) : Node() {
@@ -127,7 +124,7 @@ class StmtWhileNode(private val condition: Node, private val body: Node) : Node(
 class ContinueException : Exception()
 
 @Serializable
-class StmtContinueNode : Node() {
+object StmtContinueNode : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
         throw ContinueException()
     }
@@ -140,7 +137,7 @@ class StmtContinueNode : Node() {
 class BreakException : Exception()
 
 @Serializable
-class StmtBreakNode : Node() {
+object StmtBreakNode : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
         throw BreakException()
     }
