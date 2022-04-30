@@ -362,6 +362,11 @@ class Constants {
                 else -> throw RuntimeException("$re has no such method as \"replace\"")
             }
         }, null)
+        private val Sleep = BuiltinProcedureValue("sleep", ListNode("ms"), { context ->
+            val ms = context.stack["ms"]!!.asNumber()!!
+            context.sleep(ms)
+            return@BuiltinProcedureValue NullValue
+        }, null)
         val builtinProcedures = mapOf(
             // functions
             "time" to Time,
@@ -381,6 +386,7 @@ class Constants {
             "bool" to Boolean,
             "getNickname" to GetNickname,
             "re" to Re,
+            "sleep" to Sleep,
             // methods
             "split" to Split,
             "join" to Join,
@@ -404,7 +410,7 @@ class Constants {
             "match" to Match,
             "matchAll" to MatchAll,
             "matchEntire" to MatchEntire,
-            "replace" to Replace
+            "replace" to Replace,
         )
         val builtinProceduresHelps = mapOf(
             "split" to """
@@ -597,6 +603,11 @@ class Constants {
                 |Replace all matches in a string with a regular expression or a regular string.
                 |Usage: str.replace(regex, replacement)
                 |Example: "hello world".replace(re(r"(\w+) (\w+)"), "$2 $1") // "world hello"
+                |""".trimMargin(),
+            "sleep" to """
+                |Sleep for a given time.
+                |Usage: sleep(milliseconds)
+                |Example: sleep(1000) // Sleep for 1 second
                 |""".trimMargin(),
         )
     }

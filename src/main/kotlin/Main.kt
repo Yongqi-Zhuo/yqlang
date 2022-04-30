@@ -1,14 +1,15 @@
+import kotlinx.coroutines.runBlocking
 import top.saucecode.*
 import top.saucecode.NodeValue.StringValue
 
 fun main() {
-//    val inputs = mutableListOf<String>()
-//    while (true) {
-////        print("> ")
-//        val line = readLine() ?: break
-//        inputs.add(line)
-//    }
-//    val input = inputs.joinToString("\n")
+    val inputs = mutableListOf<String>()
+    while (true) {
+//        print("> ")
+        val line = readLine() ?: break
+        inputs.add(line)
+    }
+    val input = inputs.joinToString("\n")
 
 //    println(input)
 //    println("\nTokenizing...")
@@ -20,15 +21,22 @@ fun main() {
 //    println("\nExecuting...")
 //    ast.exec(context)
 
-//    val interpreter = Interpreter(input, false)
-//    val st = SymbolTable.createRoot(mapOf("text" to StringValue("this is a brand-new world the world of parsing")))
-//    st.remove("unknown")
-//    val context = ConsoleContext(st)
-//    interpreter.run(context)
+    val interpreter = RestrictedInterpreter(input)
+    val st = SymbolTable.createRoot(mapOf("text" to StringValue("this is a brand-new world the world of parsing")))
+    st.remove("unknown")
+    val context = ControlledContext(st, true)
+    runBlocking {
+        interpreter.run(context, reduced = true).collect { reducedOutput ->
+            val reduced = reducedOutput as Output.Reduced
+            if (reduced.text != null) {
+                println(reduced.text)
+            }
+        }
+    }
 
-    val repl = REPL()
-    repl.run()
-    println(repl.rootScope.serialize())
+//    val repl = REPL()
+//    repl.run()
+//    println(repl.rootScope.serialize())
 
 //    while(true) {
 //        val line = readLine() ?: break
