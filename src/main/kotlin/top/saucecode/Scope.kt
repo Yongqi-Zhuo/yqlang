@@ -8,7 +8,7 @@ import top.saucecode.NodeValue.ListValue
 import top.saucecode.NodeValue.NodeValue
 import top.saucecode.NodeValue.toNodeValue
 
-class Scope(val symbols: MutableMap<String, NodeValue>, val args: ListValue = ListValue(mutableListOf())) {
+class Scope(private val symbols: MutableMap<String, NodeValue>, val args: ListValue = ListValue(mutableListOf())) {
     operator fun get(name: String): NodeValue? {
         return symbols[name]
     }
@@ -17,12 +17,12 @@ class Scope(val symbols: MutableMap<String, NodeValue>, val args: ListValue = Li
         symbols[name] = value
     }
 
-    fun remove(name: String) {
-        symbols.remove(name)
-    }
-
     override fun toString(): String {
         return "Scope(symbols=$symbols, args=$args)"
+    }
+
+    fun displaySymbols(): String {
+        return symbols.toString()
     }
 
     companion object {
@@ -67,7 +67,7 @@ class RecursionTooDeepException(private val depth: Int) : Exception() {
     override val message: String = toString()
 }
 
-class Stack(rootScope: Scope) {
+class Stack(rootScope: Scope, private val events: Map<String, NodeValue>) {
     private val scopes: MutableList<Scope>
 
     private var depth = 0
@@ -76,7 +76,6 @@ class Stack(rootScope: Scope) {
         scopes = mutableListOf(rootScope)
     }
 
-    // The first argument must be the value of "this"
     fun push(args: ListValue = emptyList<NodeValue>().toNodeValue()) {
         scopes.add(Scope(mutableMapOf(), args))
         depth++
@@ -93,18 +92,29 @@ class Stack(rootScope: Scope) {
     private val args: ListValue
         get() = scopes.last().args
 
-    fun nameArgs(context: ExecutionContext, params: ListNode, self: NodeValue?) {
-        local = true
-        params.assign(context, args)
-        this["\$"] = args
-        args.forEachIndexed { index, nodeValue -> this["\$$index"] = nodeValue }
-        if (self != null) {
-            this["this"] = self
+    private var local: Boolean = false
+    private fun withLocal(block: () -> Unit) {
+        try {
+            local = true
+            block()
+        } finally {
+            local = false
         }
-        local = false
+    }
+
+    fun nameArgs(context: ExecutionContext, params: ListNode, self: NodeValue?) {
+        withLocal {
+            params.assign(context, args)
+            this["\$"] = args
+            args.forEachIndexed { index, nodeValue -> this["\$$index"] = nodeValue }
+            if (self != null) {
+                this["this"] = self
+            }
+        }
     }
 
     operator fun get(name: String): NodeValue? {
+        events[name]?.let { return it }
         for (scope in scopes.reversed()) {
             val value = scope[name]
             if (value != null) {
@@ -114,7 +124,6 @@ class Stack(rootScope: Scope) {
         return Constants.builtinSymbols[name] ?: Constants.builtinProcedures[name]
     }
 
-    private var local: Boolean = false
     operator fun set(name: String, value: NodeValue) {
         if (local) {
             scopes.last()[name] = value
@@ -134,8 +143,8 @@ class Stack(rootScope: Scope) {
     }
 
     fun declare(name: String, value: NodeValue) {
-        local = true
-        this[name] = value
-        local = false
+        withLocal {
+            this[name] = value
+        }
     }
 }

@@ -153,10 +153,12 @@ class Constants {
         }, null)
         private val Length = BuiltinProcedureValue("length", ListNode(), { context ->
             val expr = context.stack["this"]!!
-            if (expr is StringValue) return@BuiltinProcedureValue expr.value.length.toNodeValue()
-            else if (expr is ListValue) return@BuiltinProcedureValue expr.value.size.toNodeValue()
-            else if (expr is RangeValue<*>) return@BuiltinProcedureValue expr.size.toNodeValue()
-            throw RuntimeException("$expr has no such method as \"length\"")
+            return@BuiltinProcedureValue when (expr) {
+                is StringValue -> expr.value.length.toNodeValue()
+                is ListValue -> expr.value.size.toNodeValue()
+                is RangeValue<*> -> expr.size.toNodeValue()
+                else -> throw RuntimeException("$expr has no such method as \"length\"")
+            }
         }, null)
         private val Time = BuiltinProcedureValue("time", ListNode(), {
             System.currentTimeMillis().toNodeValue()

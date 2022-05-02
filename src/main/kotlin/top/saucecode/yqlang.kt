@@ -4,24 +4,24 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import top.saucecode.Node.Node
+import top.saucecode.NodeValue.NodeValue
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 
-abstract class ExecutionContext(rootScope: Scope, val firstRun: Boolean) {
+abstract class ExecutionContext(rootScope: Scope, val firstRun: Boolean, events: Map<String, NodeValue>) {
     val stack: Stack
-    private var _sleepTime: Long = 0
-    val sleepTime: Long
-        get() = _sleepTime
+    var sleepTime: Long = 0
+        private set
 
     init {
-        stack = Stack(rootScope)
+        stack = Stack(rootScope,  events)
     }
 
     abstract fun say(text: String)
     abstract fun nudge(target: Long)
     abstract fun nickname(id: Long): String
     fun sleep(time: Long) {
-        _sleepTime += time
+        sleepTime += time
         try {
             TimeUnit.MILLISECONDS.sleep(time)
         } catch (e: InterruptedException) {
@@ -30,7 +30,7 @@ abstract class ExecutionContext(rootScope: Scope, val firstRun: Boolean) {
     }
 }
 
-class ConsoleContext(rootScope: Scope? = null) : ExecutionContext(rootScope ?: Scope.createRoot(), true) {
+class ConsoleContext(rootScope: Scope? = null, events: Map<String, NodeValue>) : ExecutionContext(rootScope ?: Scope.createRoot(), true, events) {
     override fun say(text: String) {
         println(text)
     }
@@ -72,7 +72,7 @@ sealed class Output {
     }
 }
 
-open class ControlledContext(rootScope: Scope, firstRun: Boolean) : ExecutionContext(rootScope, firstRun) {
+open class ControlledContext(rootScope: Scope, firstRun: Boolean, events: Map<String, NodeValue>) : ExecutionContext(rootScope, firstRun, events) {
     private val record = mutableListOf<Output>()
     override fun say(text: String) {
         synchronized(record) {
@@ -176,7 +176,7 @@ class REPL {
                 continue
             }
             inputs.clear()
-            val context = ControlledContext(rootScope, true)
+            val context = ControlledContext(rootScope, true, mapOf())
             try {
                 val res = ast.exec(context)
                 val output = context.dumpOutput()
