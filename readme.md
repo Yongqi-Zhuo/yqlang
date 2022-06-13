@@ -19,6 +19,10 @@
 
     例子：`nudge 10086`
 
+  - `picsave <expr>`，其中`<expr>`是图片的名称，可以通过`images`事件变量获得，作用是将图片保存到本地。
+
+  - `picsend <expr>`，作用是发送图片。
+
 * 赋值（`assign`）语句：对变量赋值的语句，格式是`<id> <assign> <expr>`。包括
   - `<id> = <expr>`，
   - `<id> += <expr>`，
@@ -160,7 +164,7 @@ obj["attr"]
   }
   ```
 
-- 时钟。为了实现定时功能，yqbot内置每一分钟触发一次的计时器，所有程序都会运行一次。如果程序被时钟触发，那么当前Unix时间戳（以毫秒为单位）就会保存在`clock`变量中。
+- 时钟。为了实现定时功能，`yqbot`内置每一分钟触发一次的计时器，所有程序都会运行一次。如果程序被时钟触发，那么当前Unix时间戳（以毫秒为单位）就会保存在`clock`变量中。
 
   例子：
   ```
@@ -180,6 +184,29 @@ obj["attr"]
     if sender in loved say "嗯！" else say "当然不啦"
   }
   ```
+  
+- 图片。收到的图片会存储在`images`变量中，它是一个`List`。比如，收到的第一张图片的信息就会存储在`images[0]`中。
+
+  例子：
+  ```
+  init arigatou = images[0]
+  init picsave arigatou
+  if text && text == "bot快说谢谢" picsend arigatou
+  #
+  [图片]
+  ```
+  这段代码的意思是，在最开始存储一张图片，之后每次检测到关键词就发送这张图片。图片必须要随代码一起发送给`yqbot`。之所以要加入一个`#`，是因为如果不加的话，图片（`[图片]`）会被当成代码。`yqlang`会自动跳过`#`以后的所有文本。
+
+  例子：
+  ```
+  init pics = []
+  if images {
+    pics += images
+    for image in images picsave image
+  }
+  if text && text == "随机来张图片" if pics picsend pics.random()
+  ```
+  这段代码表示存储所有接收到的图片，并且每次检测到关键词时都发送一张随机的图片。
 
 ## 高级语法
 
@@ -216,4 +243,18 @@ obj["attr"]
 [a[1][1:3], b[1:2][0][1:4]] = [[5, 6], "www"]
 say a // [1, [2, 5, 6]]
 say b // ["ahaha", "wwwww"]
+```
+
+## 许可证
+
+`yqlang`以`MIT License`发布。
+
+```text
+Copyright 2022, Yongqi Zhuo.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```

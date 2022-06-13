@@ -19,6 +19,8 @@ abstract class ExecutionContext(rootScope: Scope, val firstRun: Boolean, events:
 
     abstract fun say(text: String)
     abstract fun nudge(target: Long)
+    abstract fun picSave(picId: String)
+    abstract fun picSend(picId: String)
     abstract fun nickname(id: Long): String
     fun sleep(time: Long) {
         sleepTime += time
@@ -39,6 +41,14 @@ class ConsoleContext(rootScope: Scope? = null, events: Map<String, NodeValue>) :
         println("Nudge $target")
     }
 
+    override fun picSave(picId: String) {
+        println("Save $picId")
+    }
+
+    override fun picSend(picId: String) {
+        println("Picture $picId")
+    }
+
     override fun nickname(id: Long): String {
         return "$id"
     }
@@ -51,25 +61,37 @@ sealed class Output {
         }
     }
 
+    data class PicSave(val picId: String) : Output() {
+        override fun toString(): String {
+            return "Save $picId"
+        }
+    }
+
+    data class PicSend(val picId: String) : Output() {
+        override fun toString(): String {
+            return "Picture $picId"
+        }
+    }
+
     data class Nudge(val target: Long) : Output() {
         override fun toString(): String {
             return "Nudge $target"
         }
     }
 
-    data class Reduced(val text: String?, val nudge: Long?) : Output() {
-        override fun toString(): String {
-            return "Reduced $text $nudge"
-        }
-    }
-
-    companion object {
-        fun reduce(list: List<Output>): Reduced {
-            val text = list.filterIsInstance<Text>().ifEmpty { null }?.joinToString("\n") { it.text }
-            val nudge = list.filterIsInstance<Nudge>().lastOrNull()?.target
-            return Reduced(text, nudge)
-        }
-    }
+//    data class Reduced(val text: String?, val nudge: Long?) : Output() {
+//        override fun toString(): String {
+//            return "Reduced $text $nudge"
+//        }
+//    }
+//
+//    companion object {
+//        fun reduce(list: List<Output>): Reduced {
+//            val text = list.filterIsInstance<Text>().ifEmpty { null }?.joinToString("\n") { it.text }
+//            val nudge = list.filterIsInstance<Nudge>().lastOrNull()?.target
+//            return Reduced(text, nudge)
+//        }
+//    }
 }
 
 open class ControlledContext(rootScope: Scope, firstRun: Boolean, events: Map<String, NodeValue>) : ExecutionContext(rootScope, firstRun, events) {
@@ -83,6 +105,18 @@ open class ControlledContext(rootScope: Scope, firstRun: Boolean, events: Map<St
     override fun nudge(target: Long) {
         synchronized(record) {
             record.add(Output.Nudge(target))
+        }
+    }
+
+    override fun picSave(picId: String) {
+        synchronized(record) {
+            record.add(Output.PicSave(picId))
+        }
+    }
+
+    override fun picSend(picId: String) {
+        synchronized(record) {
+            record.add(Output.PicSend(picId))
         }
     }
 
@@ -127,11 +161,10 @@ class RestrictedInterpreter(source: String) {
 
     suspend fun run(
         context: ControlledContext,
-        reduced: Boolean = true,
         quantum: Long = 100,
         allowance: Long = 800,
         totalAllowance: Long = 60 * 60 * 1000
-    ): Flow<Output> = flow {
+    ): Flow<List<Output>> = flow {
         var uptime: Long = 0
         val task = CompletableFuture.runAsync {
             ast.exec(context)
@@ -139,7 +172,7 @@ class RestrictedInterpreter(source: String) {
         do {
             delay(quantum)
             uptime += quantum
-            if (reduced) emit(Output.reduce(context.dumpOutput())) else context.dumpOutput().forEach { emit(it) }
+            emit(context.dumpOutput())
         } while (uptime < allowance + context.sleepTime && uptime < totalAllowance && !task.isDone)
         if (!task.isDone) {
             task.cancel(true)
@@ -181,7 +214,7 @@ class REPL {
                 val res = ast.exec(context)
                 val output = context.dumpOutput()
                 if (output.isNotEmpty()) {
-                    println(output)
+                    output.forEach { println(it) }
                 } else {
                     println(res)
                 }

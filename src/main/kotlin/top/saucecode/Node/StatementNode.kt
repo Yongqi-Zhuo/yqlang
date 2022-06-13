@@ -33,6 +33,12 @@ class StmtActionNode(private val action: String, private val expr: Node) : Node(
             "nudge" -> {
                 context.nudge(value.asNumber()!!)
             }
+            "picsave" -> {
+                context.picSave(value.asString()!!)
+            }
+            "picsend" -> {
+                context.picSend(value.asString()!!)
+            }
             else -> throw IllegalArgumentException("Unknown action $action")
         }
         return NullValue

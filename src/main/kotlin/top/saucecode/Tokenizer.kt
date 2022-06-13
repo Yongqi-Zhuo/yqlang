@@ -151,10 +151,13 @@ class Tokenizer(private val input: String) {
                         "init" -> tokens.add(Token(TokenType.INIT, "init"))
                         "say" -> tokens.add(Token(TokenType.ACTION, "say"))
                         "nudge" -> tokens.add(Token(TokenType.ACTION, "nudge"))
+                        "picsave" -> tokens.add(Token(TokenType.ACTION, "picsave"))
+                        "picsend" -> tokens.add(Token(TokenType.ACTION, "picsend"))
                         // "text" -> tokens.add(Token(TokenType.IDENTIFIER, "text")) // events are special identifiers
                         else -> tokens.add(Token(TokenType.IDENTIFIER, value))
                     }
                 }
+                currentChar == '#' -> break
                 else -> {
                     advance()
                 }
