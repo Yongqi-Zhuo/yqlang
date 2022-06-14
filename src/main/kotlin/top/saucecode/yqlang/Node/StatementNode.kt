@@ -1,11 +1,11 @@
-package top.saucecode.Node
+package top.saucecode.yqlang.Node
 
 import kotlinx.serialization.Serializable
-import top.saucecode.ExecutionContext
-import top.saucecode.NodeValue.NodeProcedureValue
-import top.saucecode.NodeValue.NodeValue
-import top.saucecode.NodeValue.NullValue
-import top.saucecode.Token
+import top.saucecode.yqlang.ExecutionContext
+import top.saucecode.yqlang.NodeValue.NodeProcedureValue
+import top.saucecode.yqlang.NodeValue.NodeValue
+import top.saucecode.yqlang.NodeValue.NullValue
+import top.saucecode.yqlang.Token
 
 @Serializable
 class StmtAssignNode(private val lvalue: Node, private val expr: Node) : Node() {

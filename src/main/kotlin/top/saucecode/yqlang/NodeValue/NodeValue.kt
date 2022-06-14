@@ -1,7 +1,7 @@
-package top.saucecode.NodeValue
+package top.saucecode.yqlang.NodeValue
 
 import kotlinx.serialization.Serializable
-import top.saucecode.Node.ValueNode
+import top.saucecode.yqlang.Node.ValueNode
 
 @Serializable
 sealed class NodeValue : Comparable<NodeValue> {

@@ -2,6 +2,8 @@
 # Created by https://www.gitignore.io/api/java,linux,macos,windows,android,intellij,androidstudio
 # Edit at https://www.gitignore.io/?templates=java,linux,macos,windows,android,intellij,androidstudio
 
+.vscode
+
 ### Android ###
 # Built application files
 *.apk

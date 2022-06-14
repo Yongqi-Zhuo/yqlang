@@ -1,4 +1,4 @@
-package top.saucecode.NodeValue
+package top.saucecode.yqlang.NodeValue
 
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
@@ -78,7 +78,7 @@ class RegExValue(private val pattern: String, private val rawFlags: String) : No
     }
 
     class Serializer : KSerializer<RegExValue> {
-        override val descriptor = buildClassSerialDescriptor("top.saucecode.NodeValue.RegExValue") {
+        override val descriptor = buildClassSerialDescriptor("top.saucecode.yqlang.NodeValue.RegExValue") {
             element<String>("pattern")
             element<String>("rawFlags")
         }

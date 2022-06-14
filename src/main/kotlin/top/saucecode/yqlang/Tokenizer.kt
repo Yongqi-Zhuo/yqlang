@@ -1,4 +1,4 @@
-package top.saucecode
+package top.saucecode.yqlang
 
 class Tokenizer(private val input: String) {
     private var index = 0
@@ -30,7 +30,7 @@ class Tokenizer(private val input: String) {
             }
         }
 
-        fun scanString(delimiter: Char = '"', escape: Boolean = true): String {
+        fun scanString(vararg delimiters: Char, escape: Boolean = true): String {
             var str = ""
             var toEscape = false
             advance()
@@ -42,12 +42,12 @@ class Tokenizer(private val input: String) {
                         'r' -> str += '\r'
                         't' -> str += '\t'
                         '\\' -> str += '\\'
-                        delimiter -> str += delimiter
+                        in delimiters -> str += currentChar
                         else -> str += "\\$currentChar"
                     }
                 } else if (escape && currentChar == '\\') {
                     toEscape = true
-                } else if (currentChar == delimiter) {
+                } else if (currentChar in delimiters) {
                     break
                 } else {
                     str += currentChar
@@ -59,6 +59,7 @@ class Tokenizer(private val input: String) {
         }
 
         var rawStringFlag = false
+        val chineseQuotes = listOf('“', '”').toCharArray()
 
         while (index < input.length) {
             when {
@@ -106,18 +107,26 @@ class Tokenizer(private val input: String) {
                 }
                 currentChar == '"' -> {
                     if (rawStringFlag) {
-                        tokens.add(Token(TokenType.STRING, scanString('"', false)))
+                        tokens.add(Token(TokenType.STRING, scanString('"', escape = false)))
                         rawStringFlag = false
                     } else {
-                        tokens.add(Token(TokenType.STRING, scanString('"', true)))
+                        tokens.add(Token(TokenType.STRING, scanString('"', escape = true)))
                     }
                 }
                 currentChar == '\'' -> {
                     if (rawStringFlag) {
-                        tokens.add(Token(TokenType.STRING, scanString('\'', false)))
+                        tokens.add(Token(TokenType.STRING, scanString('\'', escape = false)))
                         rawStringFlag = false
                     } else {
-                        tokens.add(Token(TokenType.STRING, scanString('\'', true)))
+                        tokens.add(Token(TokenType.STRING, scanString('\'', escape = true)))
+                    }
+                }
+                currentChar in chineseQuotes -> {
+                    if (rawStringFlag) {
+                        tokens.add(Token(TokenType.STRING, scanString(*chineseQuotes, escape = false)))
+                        rawStringFlag = false
+                    } else {
+                        tokens.add(Token(TokenType.STRING, scanString(*chineseQuotes, escape = true)))
                     }
                 }
                 currentChar.isDigit() -> {

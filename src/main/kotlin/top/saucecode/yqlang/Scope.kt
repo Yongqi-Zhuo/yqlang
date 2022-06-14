@@ -1,12 +1,12 @@
-package top.saucecode
+package top.saucecode.yqlang
 
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.serializer
-import top.saucecode.Node.ListNode
-import top.saucecode.NodeValue.ListValue
-import top.saucecode.NodeValue.NodeValue
-import top.saucecode.NodeValue.toNodeValue
+import top.saucecode.yqlang.Node.ListNode
+import top.saucecode.yqlang.NodeValue.ListValue
+import top.saucecode.yqlang.NodeValue.NodeValue
+import top.saucecode.yqlang.NodeValue.toNodeValue
 
 class Scope(private val symbols: MutableMap<String, NodeValue>, val args: ListValue = ListValue(mutableListOf())) {
     operator fun get(name: String): NodeValue? {

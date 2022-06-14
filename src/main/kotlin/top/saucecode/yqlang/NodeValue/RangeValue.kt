@@ -1,4 +1,4 @@
-package top.saucecode.NodeValue
+package top.saucecode.yqlang.NodeValue
 
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
@@ -62,7 +62,7 @@ class NumberRangeValue(begin: NumberValue, end: NumberValue, inclusive: Boolean)
 
     class Serializer : KSerializer<NumberRangeValue> {
         override val descriptor: SerialDescriptor =
-            buildClassSerialDescriptor("top.saucecode.NodeValue.NumberRangeValue") {
+            buildClassSerialDescriptor("top.saucecode.yqlang.NodeValue.NumberRangeValue") {
                 element<NumberValue>("begin")
                 element<NumberValue>("end")
                 element<Boolean>("inclusive")
@@ -127,7 +127,7 @@ class CharRangeValue(begin: StringValue, end: StringValue, inclusive: Boolean) :
 
     class Serializer : KSerializer<CharRangeValue> {
         override val descriptor: SerialDescriptor =
-            buildClassSerialDescriptor("top.saucecode.NodeValue.CharRangeValue") {
+            buildClassSerialDescriptor("top.saucecode.yqlang.NodeValue.CharRangeValue") {
                 element<NumberValue>("begin")
                 element<NumberValue>("end")
                 element<Boolean>("inclusive")
