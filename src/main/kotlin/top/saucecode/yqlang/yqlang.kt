@@ -3,10 +3,15 @@ package top.saucecode.yqlang
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.onCompletion
 import top.saucecode.yqlang.Node.Node
 import top.saucecode.yqlang.NodeValue.NodeValue
+import java.util.concurrent.CancellationException
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ExecutionException
 import java.util.concurrent.TimeUnit
+
+open class YqlangException(message: String) : Exception(message)
 
 abstract class ExecutionContext(rootScope: Scope, val firstRun: Boolean, events: Map<String, NodeValue>) {
     val stack: Stack
@@ -151,6 +156,7 @@ class Interpreter(source: String) {
 
 class RestrictedInterpreter(source: String) {
     private val ast: Node
+    private var futureTasks: MutableList<CompletableFuture<*>> = mutableListOf()
 
     init {
         val tokens = Tokenizer(source).scan()
@@ -159,25 +165,57 @@ class RestrictedInterpreter(source: String) {
         ast = res
     }
 
+    // why we need quantum? to avoid sending message too fast.
     suspend fun run(
         context: ControlledContext,
         quantum: Long = 100,
         allowance: Long = 800,
-        totalAllowance: Long = 60 * 60 * 1000
+        totalAllowance: Long = 60 * 60 * 1000,
+        maximumInstances: Int = 10
     ): Flow<List<Output>> = flow {
-        var uptime: Long = 0
-        val task = CompletableFuture.runAsync {
-            ast.exec(context)
+        var task: CompletableFuture<*>? = null
+        try {
+            var uptime: Long = 0
+            task = synchronized(futureTasks) {
+                if (futureTasks.size >= maximumInstances) {
+                    throw YqlangException("Too many instances of the same script")
+                }
+                val newTask = CompletableFuture.runAsync {
+                    ast.exec(context)
+                }
+                futureTasks.add(newTask)
+                newTask
+            }
+            do {
+                delay(quantum)
+                uptime += quantum
+                emit(context.dumpOutput())
+            } while (uptime < allowance + context.sleepTime && uptime < totalAllowance && !task.isDone)
+            if (!task.isDone) {
+                task.cancel(true)
+            }
+            try {
+                task.get()
+            } catch (e: CancellationException) {
+                throw YqlangException("Interpretation cancelled")
+            } catch (e: ExecutionException) {
+                throw e.cause ?: e
+            }
+        } finally {
+            synchronized(futureTasks) {
+                futureTasks.remove(task)
+            }
+            if (task?.isDone == false) {
+                task.cancel(true)
+            }
         }
-        do {
-            delay(quantum)
-            uptime += quantum
-            emit(context.dumpOutput())
-        } while (uptime < allowance + context.sleepTime && uptime < totalAllowance && !task.isDone)
-        if (!task.isDone) {
-            task.cancel(true)
+    }
+
+    fun cancelAllRunningTasks() {
+        synchronized(futureTasks) {
+            futureTasks.forEach { it.cancel(true) }
+            futureTasks.clear()
         }
-        task.get()
     }
 }
 

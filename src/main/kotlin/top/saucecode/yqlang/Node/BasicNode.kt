@@ -2,10 +2,16 @@ package top.saucecode.yqlang.Node
 
 import kotlinx.serialization.Serializable
 import top.saucecode.yqlang.ExecutionContext
+import top.saucecode.yqlang.InterpretationRuntimeException
 import top.saucecode.yqlang.NodeValue.*
 import top.saucecode.yqlang.Token
 import top.saucecode.yqlang.TokenType
 import kotlin.math.min
+
+class TypeMismatchRuntimeException(expected: List<Class<*>>, got: Any) :
+    InterpretationRuntimeException("Type mismatch, expected one of ${
+        expected.joinToString(", ") { it.simpleName }
+    }, got ${got.javaClass.simpleName}")
 
 @Serializable
 class ValueNode(private val value: NodeValue) : Node() {
@@ -96,7 +102,7 @@ class SubscriptNode(private val begin: Node, private val extended: Boolean, priv
                 begin.value.toInt(), extended, end?.exec(context)?.asNumber()?.toInt()
             )
             is StringValue -> KeySubscriptValue(begin.value)
-            else -> throw IllegalArgumentException("Illegal accessing: expected NUMBER or STRING, got ${begin.javaClass.simpleName}")
+            else -> throw TypeMismatchRuntimeException(listOf(NumberValue::class.java, StringValue::class.java), begin)
         }
     }
 

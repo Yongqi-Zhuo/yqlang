@@ -8,6 +8,8 @@ import top.saucecode.yqlang.NodeValue.ListValue
 import top.saucecode.yqlang.NodeValue.NodeValue
 import top.saucecode.yqlang.NodeValue.toNodeValue
 
+open class InterpretationRuntimeException(message: String) : YqlangException(message)
+
 class Scope(private val symbols: MutableMap<String, NodeValue>, val args: ListValue = ListValue(mutableListOf())) {
     operator fun get(name: String): NodeValue? {
         return symbols[name]
@@ -59,13 +61,7 @@ class Scope(private val symbols: MutableMap<String, NodeValue>, val args: ListVa
 }
 typealias SymbolTable = Scope
 
-class RecursionTooDeepException(private val depth: Int) : Exception() {
-    override fun toString(): String {
-        return "Recursion too deep: $depth"
-    }
-
-    override val message: String = toString()
-}
+class RecursionTooDeepException(private val depth: Int) : InterpretationRuntimeException("Recursion too deep: $depth")
 
 class Stack(rootScope: Scope, private val events: Map<String, NodeValue>) {
     private val scopes: MutableList<Scope>

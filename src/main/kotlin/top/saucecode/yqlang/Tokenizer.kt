@@ -1,5 +1,7 @@
 package top.saucecode.yqlang
 
+class TokenizerException(message: String) : YqlangException(message)
+
 class Tokenizer(private val input: String) {
     private var index = 0
     private var currentChar = input[index]
@@ -26,7 +28,7 @@ class Tokenizer(private val input: String) {
             } else if (single != null) {
                 pushAndAdvance(Token(single, value[0].toString()))
             } else {
-                throw IllegalArgumentException("Unexpected character: $currentChar")
+                throw TokenizerException("Unexpected character: $currentChar")
             }
         }
 

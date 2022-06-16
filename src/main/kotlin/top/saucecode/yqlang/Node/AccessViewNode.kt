@@ -2,9 +2,13 @@ package top.saucecode.yqlang.Node
 
 import kotlinx.serialization.Serializable
 import top.saucecode.yqlang.ExecutionContext
+import top.saucecode.yqlang.InterpretationRuntimeException
 import top.saucecode.yqlang.NodeValue.*
 import top.saucecode.yqlang.safeSlice
 import top.saucecode.yqlang.safeSubscript
+
+class IndexOutOfRangeRuntimeException(index: Any?, msg: String? = null) :
+    InterpretationRuntimeException("Index${index?.let { " $it" } ?: ""} out of range${msg?.let { ": $it" } ?: ""}")
 
 sealed class AccessView(protected val parent: AccessView?, protected val context: ExecutionContext) {
     enum class AccessState {
@@ -29,10 +33,10 @@ sealed class AccessView(protected val parent: AccessView?, protected val context
 class NullAccessView(parent: AccessView?, context: ExecutionContext) : AccessView(parent, context) {
     override var value: NodeValue
         get() = NullValue
-        set(_) = throw IllegalArgumentException("Failed subscription")
+        set(what) = throw IndexOutOfRangeRuntimeException(null, "failed to set value $what to a nonexistent child of $parent")
 
     override fun subscript(accessor: SubscriptValue): AccessView =
-        throw IllegalArgumentException("Cannot subscript null")
+        throw IndexOutOfRangeRuntimeException(accessor, "failed to subscript a nonexistent child of $parent")
 }
 
 class NonCollectionAccessView(private val self: NodeValue, parent: AccessView?, context: ExecutionContext) :
@@ -46,7 +50,7 @@ class NonCollectionAccessView(private val self: NodeValue, parent: AccessView?, 
     override fun subscript(accessor: SubscriptValue): AccessView {
         if (accessor is KeySubscriptValue) {
             return MethodCallAccessView(accessor.key, this, context)
-        } else throw IllegalArgumentException("Cannot subscript non-collection")
+        } else throw IndexOutOfRangeRuntimeException(accessor, "cannot access a child of a non-collection")
     }
 }
 
@@ -54,7 +58,9 @@ class MethodCallAccessView(private val funcName: String, parent: AccessView, con
     AccessView(parent, context) {
     override var value: NodeValue
         get() {
-            val func = (context.stack[funcName]!! as ProcedureValue).copy()
+            val func = try { (context.stack[funcName]!! as ProcedureValue).copy() } catch (e: Exception) {
+                throw IndexOutOfRangeRuntimeException(funcName, "$parent has no such method as $funcName")
+            }
             return func.bind(parent!!.value)
         }
         set(newValue) {
@@ -62,7 +68,7 @@ class MethodCallAccessView(private val funcName: String, parent: AccessView, con
         }
 
     override fun subscript(accessor: SubscriptValue): AccessView =
-        throw IllegalArgumentException("MethodCall cannot be subscripted")
+        throw IndexOutOfRangeRuntimeException(accessor, "cannot access a child of a method")
 }
 
 class ListAccessView(private val list: ListValue, parent: AccessView?, context: ExecutionContext) :
@@ -192,7 +198,9 @@ class ObjectAccessView(private val objectValue: ObjectValue, parent: AccessView?
     private var accessed: Boolean = false
     private var key: String? = null
     override var value: NodeValue
-        get() = if (accessed) objectValue[key!!]!! else objectValue
+        get() = if (accessed) try { objectValue[key!!]!! } catch (e: Exception) {
+            throw IndexOutOfRangeRuntimeException(key, "object $objectValue has no such key as $key")
+        } else objectValue
         set(value) {
             if (accessed) {
                 if (value is ProcedureValue) {

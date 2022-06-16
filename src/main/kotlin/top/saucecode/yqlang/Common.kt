@@ -107,7 +107,7 @@ class Constants {
                 if (arg is StringValue) return@BuiltinProcedureValue str.value.split(arg.value).map { it.toNodeValue() }.toList().toNodeValue()
                 else if (arg is RegExValue) return@BuiltinProcedureValue arg.split(str)
             }
-            throw RuntimeException("$str has no such method as \"split\"")
+            throw InterpretationRuntimeException("$str has no such method as \"split\"")
         }, null)
         private val Join = BuiltinProcedureValue("join", ListNode("separator"), { context ->
             val list = context.stack["this"]!!
@@ -118,7 +118,7 @@ class Constants {
                 } else {
                     list.joinToString(arg).toNodeValue()
                 }
-            } else throw RuntimeException("$list has no such method as \"join\"")
+            } else throw InterpretationRuntimeException("$list has no such method as \"join\"")
         }, null)
         private val Find = BuiltinProcedureValue("find", ListNode("what"), { context ->
             val expr = context.stack["this"]!!
@@ -128,7 +128,7 @@ class Constants {
                 else if (arg is RegExValue) return@BuiltinProcedureValue arg.find(expr)
             }
             else if (expr is ListValue) return@BuiltinProcedureValue expr.value.indexOf(arg).toNodeValue()
-            throw RuntimeException("$expr has no such method as \"find\"")
+            throw InterpretationRuntimeException("$expr has no such method as \"find\"")
         }, null)
         private val FindAll = BuiltinProcedureValue("findAll", ListNode("what"), { context ->
             val expr = context.stack["this"]!!
@@ -138,7 +138,7 @@ class Constants {
                 else if (arg is RegExValue) return@BuiltinProcedureValue arg.findAll(expr)
             }
             else if (expr is ListValue) return@BuiltinProcedureValue expr.value.indices.filter { expr.value[it] == arg }.map { it.toNodeValue() }.toNodeValue()
-            throw RuntimeException("$expr has no such method as \"findAll\"")
+            throw InterpretationRuntimeException("$expr has no such method as \"findAll\"")
         }, null)
         private val Contains = BuiltinProcedureValue("contains", ListNode("what"), { context ->
             val expr = context.stack["this"]!!
@@ -149,7 +149,7 @@ class Constants {
             }
             else if (expr is ListValue) return@BuiltinProcedureValue expr.value.contains(arg).toNodeValue()
             else if (expr is RangeValue<*>) return@BuiltinProcedureValue expr.contains(arg).toNodeValue()
-            throw RuntimeException("$expr has no such method as \"contains\"")
+            throw InterpretationRuntimeException("$expr has no such method as \"contains\"")
         }, null)
         private val Length = BuiltinProcedureValue("length", ListNode(), { context ->
             val expr = context.stack["this"]!!
@@ -157,7 +157,7 @@ class Constants {
                 is StringValue -> expr.value.length.toNodeValue()
                 is ListValue -> expr.value.size.toNodeValue()
                 is RangeValue<*> -> expr.size.toNodeValue()
-                else -> throw RuntimeException("$expr has no such method as \"length\"")
+                else -> throw InterpretationRuntimeException("$expr has no such method as \"length\"")
             }
         }, null)
         private val Time = BuiltinProcedureValue("time", ListNode(), {
@@ -170,7 +170,7 @@ class Constants {
                     is StringValue -> collection.value.random().toString().toNodeValue()
                     is ListValue -> collection.value.random()
                     is RangeValue<*> -> collection.random()
-                    else -> throw RuntimeException("$collection has no such method as \"random\"")
+                    else -> throw InterpretationRuntimeException("$collection has no such method as \"random\"")
                 }
             } else {
                 val first = context.stack["first"]!!.asNumber()!!
@@ -190,7 +190,7 @@ class Constants {
                 is StringValue -> {
                     CharRangeValue(begin, end!! as StringValue, false)
                 }
-                else -> throw RuntimeException("range: $begin must be a number or a string")
+                else -> throw InterpretationRuntimeException("range: $begin must be a number or a string")
             }
         }, null)
         private val RangeInclusive = BuiltinProcedureValue("rangeInclusive", ListNode("begin", "end"), { context ->
@@ -205,7 +205,7 @@ class Constants {
                 is StringValue -> {
                     CharRangeValue(begin, end!! as StringValue, true)
                 }
-                else -> throw RuntimeException("range: $begin must be a number or a string")
+                else -> throw InterpretationRuntimeException("range: $begin must be a number or a string")
             }
         }, null)
         private val Number = BuiltinProcedureValue("number", ListNode("str"), { context ->
@@ -238,7 +238,7 @@ class Constants {
                     )
                 }.toNodeValue()
             } else {
-                throw RuntimeException("$list has no such method as \"enumerated\"")
+                throw InterpretationRuntimeException("$list has no such method as \"enumerated\"")
             }
         }, null)
         private val Ord = BuiltinProcedureValue("ord", ListNode("str"), { context ->
@@ -257,7 +257,7 @@ class Constants {
             return@BuiltinProcedureValue if (list is Iterable<*>) {
                 list.sumOf { (it as NodeValue).asNumber()!! }.toNodeValue()
             } else {
-                throw RuntimeException("$list has no such method as \"sum\"")
+                throw InterpretationRuntimeException("$list has no such method as \"sum\"")
             }
         }, null)
         private val Boolean = BuiltinProcedureValue("boolean", ListNode("value"), { context ->
@@ -270,7 +270,7 @@ class Constants {
             return@BuiltinProcedureValue if (list is Iterable<*>) {
                 @Suppress("UNCHECKED_CAST") (list.filter { predicateCall(it as NodeValue).toBoolean() } as List<NodeValue>).toNodeValue()
             } else {
-                throw RuntimeException("$list has no such method as \"filter\"")
+                throw InterpretationRuntimeException("$list has no such method as \"filter\"")
             }
         }, null)
         private val Reduce = BuiltinProcedureValue("reduce", ListNode("initial", "reducer"), { context ->
@@ -284,7 +284,7 @@ class Constants {
                 }
                 res
             } else {
-                throw RuntimeException("$list has no such method as \"reduce\"")
+                throw InterpretationRuntimeException("$list has no such method as \"reduce\"")
             }
         }, null)
         private val Map = BuiltinProcedureValue("map", ListNode("mapper"), { context ->
@@ -294,7 +294,7 @@ class Constants {
             return@BuiltinProcedureValue if (collection is Iterable<*>) {
                 (collection.map { mapperCall(it as NodeValue) }).toNodeValue()
             } else {
-                throw RuntimeException("$collection has no such method as \"map\"")
+                throw InterpretationRuntimeException("$collection has no such method as \"map\"")
             }
         }, null)
         private val Max = BuiltinProcedureValue("max", ListNode("list"), { context ->
@@ -312,7 +312,7 @@ class Constants {
                 is Iterable<*> -> {
                     @Suppress("UNCHECKED_CAST") (list.reversed() as List<NodeValue>).toNodeValue()
                 }
-                else -> throw RuntimeException("$list has no such method as \"reversed\"")
+                else -> throw InterpretationRuntimeException("$list has no such method as \"reversed\"")
             }
         }, null)
         private val Sorted = BuiltinProcedureValue("sorted", ListNode("cmp"), { context ->
@@ -361,7 +361,7 @@ class Constants {
             return@BuiltinProcedureValue when (val re = context.stack["re"]!!) {
                 is RegExValue -> re.replace(str, replacement)
                 is StringValue -> str.value.replace(re.value, replacement.value).toNodeValue()
-                else -> throw RuntimeException("$re has no such method as \"replace\"")
+                else -> throw InterpretationRuntimeException("$re has no such method as \"replace\"")
             }
         }, null)
         private val Sleep = BuiltinProcedureValue("sleep", ListNode("ms"), { context ->

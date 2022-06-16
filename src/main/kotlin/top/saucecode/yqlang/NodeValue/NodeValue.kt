@@ -1,7 +1,10 @@
 package top.saucecode.yqlang.NodeValue
 
 import kotlinx.serialization.Serializable
+import top.saucecode.yqlang.InterpretationRuntimeException
 import top.saucecode.yqlang.Node.ValueNode
+
+class OperationRuntimeException(message: String) : InterpretationRuntimeException(message)
 
 @Serializable
 sealed class NodeValue : Comparable<NodeValue> {
@@ -21,7 +24,7 @@ sealed class NodeValue : Comparable<NodeValue> {
                     is NumberValue -> NumberValue(this.value.toLong() + that.value)
                     is StringValue -> StringValue(this.value.toString() + that.value)
                     is ListValue -> ListValue(mutableListOf<NodeValue>(this).apply { addAll(that.value) })
-                    else -> throw IllegalArgumentException("Invalid operation: $this + $that")
+                    else -> throw OperationRuntimeException("Invalid operation: $this + $that")
                 }
             }
             is NumberValue -> {
@@ -30,7 +33,7 @@ sealed class NodeValue : Comparable<NodeValue> {
                     is NumberValue -> NumberValue(this.value + that.value)
                     is StringValue -> StringValue(this.value.toString() + that.value)
                     is ListValue -> ListValue(mutableListOf<NodeValue>(this).apply { addAll(that.value) })
-                    else -> throw IllegalArgumentException("Invalid operation: $this + $that")
+                    else -> throw OperationRuntimeException("Invalid operation: $this + $that")
                 }
             }
             is StringValue -> {
@@ -40,7 +43,7 @@ sealed class NodeValue : Comparable<NodeValue> {
                     is StringValue -> StringValue(this.value + that.value)
                     is ListValue -> ListValue(mutableListOf<NodeValue>(this).apply { addAll(that.value) })
                     is ObjectValue -> StringValue(this.value + that.toString())
-                    else -> throw IllegalArgumentException("Invalid operation: $this + $that")
+                    else -> throw OperationRuntimeException("Invalid operation: $this + $that")
                 }
             }
             is ListValue -> {
@@ -50,17 +53,17 @@ sealed class NodeValue : Comparable<NodeValue> {
                     is StringValue -> ListValue(this.value.toMutableList().apply { add(that) })
                     is ListValue -> ListValue(this.value.toMutableList().apply { addAll(that.value) })
                     is ObjectValue -> ListValue(this.value.toMutableList().apply { add(that) })
-                    else -> throw IllegalArgumentException("Invalid operation: $this + $that")
+                    else -> throw OperationRuntimeException("Invalid operation: $this + $that")
                 }
             }
             is ObjectValue -> {
                 when (that) {
                     is StringValue -> StringValue(toString() + that.value)
                     is ListValue -> ListValue(mutableListOf<NodeValue>(this).apply { addAll(that.value) })
-                    else -> throw IllegalArgumentException("Invalid operation: $this + $that")
+                    else -> throw OperationRuntimeException("Invalid operation: $this + $that")
                 }
             }
-            else -> throw IllegalArgumentException("Invalid operation: $this + $that")
+            else -> throw OperationRuntimeException("Invalid operation: $this + $that")
         }
     }
 
@@ -70,7 +73,7 @@ sealed class NodeValue : Comparable<NodeValue> {
         if (expr is NumberValue && other is NumberValue) {
             return NumberValue(expr.value - other.value)
         } else {
-            throw IllegalArgumentException("Invalid operation: $this - $that")
+            throw OperationRuntimeException("Invalid operation: $this - $that")
         }
     }
 
@@ -90,10 +93,10 @@ sealed class NodeValue : Comparable<NodeValue> {
                     val list = otherExpr.asList()!!
                     List(cnt * sz) { index -> list[index % sz] }.toNodeValue()
                 }
-                else -> throw IllegalArgumentException("Invalid operation: $this * $that")
+                else -> throw OperationRuntimeException("Invalid operation: $this * $that")
             }
         } else {
-            throw IllegalArgumentException("Invalid operation: $this * $that")
+            throw OperationRuntimeException("Invalid operation: $this * $that")
         }
     }
 
@@ -103,7 +106,7 @@ sealed class NodeValue : Comparable<NodeValue> {
         if (expr is NumberValue && other is NumberValue) {
             return NumberValue(expr.value / other.value)
         } else {
-            throw IllegalArgumentException("Invalid operation: $this / $that")
+            throw OperationRuntimeException("Invalid operation: $this / $that")
         }
     }
 
@@ -113,7 +116,7 @@ sealed class NodeValue : Comparable<NodeValue> {
         if (expr is NumberValue && other is NumberValue) {
             return NumberValue(expr.value % other.value)
         } else {
-            throw IllegalArgumentException("Invalid operation: $this % $that")
+            throw OperationRuntimeException("Invalid operation: $this % $that")
         }
     }
 
@@ -122,7 +125,7 @@ sealed class NodeValue : Comparable<NodeValue> {
         if (expr is NumberValue) {
             return NumberValue(-expr.value)
         } else {
-            throw IllegalArgumentException("Invalid operation: -$this")
+            throw OperationRuntimeException("Invalid operation: -$this")
         }
     }
 
@@ -136,7 +139,7 @@ sealed class NodeValue : Comparable<NodeValue> {
         } else if (this is Iterable<*>) {
             (this as Iterable<*>).contains(that)
         } else {
-            throw IllegalArgumentException("Invalid operation: $that in $this")
+            throw OperationRuntimeException("Invalid operation: $that in $this")
         }
     }
 
@@ -150,7 +153,7 @@ sealed class NodeValue : Comparable<NodeValue> {
         } else if (this is NullValue && other is NullValue) {
             0
         } else {
-            throw IllegalArgumentException("Invalid operation: $this <=> $other")
+            throw OperationRuntimeException("Invalid operation: $this <=> $other")
         }
     }
 

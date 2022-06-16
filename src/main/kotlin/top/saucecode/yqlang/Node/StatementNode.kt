@@ -2,6 +2,7 @@ package top.saucecode.yqlang.Node
 
 import kotlinx.serialization.Serializable
 import top.saucecode.yqlang.ExecutionContext
+import top.saucecode.yqlang.InterpretationRuntimeException
 import top.saucecode.yqlang.NodeValue.NodeProcedureValue
 import top.saucecode.yqlang.NodeValue.NodeValue
 import top.saucecode.yqlang.NodeValue.NullValue
@@ -19,6 +20,8 @@ class StmtAssignNode(private val lvalue: Node, private val expr: Node) : Node() 
         return "assign($lvalue, $expr)"
     }
 }
+
+class UnimplementedActionException(action: String): InterpretationRuntimeException("Unimplemented action: $action")
 
 @Serializable
 class StmtActionNode(private val action: String, private val expr: Node) : Node() {
@@ -39,7 +42,7 @@ class StmtActionNode(private val action: String, private val expr: Node) : Node(
             "picsend" -> {
                 context.picSend(value.asString()!!)
             }
-            else -> throw IllegalArgumentException("Unknown action $action")
+            else -> throw UnimplementedActionException(action)
         }
         return NullValue
     }
@@ -170,7 +173,7 @@ class StmtForNode(private val iterator: Node, private val collection: Node, priv
                 }
             }
         } else {
-            throw RuntimeException("$collection is not iterable")
+            throw InterpretationRuntimeException("$collection is not iterable")
         }
         return res
     }

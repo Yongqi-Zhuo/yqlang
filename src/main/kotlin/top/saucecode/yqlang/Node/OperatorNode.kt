@@ -89,7 +89,7 @@ class BinaryOperatorNode(private val components: List<Node>, private val ops: Li
         if (components.size == 1) {
             components[0].assign(context, value)
         } else {
-            throw RuntimeException("$this is not a left value")
+            throw AssignmentRuntimeException(this, value, "the expression is an arithmetic expression")
         }
     }
 
@@ -115,7 +115,7 @@ class UnaryOperatorNode(private val component: Node, private val op: TokenType) 
     }
 
     override fun assign(context: ExecutionContext, value: NodeValue) {
-        throw RuntimeException("$this is not a left value")
+        throw AssignmentRuntimeException(this, value, "the expression is an arithmetic expression")
     }
 
     override fun toString(): String {

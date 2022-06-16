@@ -4,21 +4,16 @@ import top.saucecode.yqlang.NodeValue.NodeProcedureValue
 import top.saucecode.yqlang.NodeValue.toNodeValue
 import top.saucecode.yqlang.Node.*
 
-class UnexpectedTokenException(val token: Token, private val expected: TokenType? = null) : Exception() {
-    override fun toString(): String {
-        return if (expected != null) "Unexpected token $token, expected $expected" else "Unexpected token $token"
-    }
-
-    override val message: String
-        get() = toString()
-}
+open class ParserException(message: String) : Exception(message)
+class UnexpectedTokenException(val token: Token, private val expected: TokenType? = null) :
+    ParserException(if (expected != null) "Unexpected token $token, expected $expected" else "Unexpected token $token")
 
 class Parser(private val tokens: List<Token>) {
     private var current = 0
 
     private fun consume(type: TokenType): Token {
         if (isAtEnd()) {
-            throw IllegalStateException("Unexpected end of input")
+            throw ParserException("Unexpected end of input")
         }
         if (peek().type != type) {
             throw UnexpectedTokenException(peek(), type)
