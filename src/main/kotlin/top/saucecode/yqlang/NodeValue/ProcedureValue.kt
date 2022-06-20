@@ -44,7 +44,10 @@ class BuiltinProcedureValue(
     private val func: (context: ExecutionContext) -> NodeValue,
     self: NodeValue?
 ) : ProcedureValue(params, self) {
-    override fun toString(): String = "builtin($name)"
+    override val debugStr: String
+        get() = "builtin($name)"
+    override val printStr: String
+        get() = debugStr
     override fun execute(context: ExecutionContext): NodeValue {
         context.stack.nameArgs(context, params, self)
         return try {
@@ -77,7 +80,10 @@ class BuiltinProcedureValue(
 @Serializable(with = NodeProcedureValue.Serializer::class)
 class NodeProcedureValue(private val func: Node, params: ListNode, self: NodeValue?) :
     ProcedureValue(params, self) {
-    override fun toString() = "procedure($func)"
+    override val debugStr: String
+        get() = "procedure($func($params))"
+    override val printStr: String
+        get() = debugStr
     override fun execute(context: ExecutionContext): NodeValue {
         context.stack.nameArgs(context, params, self)
         return try {

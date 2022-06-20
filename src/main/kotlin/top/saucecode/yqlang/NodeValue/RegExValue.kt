@@ -11,6 +11,10 @@ import kotlinx.serialization.encoding.encodeStructure
 
 @Serializable(with = RegExValue.Serializer::class)
 class RegExValue(private val pattern: String, private val rawFlags: String) : NodeValue() {
+    override val debugStr: String
+        get() = "/$pattern/$rawFlags"
+    override val printStr: String
+        get() = debugStr
     enum class Flag(val value: RegexOption?) {
         GLOBAL(null),
         IGNORE_CASE(RegexOption.IGNORE_CASE),
@@ -90,6 +94,4 @@ class RegExValue(private val pattern: String, private val rawFlags: String) : No
             encodeStringElement(descriptor, 1, value.rawFlags)
         }
     }
-
-    override fun toString(): String = "/$pattern/$rawFlags)"
 }

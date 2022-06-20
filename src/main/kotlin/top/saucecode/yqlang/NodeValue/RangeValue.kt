@@ -23,6 +23,14 @@ sealed class RangeValue<T : NodeValue>(
 @Serializable(with = NumberRangeValue.Serializer::class)
 class NumberRangeValue(begin: NumberValue, end: NumberValue, inclusive: Boolean) :
     RangeValue<NumberValue>(begin, end, inclusive) {
+    override val debugStr: String
+        get() = if (inclusive) {
+            "[$begin, $end]"
+        } else {
+            "[$begin, $end)"
+        }
+    override val printStr: String
+        get() = debugStr
     override fun iterator(): Iterator<NumberValue> {
         return object : Iterator<NumberValue> {
             var current = begin
@@ -87,6 +95,14 @@ class NumberRangeValue(begin: NumberValue, end: NumberValue, inclusive: Boolean)
 @Serializable(with = CharRangeValue.Serializer::class)
 class CharRangeValue(begin: StringValue, end: StringValue, inclusive: Boolean) :
     RangeValue<StringValue>(begin, end, inclusive) {
+    override val debugStr: String
+        get() = if (inclusive) {
+            "[$begin, $end]"
+        } else {
+            "[$begin, $end)"
+        }
+    override val printStr: String
+        get() = debugStr
     override fun iterator(): Iterator<StringValue> {
         return object : Iterator<StringValue> {
             var current = begin.value[0]

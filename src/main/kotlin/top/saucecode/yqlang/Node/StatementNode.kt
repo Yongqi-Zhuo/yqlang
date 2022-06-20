@@ -31,7 +31,7 @@ class StmtActionNode(private val action: String, private val expr: Node) : Node(
         val value = expr.exec(context)
         when (action) {
             "say" -> {
-                context.say(value.toString())
+                context.say(value.printStr)
             }
             "nudge" -> {
                 context.nudge(value.asNumber()!!)
@@ -48,7 +48,7 @@ class StmtActionNode(private val action: String, private val expr: Node) : Node(
     }
 
     override fun toString(): String {
-        return "action(${action}, $expr)"
+        return "action($action($expr))"
     }
 }
 

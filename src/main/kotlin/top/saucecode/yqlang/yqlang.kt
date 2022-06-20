@@ -4,12 +4,15 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.onCompletion
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import top.saucecode.yqlang.Node.Node
 import top.saucecode.yqlang.NodeValue.NodeValue
 import java.util.concurrent.CancellationException
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.TimeUnit
+import kotlin.system.measureTimeMillis
 
 open class YqlangException(message: String) : Exception(message)
 
@@ -219,7 +222,7 @@ class RestrictedInterpreter(source: String) {
     }
 }
 
-class REPL {
+class REPL(private val debug: Boolean = false) {
     val rootScope = Scope.createRoot()
 
     fun run() {
@@ -230,9 +233,12 @@ class REPL {
             if (input.isEmpty()) continue
             if (input == "exit" || input == "stop") break
             inputs.add(input)
-            val ast = try {
-                val node = Parser(Tokenizer(inputs.joinToString("\n")).scan()).parse()
-                node
+            val ast: Node
+            val compileTime: Long
+            try {
+                compileTime = measureTimeMillis {
+                    ast = Parser(Tokenizer(inputs.joinToString("\n")).scan()).parse()
+                }
             } catch (e: UnexpectedTokenException) {
                 if (e.token.type == TokenType.EOF) {
                     continue
@@ -248,16 +254,26 @@ class REPL {
             }
             inputs.clear()
             val context = ControlledContext(rootScope, true, mapOf())
+            var runTime: Long? = null
             try {
-                val res = ast.exec(context)
+                val res: NodeValue
+                runTime = measureTimeMillis {
+                    res = ast.exec(context)
+                }
                 val output = context.dumpOutput()
                 if (output.isNotEmpty()) {
                     output.forEach { println(it) }
                 } else {
                     println(res)
                 }
+                if (debug) {
+                    println("Serialized: ${Json.encodeToString(res)}")
+                }
             } catch (e: Exception) {
                 println("Runtime Error: ${e.message}")
+            }
+            if (debug) {
+                println("Compile: $compileTime ms${runTime?.let { ", Run: $runTime ms" } ?: ""}")
             }
         }
     }

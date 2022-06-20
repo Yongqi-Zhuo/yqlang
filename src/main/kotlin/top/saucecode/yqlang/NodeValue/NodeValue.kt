@@ -16,118 +16,21 @@ sealed class NodeValue : Comparable<NodeValue> {
     fun asProcedure() = (this as? ProcedureValue)
     fun asRegEx() = (this as? RegExValue)
     fun toNode() = ValueNode(this)
+    abstract val debugStr: String
+    abstract val printStr: String
+    override fun toString() = debugStr
+    open fun exchangeablePlus(that: NodeValue, inverse: Boolean): NodeValue {
+        throw OperationRuntimeException("Invalid operation: ${if (!inverse) this else that} + ${if (!inverse) that else this}")
+    }
     operator fun plus(that: NodeValue): NodeValue {
-        return when (this) {
-            is BooleanValue -> {
-                when (that) {
-                    is BooleanValue -> NumberValue(this.value.toLong() + that.value.toLong())
-                    is NumberValue -> NumberValue(this.value.toLong() + that.value)
-                    is StringValue -> StringValue(this.value.toString() + that.value)
-                    is ListValue -> ListValue(mutableListOf<NodeValue>(this).apply { addAll(that.value) })
-                    else -> throw OperationRuntimeException("Invalid operation: $this + $that")
-                }
-            }
-            is NumberValue -> {
-                when (that) {
-                    is BooleanValue -> NumberValue(this.value + that.value.toLong())
-                    is NumberValue -> NumberValue(this.value + that.value)
-                    is StringValue -> StringValue(this.value.toString() + that.value)
-                    is ListValue -> ListValue(mutableListOf<NodeValue>(this).apply { addAll(that.value) })
-                    else -> throw OperationRuntimeException("Invalid operation: $this + $that")
-                }
-            }
-            is StringValue -> {
-                when (that) {
-                    is BooleanValue -> StringValue(this.value + that.value.toString())
-                    is NumberValue -> StringValue(this.value + that.value.toString())
-                    is StringValue -> StringValue(this.value + that.value)
-                    is ListValue -> ListValue(mutableListOf<NodeValue>(this).apply { addAll(that.value) })
-                    is ObjectValue -> StringValue(this.value + that.toString())
-                    else -> throw OperationRuntimeException("Invalid operation: $this + $that")
-                }
-            }
-            is ListValue -> {
-                when (that) {
-                    is BooleanValue -> ListValue(this.value.toMutableList().apply { add(that) })
-                    is NumberValue -> ListValue(this.value.toMutableList().apply { add(that) })
-                    is StringValue -> ListValue(this.value.toMutableList().apply { add(that) })
-                    is ListValue -> ListValue(this.value.toMutableList().apply { addAll(that.value) })
-                    is ObjectValue -> ListValue(this.value.toMutableList().apply { add(that) })
-                    else -> throw OperationRuntimeException("Invalid operation: $this + $that")
-                }
-            }
-            is ObjectValue -> {
-                when (that) {
-                    is StringValue -> StringValue(toString() + that.value)
-                    is ListValue -> ListValue(mutableListOf<NodeValue>(this).apply { addAll(that.value) })
-                    else -> throw OperationRuntimeException("Invalid operation: $this + $that")
-                }
-            }
-            else -> throw OperationRuntimeException("Invalid operation: $this + $that")
-        }
+        return exchangeablePlus(that, false)
     }
 
-    operator fun minus(that: NodeValue): NodeValue {
-        val expr = if (this is BooleanValue) NumberValue(this.value.toLong()) else this
-        val other = if (that is BooleanValue) NumberValue(that.value.toLong()) else that
-        if (expr is NumberValue && other is NumberValue) {
-            return NumberValue(expr.value - other.value)
-        } else {
-            throw OperationRuntimeException("Invalid operation: $this - $that")
-        }
-    }
-
-    operator fun times(that: NodeValue): NodeValue {
-        val expr = if (this is BooleanValue) NumberValue(this.value.toLong()) else this
-        val other = if (that is BooleanValue) NumberValue(that.value.toLong()) else that
-        if (expr is NumberValue || other is NumberValue) {
-            val (num, otherExpr) = if (expr is NumberValue) Pair(expr.asNumber()!!, other) else Pair(
-                other.asNumber()!!, expr
-            )
-            return when (otherExpr) {
-                is NumberValue -> NumberValue(num * otherExpr.value)
-                is StringValue -> otherExpr.value.repeat(num.toInt()).toNodeValue()
-                is ListValue -> {
-                    val sz = otherExpr.value.size
-                    val cnt = num.toInt()
-                    val list = otherExpr.asList()!!
-                    List(cnt * sz) { index -> list[index % sz] }.toNodeValue()
-                }
-                else -> throw OperationRuntimeException("Invalid operation: $this * $that")
-            }
-        } else {
-            throw OperationRuntimeException("Invalid operation: $this * $that")
-        }
-    }
-
-    operator fun div(that: NodeValue): NodeValue {
-        val expr = if (this is BooleanValue) NumberValue(this.value.toLong()) else this
-        val other = if (that is BooleanValue) NumberValue(that.value.toLong()) else that
-        if (expr is NumberValue && other is NumberValue) {
-            return NumberValue(expr.value / other.value)
-        } else {
-            throw OperationRuntimeException("Invalid operation: $this / $that")
-        }
-    }
-
-    operator fun rem(that: NodeValue): NodeValue {
-        val expr = if (this is BooleanValue) NumberValue(this.value.toLong()) else this
-        val other = if (that is BooleanValue) NumberValue(that.value.toLong()) else that
-        if (expr is NumberValue && other is NumberValue) {
-            return NumberValue(expr.value % other.value)
-        } else {
-            throw OperationRuntimeException("Invalid operation: $this % $that")
-        }
-    }
-
-    operator fun unaryMinus(): NodeValue {
-        val expr = if (this is BooleanValue) NumberValue(this.value.toLong()) else this
-        if (expr is NumberValue) {
-            return NumberValue(-expr.value)
-        } else {
-            throw OperationRuntimeException("Invalid operation: -$this")
-        }
-    }
+    open operator fun minus(that: NodeValue): NodeValue = throw OperationRuntimeException("Invalid operation: $this - $that")
+    open operator fun times(that: NodeValue): NodeValue = throw OperationRuntimeException("Invalid operation: $this * $that")
+    open operator fun div(that: NodeValue): NodeValue = throw OperationRuntimeException("Invalid operation: $this / $that")
+    open operator fun rem(that: NodeValue): NodeValue = throw OperationRuntimeException("Invalid operation: $this % $that")
+    open operator fun unaryMinus(): NodeValue = throw OperationRuntimeException("Invalid operation: -$this")
 
     operator fun not(): NodeValue {
         return toBoolean().not().toNodeValue()
@@ -142,7 +45,6 @@ sealed class NodeValue : Comparable<NodeValue> {
             throw OperationRuntimeException("Invalid operation: $that in $this")
         }
     }
-
     override operator fun compareTo(other: NodeValue): Int {
         return if (this is NumberValue && other is NumberValue) {
             this.value.compareTo(other.value)

@@ -32,7 +32,7 @@ fun main() {
 //        }
 //    }
 
-    val repl = REPL()
+    val repl = REPL(debug = true)
     repl.run()
     println(repl.rootScope.serialize())
 
