@@ -55,7 +55,7 @@ class RegExValue(private val pattern: String, private val rawFlags: String) : No
     }
 
     fun find(input: StringValue): NodeValue {
-        val matches = regex.find(input.value) ?: return NumberValue(-1)
+        val matches = regex.find(input.value) ?: return IntegerValue(-1)
         return matches.range.first.toNodeValue()
     }
 

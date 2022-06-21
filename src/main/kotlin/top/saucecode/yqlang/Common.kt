@@ -4,7 +4,6 @@ import kotlinx.serialization.Serializable
 import top.saucecode.yqlang.Node.ListNode
 import top.saucecode.yqlang.NodeValue.*
 import java.util.regex.Pattern
-import kotlin.math.absoluteValue
 import kotlin.math.pow
 
 @Serializable
@@ -23,7 +22,7 @@ enum class TokenType {
     LOGIC_AND, // LOGIC_OP
     LOGIC_OR, // LOGIC_OP
     // Operators end
-    ACTION, IDENTIFIER, NUMBER, STRING, EOF;
+    ACTION, IDENTIFIER, NUMBER_LITERAL, STRING_LITERAL, EOF;
 
     fun toHumanReadable(): String {
         return when (this) {
@@ -66,8 +65,8 @@ enum class TokenType {
             LOGIC_OR -> "||"
             ACTION -> "action"
             IDENTIFIER -> "identifier"
-            NUMBER -> "number"
-            STRING -> "string"
+            NUMBER_LITERAL -> "number_literal"
+            STRING_LITERAL -> "string_literal"
             EOF -> "EOF"
         }
     }
@@ -90,7 +89,7 @@ fun IntRange.safeSlice(begin: Int, end: Int?): IntRange? {
 
 data class Token(val type: TokenType, val value: String) {
     override fun toString(): String {
-        return if (type == TokenType.STRING) "$type: \"$value\"" else "$type: $value"
+        return if (type == TokenType.STRING_LITERAL) "$type: \"$value\"" else "$type: $value"
     }
 }
 
@@ -173,8 +172,8 @@ class Constants {
                     else -> throw InterpretationRuntimeException("$collection has no such method as \"random\"")
                 }
             } else {
-                val first = context.stack["first"]!!.asNumber()!!
-                val second = context.stack["second"]!!.asNumber()!!
+                val first = context.stack["first"]!!.asInteger()!!
+                val second = context.stack["second"]!!.asInteger()!!
                 (first until second).random().toNodeValue()
             }
         }, null)
@@ -182,37 +181,65 @@ class Constants {
             val begin = context.stack["begin"]!!
             val end = context.stack["end"]
             return@BuiltinProcedureValue when (begin) {
-                is NumberValue -> {
-                    if (end == null) NumberRangeValue(NumberValue(0), begin, false) else NumberRangeValue(
-                        begin, end as NumberValue, false
+                is IntegerValue -> {
+                    if (end == null) IntegerRangeValue(IntegerValue(0), begin, false) else IntegerRangeValue(
+                        begin, end as IntegerValue, false
                     )
                 }
                 is StringValue -> {
                     CharRangeValue(begin, end!! as StringValue, false)
                 }
-                else -> throw InterpretationRuntimeException("range: $begin must be a number or a string")
+                else -> throw InterpretationRuntimeException("range: $begin must be an integer or a string")
             }
         }, null)
         private val RangeInclusive = BuiltinProcedureValue("rangeInclusive", ListNode("begin", "end"), { context ->
             val begin = context.stack["begin"]!!
             val end = context.stack["end"]
             return@BuiltinProcedureValue when (begin) {
-                is NumberValue -> {
-                    if (end == null) NumberRangeValue(NumberValue(0), begin, true) else NumberRangeValue(
-                        begin, end as NumberValue, true
+                is IntegerValue -> {
+                    if (end == null) IntegerRangeValue(IntegerValue(0), begin, true) else IntegerRangeValue(
+                        begin, end as IntegerValue, true
                     )
                 }
                 is StringValue -> {
                     CharRangeValue(begin, end!! as StringValue, true)
                 }
-                else -> throw InterpretationRuntimeException("range: $begin must be a number or a string")
+                else -> throw InterpretationRuntimeException("range: $begin must be an integer or a string")
             }
         }, null)
-        private val Number = BuiltinProcedureValue("number", ListNode("str"), { context ->
-            context.stack["str"]!!.asString()!!.toLong().toNodeValue()
+        private val Integer = BuiltinProcedureValue("integer", ListNode("what"), { context ->
+            val what = context.stack["what"] ?: return@BuiltinProcedureValue NullValue
+            when (what) {
+                is ArithmeticValue -> what.coercedTo(IntegerValue::class)
+                is StringValue -> IntegerValue(what.value.toLong())
+                else -> NullValue
+            }
         }, null)
-        private val String = BuiltinProcedureValue("string", ListNode("num"), { context ->
-            context.stack["num"]!!.asNumber()!!.toString().toNodeValue()
+        private val Float = BuiltinProcedureValue("float", ListNode("what"), { context ->
+            val what = context.stack["what"] ?: return@BuiltinProcedureValue NullValue
+            when (what) {
+                is ArithmeticValue -> what.coercedTo(FloatValue::class)
+                is StringValue -> FloatValue(what.value.toDouble())
+                else -> NullValue
+            }
+        }, null)
+        private val Number = BuiltinProcedureValue("number", ListNode("what"), { context ->
+            val what = context.stack["what"] ?: return@BuiltinProcedureValue NullValue
+            when (what) {
+                is BooleanValue -> what.coercedTo(IntegerValue::class)
+                is ArithmeticValue -> what
+                is StringValue -> {
+                    if (what.value.contains('.')) {
+                        FloatValue(what.value.toDouble())
+                    } else {
+                        IntegerValue(what.value.toLong())
+                    }
+                }
+                else -> NullValue
+            }
+        }, null)
+        private val String = BuiltinProcedureValue("string", ListNode("what"), { context ->
+            context.stack["what"]!!.printStr.toNodeValue()
         }, null)
         private val Object = BuiltinProcedureValue("object", ListNode("fields"), { context ->
             val fields = context.stack["fields"]?.asList() ?: return@BuiltinProcedureValue ObjectValue()
@@ -225,7 +252,9 @@ class Constants {
             return@BuiltinProcedureValue ObjectValue(result)
         }, null)
         private val Abs = BuiltinProcedureValue("abs", ListNode("num"), { context ->
-            context.stack["num"]!!.asNumber()!!.absoluteValue.toNodeValue()
+            val it = context.stack["num"]!!.asArithmetic()!!
+            val minusIt = it.unaryMinus()
+            return@BuiltinProcedureValue if (it > minusIt) it else minusIt
         }, null)
         private val Enumerated = BuiltinProcedureValue("enumerated", ListNode(), { context ->
             val list = context.stack["this"]!!
@@ -245,17 +274,22 @@ class Constants {
             context.stack["str"]!!.asString()!!.first().code.toLong().toNodeValue()
         }, null)
         private val Chr = BuiltinProcedureValue("chr", ListNode("num"), { context ->
-            context.stack["num"]!!.asNumber()!!.toInt().toChar().toString().toNodeValue()
+            context.stack["num"]!!.asInteger()!!.toInt().toChar().toString().toNodeValue()
         }, null)
         private val Pow = BuiltinProcedureValue("pow", ListNode("num", "exp"), { context ->
-            val num = context.stack["num"]!!.asNumber()!!
-            val exp = context.stack["exp"]!!.asNumber()!!
-            num.toDouble().pow(exp.toDouble()).toLong().toNodeValue()
+            val num = context.stack["num"]!!.asArithmetic()!!
+            val exp = context.stack["exp"]!!.asArithmetic()!!
+            num.coercedTo(FloatValue::class).value.pow(exp.coercedTo(FloatValue::class).value).toNodeValue()
         }, null)
         private val Sum = BuiltinProcedureValue("sum", ListNode(), { context ->
             val list = context.stack["this"]!!
             return@BuiltinProcedureValue if (list is Iterable<*>) {
-                list.sumOf { (it as NodeValue).asNumber()!! }.toNodeValue()
+                var s: NodeValue? = null
+                for (item in list) {
+                    if (s == null) s = (item as NodeValue)
+                    else s = s.plus(item as NodeValue)
+                }
+                s ?: IntegerValue(0)
             } else {
                 throw InterpretationRuntimeException("$list has no such method as \"sum\"")
             }
@@ -299,11 +333,11 @@ class Constants {
         }, null)
         private val Max = BuiltinProcedureValue("max", ListNode("list"), { context ->
             val list = (context.stack["this"] as? Iterable<*>) ?: (context.stack["list"]!! as Iterable<*>)
-            return@BuiltinProcedureValue list.maxByOrNull { it as NumberValue }!! as NodeValue
+            return@BuiltinProcedureValue list.maxByOrNull { it as NodeValue }!! as NodeValue
         }, null)
         private val Min = BuiltinProcedureValue("max", ListNode("list"), { context ->
             val list = (context.stack["this"] as? Iterable<*>) ?: (context.stack["list"]!! as Iterable<*>)
-            return@BuiltinProcedureValue list.minByOrNull { it as NumberValue }!! as NodeValue
+            return@BuiltinProcedureValue list.minByOrNull { it as NodeValue }!! as NodeValue
         }, null)
         private val Reversed = BuiltinProcedureValue("reversed", ListNode(), { context ->
             return@BuiltinProcedureValue when (val list = context.stack["this"]!!) {
@@ -332,7 +366,7 @@ class Constants {
             }
         }, null)
         private val GetNickname = BuiltinProcedureValue("getNickname", ListNode("id"), { context ->
-            val user = context.stack["id"]!!.asNumber()!!
+            val user = context.stack["id"]!!.asInteger()!!
             return@BuiltinProcedureValue context.nickname(user).toNodeValue()
         }, null)
         private val Re = BuiltinProcedureValue("re", ListNode("pattern", "flags"), { context ->
@@ -365,7 +399,7 @@ class Constants {
             }
         }, null)
         private val Sleep = BuiltinProcedureValue("sleep", ListNode("ms"), { context ->
-            val ms = context.stack["ms"]!!.asNumber()!!
+            val ms = context.stack["ms"]!!.asInteger()!!
             context.sleep(ms)
             return@BuiltinProcedureValue NullValue
         }, null)
@@ -376,6 +410,8 @@ class Constants {
             "rangeInclusive" to RangeInclusive,
             "number" to Number,
             "num" to Number,
+            "integer" to Integer,
+            "float" to Float,
             "string" to String,
             "str" to String,
             "object" to Object,
@@ -400,7 +436,6 @@ class Constants {
             "random" to Random,
             "rand" to Random,
             "enumerated" to Enumerated,
-            "enumerate" to Enumerated,
             "sum" to Sum,
             "filter" to Filter,
             "reduce" to Reduce,

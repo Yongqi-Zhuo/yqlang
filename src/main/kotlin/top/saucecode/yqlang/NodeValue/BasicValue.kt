@@ -56,15 +56,17 @@ sealed class ArithmeticValue : NodeValue() {
             that.rem(this) // for lists and strings
         }
     }
+    @Suppress("UNCHECKED_CAST")
     fun<T: ArithmeticValue> coercedTo(level: KClass<T>): T {
         return when (level) {
             BooleanValue::class -> BooleanValue(this) as T
-            NumberValue::class -> NumberValue(this) as T
+            IntegerValue::class -> IntegerValue(this) as T
+            FloatValue::class -> FloatValue(this) as T
             else -> throw IllegalArgumentException("Cannot coerce $this to $level")
         }
     }
     companion object {
-        private val coercionLevels = listOf(BooleanValue::class, NumberValue::class)
+        private val coercionLevels = listOf(BooleanValue::class, IntegerValue::class, FloatValue::class)
         private fun getHigherLevel(value1: ArithmeticValue, value2: ArithmeticValue): KClass<out ArithmeticValue> {
             val level1 = coercionLevels.indexOf(value1::class)
             val level2 = coercionLevels.indexOf(value2::class)
@@ -106,7 +108,7 @@ data class StringValue(val value: String) : NodeValue(), Iterable<StringValue> {
     }
     override operator fun times(that: NodeValue): NodeValue {
         return when (that) {
-            is ArithmeticValue -> value.repeat(that.coercedTo(NumberValue::class).value.toInt()).toNodeValue()
+            is ArithmeticValue -> value.repeat(that.coercedTo(IntegerValue::class).value.toInt()).toNodeValue()
             else -> super.times(that) // throws exception
         }
     }
@@ -145,7 +147,7 @@ data class ListValue(val value: MutableList<NodeValue>) : NodeValue(), Iterable<
     override operator fun times(that: NodeValue): NodeValue {
         return when (that) {
             is ArithmeticValue -> {
-                val cnt = that.coercedTo(NumberValue::class).value.toInt()
+                val cnt = that.coercedTo(IntegerValue::class).value.toInt()
                 List(cnt * size) { index -> value[index % size] }.toNodeValue()
             }
             else -> super.times(that) // throws
@@ -156,7 +158,7 @@ data class ListValue(val value: MutableList<NodeValue>) : NodeValue(), Iterable<
 fun List<NodeValue>.toNodeValue() = ListValue(if (this is MutableList) this else this.toMutableList())
 
 @Serializable
-data class NumberValue(val value: Long) : ArithmeticValue() {
+data class IntegerValue(val value: Long) : ArithmeticValue() {
     override val debugStr: String
         get() = value.toString()
     override val printStr: String
@@ -164,32 +166,78 @@ data class NumberValue(val value: Long) : ArithmeticValue() {
     override fun toString(): String = debugStr
     override fun toBoolean(): Boolean = value != 0L
     constructor(what: ArithmeticValue): this(when(what) {
-        is NumberValue -> what.value
+        is IntegerValue -> what.value
+        is FloatValue -> what.value.toLong()
         is BooleanValue -> if (what.value) 1L else 0L
     })
     override fun plusImpl(that: ArithmeticValue): ArithmeticValue {
-        return NumberValue(value + (that as NumberValue).value)
+        return IntegerValue(value + (that as IntegerValue).value)
     }
     override fun minusImpl(that: ArithmeticValue): ArithmeticValue {
-        return NumberValue(value - (that as NumberValue).value)
+        return IntegerValue(value - (that as IntegerValue).value)
     }
     override fun timesImpl(that: ArithmeticValue): ArithmeticValue {
-        return NumberValue(value * (that as NumberValue).value)
+        return IntegerValue(value * (that as IntegerValue).value)
     }
 
     override fun divImpl(that: ArithmeticValue): ArithmeticValue {
-        return NumberValue(value / (that as NumberValue).value)
+        return IntegerValue(value / (that as IntegerValue).value)
     }
     override fun remImpl(that: ArithmeticValue): ArithmeticValue {
-        return NumberValue(value % (that as NumberValue).value)
+        return IntegerValue(value % (that as IntegerValue).value)
     }
     override operator fun unaryMinus(): ArithmeticValue {
-        return NumberValue(-value)
+        return IntegerValue(-value)
     }
 }
 
-fun Int.toNodeValue(): NodeValue = NumberValue(this.toLong())
-fun Long.toNodeValue(): NodeValue = NumberValue(this)
+fun Int.toNodeValue(): NodeValue = IntegerValue(this.toLong())
+fun Long.toNodeValue(): NodeValue = IntegerValue(this)
+
+@Serializable
+data class FloatValue(val value: Double) : ArithmeticValue() {
+    override val debugStr: String
+        get() = value.toString()
+    override val printStr: String
+        get() = debugStr
+
+    override fun toString(): String = debugStr
+    override fun toBoolean(): Boolean = value != 0.0
+
+    constructor(what: ArithmeticValue) : this(
+        when (what) {
+            is IntegerValue -> what.value.toDouble()
+            is FloatValue -> what.value
+            is BooleanValue -> if (what.value) 1.0 else 0.0
+        }
+    )
+
+    override fun plusImpl(that: ArithmeticValue): ArithmeticValue {
+        return FloatValue(value + (that as FloatValue).value)
+    }
+
+    override fun minusImpl(that: ArithmeticValue): ArithmeticValue {
+        return FloatValue(value - (that as FloatValue).value)
+    }
+
+    override fun timesImpl(that: ArithmeticValue): ArithmeticValue {
+        return FloatValue(value * (that as FloatValue).value)
+    }
+
+    override fun divImpl(that: ArithmeticValue): ArithmeticValue {
+        return FloatValue(value / (that as FloatValue).value)
+    }
+
+    override fun remImpl(that: ArithmeticValue): ArithmeticValue {
+        throw OperationRuntimeException("remainder is not defined for floating point numbers")
+    }
+
+    override operator fun unaryMinus(): ArithmeticValue {
+        return FloatValue(-value)
+    }
+}
+
+fun Double.toNodeValue(): NodeValue = FloatValue(this)
 
 @Serializable
 data class BooleanValue(val value: Boolean) : ArithmeticValue() {
@@ -202,22 +250,22 @@ data class BooleanValue(val value: Boolean) : ArithmeticValue() {
     fun toLong(): Long = if (value) 1L else 0L
     constructor(what: ArithmeticValue): this(what.toBoolean())
     override fun plusImpl(that: ArithmeticValue): ArithmeticValue {
-        return NumberValue(toLong() + (that as BooleanValue).toLong())
+        return IntegerValue(toLong() + (that as BooleanValue).toLong())
     }
     override fun minusImpl(that: ArithmeticValue): ArithmeticValue {
-        return NumberValue(toLong() - (that as BooleanValue).toLong())
+        return IntegerValue(toLong() - (that as BooleanValue).toLong())
     }
     override fun timesImpl(that: ArithmeticValue): ArithmeticValue {
-        return NumberValue(toLong() * (that as BooleanValue).toLong())
+        return IntegerValue(toLong() * (that as BooleanValue).toLong())
     }
     override fun divImpl(that: ArithmeticValue): ArithmeticValue {
-        return NumberValue(toLong() / (that as BooleanValue).toLong())
+        return IntegerValue(toLong() / (that as BooleanValue).toLong())
     }
     override fun remImpl(that: ArithmeticValue): ArithmeticValue {
-        return NumberValue(toLong() % (that as BooleanValue).toLong())
+        return IntegerValue(toLong() % (that as BooleanValue).toLong())
     }
     override operator fun unaryMinus(): ArithmeticValue {
-        return NumberValue(-toLong())
+        return IntegerValue(-toLong())
     }
 }
 
@@ -227,7 +275,7 @@ fun Boolean.toNodeValue() = BooleanValue(this)
 sealed class SubscriptValue : NodeValue()
 
 @Serializable
-data class NumberSubscriptValue(val begin: Int, val extended: Boolean, val end: Int? = null) : SubscriptValue() {
+data class IntegerSubscriptValue(val begin: Int, val extended: Boolean, val end: Int? = null) : SubscriptValue() {
     override val debugStr: String
         get() = if (extended) {
             if (end == null) {

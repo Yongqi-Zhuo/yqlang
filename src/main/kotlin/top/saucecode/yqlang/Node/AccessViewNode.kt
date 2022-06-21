@@ -101,7 +101,7 @@ class ListAccessView(private val list: ListValue, parent: AccessView?, context: 
             is KeySubscriptValue -> {
                 return MethodCallAccessView(accessor.key, this, context)
             }
-            is NumberSubscriptValue -> {
+            is IntegerSubscriptValue -> {
                 if (accessState == AccessState.NONE) {
                     accessState = AccessState.SLICE
                     range = 0 until list.size
@@ -164,7 +164,7 @@ class StringAccessView(private val string: StringValue, parent: AccessView?, con
             is KeySubscriptValue -> {
                 return MethodCallAccessView(accessor.key, this, context)
             }
-            is NumberSubscriptValue -> {
+            is IntegerSubscriptValue -> {
                 if (accessState == AccessState.NONE) {
                     accessState = AccessState.SLICE
                     range = 0 until string.value.length
@@ -224,7 +224,7 @@ class ObjectAccessView(private val objectValue: ObjectValue, parent: AccessView?
                     create(objectValue[accessor.key]!!, this, context)
                 }
             }
-            is NumberSubscriptValue -> {
+            is IntegerSubscriptValue -> {
                 NullAccessView(this, context)
             }
         }

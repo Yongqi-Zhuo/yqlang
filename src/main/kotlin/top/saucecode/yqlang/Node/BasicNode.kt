@@ -44,7 +44,7 @@ class IdentifierNode(val name: String) : Node() {
 }
 
 @Serializable
-class NumberNode(private val value: Long) : Node() {
+class IntegerNode(private val value: Long) : Node() {
 
     constructor(token: Token) : this(token.value.toLong())
 
@@ -53,7 +53,21 @@ class NumberNode(private val value: Long) : Node() {
     }
 
     override fun toString(): String {
-        return "num($value)"
+        return "integer($value)"
+    }
+}
+
+@Serializable
+class FloatNode(private val value: Double) : Node() {
+
+    constructor(token: Token) : this(token.value.toDouble())
+
+    override fun exec(context: ExecutionContext): NodeValue {
+        return value.toNodeValue()
+    }
+
+    override fun toString(): String {
+        return "float($value)"
     }
 }
 
@@ -98,11 +112,11 @@ class ListNode(private val items: List<Node>) : Node() {
 class SubscriptNode(private val begin: Node, private val extended: Boolean, private val end: Node? = null) : Node() {
     override fun exec(context: ExecutionContext): SubscriptValue {
         return when (val begin = begin.exec(context)) {
-            is NumberValue -> NumberSubscriptValue(
-                begin.value.toInt(), extended, end?.exec(context)?.asNumber()?.toInt()
+            is IntegerValue -> IntegerSubscriptValue(
+                begin.value.toInt(), extended, end?.exec(context)?.asInteger()?.toInt()
             )
             is StringValue -> KeySubscriptValue(begin.value)
-            else -> throw TypeMismatchRuntimeException(listOf(NumberValue::class.java, StringValue::class.java), begin)
+            else -> throw TypeMismatchRuntimeException(listOf(IntegerValue::class.java, StringValue::class.java), begin)
         }
     }
 

@@ -35,8 +35,15 @@ class Parser(private val tokens: List<Token>) {
     private fun peek() = tokens[current]
 
     private fun parseIdentifier() = IdentifierNode(consume(TokenType.IDENTIFIER))
-    private fun parseNumber() = NumberNode(consume(TokenType.NUMBER))
-    private fun parseString() = StringNode(consume(TokenType.STRING))
+    private fun parseNumber(): Node {
+        val numTok = consume(TokenType.NUMBER_LITERAL)
+        return if ('.' in numTok.value) {
+            FloatNode(numTok)
+        } else {
+            IntegerNode(numTok)
+        }
+    }
+    private fun parseString() = StringNode(consume(TokenType.STRING_LITERAL))
 
     private fun parseStmtList(newScope: Boolean): StmtListNode {
         val stmts = mutableListOf<Node>()
@@ -282,8 +289,8 @@ class Parser(private val tokens: List<Token>) {
         val token = peek()
         return when (token.type) {
             TokenType.IDENTIFIER -> parseIdentifier()
-            TokenType.NUMBER -> parseNumber()
-            TokenType.STRING -> parseString()
+            TokenType.NUMBER_LITERAL -> parseNumber()
+            TokenType.STRING_LITERAL -> parseString()
             TokenType.PAREN_OPEN -> {
                 consume(TokenType.PAREN_OPEN)
                 val expr = parseOperator()

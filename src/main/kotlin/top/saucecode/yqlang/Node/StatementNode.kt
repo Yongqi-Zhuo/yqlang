@@ -34,7 +34,7 @@ class StmtActionNode(private val action: String, private val expr: Node) : Node(
                 context.say(value.printStr)
             }
             "nudge" -> {
-                context.nudge(value.asNumber()!!)
+                context.nudge(value.asInteger()!!)
             }
             "picsave" -> {
                 context.picSave(value.asString()!!)

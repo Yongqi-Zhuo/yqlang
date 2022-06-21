@@ -4,13 +4,10 @@ class TokenizerException(message: String) : YqlangException(message)
 
 class Tokenizer(private val input: String) {
     private var index = 0
-    private var currentChar = input[index]
+    private val currentChar get() = input[index]
 
     private fun advance() {
         index++
-        if (index < input.length) {
-            currentChar = input[index]
-        }
     }
 
     fun scan(): List<Token> {
@@ -109,35 +106,45 @@ class Tokenizer(private val input: String) {
                 }
                 currentChar == '"' -> {
                     if (rawStringFlag) {
-                        tokens.add(Token(TokenType.STRING, scanString('"', escape = false)))
+                        tokens.add(Token(TokenType.STRING_LITERAL, scanString('"', escape = false)))
                         rawStringFlag = false
                     } else {
-                        tokens.add(Token(TokenType.STRING, scanString('"', escape = true)))
+                        tokens.add(Token(TokenType.STRING_LITERAL, scanString('"', escape = true)))
                     }
                 }
                 currentChar == '\'' -> {
                     if (rawStringFlag) {
-                        tokens.add(Token(TokenType.STRING, scanString('\'', escape = false)))
+                        tokens.add(Token(TokenType.STRING_LITERAL, scanString('\'', escape = false)))
                         rawStringFlag = false
                     } else {
-                        tokens.add(Token(TokenType.STRING, scanString('\'', escape = true)))
+                        tokens.add(Token(TokenType.STRING_LITERAL, scanString('\'', escape = true)))
                     }
                 }
                 currentChar in chineseQuotes -> {
                     if (rawStringFlag) {
-                        tokens.add(Token(TokenType.STRING, scanString(*chineseQuotes, escape = false)))
+                        tokens.add(Token(TokenType.STRING_LITERAL, scanString(*chineseQuotes, escape = false)))
                         rawStringFlag = false
                     } else {
-                        tokens.add(Token(TokenType.STRING, scanString(*chineseQuotes, escape = true)))
+                        tokens.add(Token(TokenType.STRING_LITERAL, scanString(*chineseQuotes, escape = true)))
                     }
                 }
                 currentChar.isDigit() -> {
                     val start = index
                     do {
                         advance()
-                    } while (currentChar.isDigit() && index < input.length)
-                    val value = input.substring(start, index)
-                    tokens.add(Token(TokenType.NUMBER, value))
+                    } while (index < input.length && currentChar.isDigit())
+                    if (index + 1 < input.length && currentChar == '.' && input[index + 1].isDigit()) {
+                        advance()
+                        advance()
+                        while (index < input.length && currentChar.isDigit()) {
+                            advance()
+                        }
+                        val fractionalValue = input.substring(start, index)
+                        tokens.add(Token(TokenType.NUMBER_LITERAL, fractionalValue))
+                    } else {
+                        val integralValue = input.substring(start, index)
+                        tokens.add(Token(TokenType.NUMBER_LITERAL, integralValue))
+                    }
                 }
                 currentChar.isLetterOrDigit() || currentChar == '_' || currentChar == '$' -> {
                     if (currentChar == 'r' && index < input.length - 1 && (input[index + 1] in listOf('"', '\''))) {

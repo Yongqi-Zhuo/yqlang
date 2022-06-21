@@ -3,7 +3,6 @@ package top.saucecode.yqlang
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.onCompletion
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import top.saucecode.yqlang.Node.Node
@@ -86,20 +85,6 @@ sealed class Output {
             return "Nudge $target"
         }
     }
-
-//    data class Reduced(val text: String?, val nudge: Long?) : Output() {
-//        override fun toString(): String {
-//            return "Reduced $text $nudge"
-//        }
-//    }
-//
-//    companion object {
-//        fun reduce(list: List<Output>): Reduced {
-//            val text = list.filterIsInstance<Text>().ifEmpty { null }?.joinToString("\n") { it.text }
-//            val nudge = list.filterIsInstance<Nudge>().lastOrNull()?.target
-//            return Reduced(text, nudge)
-//        }
-//    }
 }
 
 open class ControlledContext(rootScope: Scope, firstRun: Boolean, events: Map<String, NodeValue>) : ExecutionContext(rootScope, firstRun, events) {

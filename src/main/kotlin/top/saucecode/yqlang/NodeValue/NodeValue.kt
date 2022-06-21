@@ -10,7 +10,8 @@ class OperationRuntimeException(message: String) : InterpretationRuntimeExceptio
 sealed class NodeValue : Comparable<NodeValue> {
     abstract fun toBoolean(): Boolean
     fun asString() = (this as? StringValue)?.value
-    fun asNumber() = (this as? NumberValue)?.value
+    fun asInteger() = (this as? IntegerValue)?.value
+    fun asArithmetic() = this as? ArithmeticValue
     fun asList() = (this as? ListValue)?.value
     fun asObject() = this as? ObjectValue
     fun asProcedure() = (this as? ProcedureValue)
@@ -46,7 +47,7 @@ sealed class NodeValue : Comparable<NodeValue> {
         }
     }
     override operator fun compareTo(other: NodeValue): Int {
-        return if (this is NumberValue && other is NumberValue) {
+        return if (this is IntegerValue && other is IntegerValue) {
             this.value.compareTo(other.value)
         } else if (this is StringValue && other is StringValue) {
             this.value.compareTo(other.value)
