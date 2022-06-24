@@ -1,8 +1,8 @@
 package top.saucecode.yqlang
 
 import top.saucecode.yqlang.NodeValue.NodeProcedureValue
-import top.saucecode.yqlang.NodeValue.toNodeValue
 import top.saucecode.yqlang.Node.*
+import top.saucecode.yqlang.NodeValue.NodeValue
 
 open class ParserException(message: String) : Exception(message)
 class UnexpectedTokenException(val token: Token, private val expected: TokenType? = null) :
@@ -10,6 +10,14 @@ class UnexpectedTokenException(val token: Token, private val expected: TokenType
 
 class Parser(private val tokens: List<Token>) {
     private var current = 0
+
+    // compiled code, TODO: generate linear intermediate form
+    // TODO: move ast to memory first
+    val text: MutableList<NodeValue> = mutableListOf()
+    private fun addProcedureToText(procedure: NodeProcedureValue): Int {
+        text.add(procedure)
+        return text.lastIndex
+    }
 
     private fun consume(type: TokenType): Token {
         if (isAtEnd()) {
@@ -51,13 +59,13 @@ class Parser(private val tokens: List<Token>) {
         while (peek().type != TokenType.EOF && peek().type != TokenType.BRACE_CLOSE) {
             stmts.add(parseStmt())
         }
-        stmts.sortWith { a, b ->
-            when {
-                a is StmtDeclNode && b !is StmtDeclNode -> -1
-                a !is StmtDeclNode && b is StmtDeclNode -> 1
-                else -> 0
-            }
-        }
+//        stmts.sortWith { a, b ->
+//            when {
+//                a is StmtDeclNode && b !is StmtDeclNode -> -1
+//                a !is StmtDeclNode && b is StmtDeclNode -> 1
+//                else -> 0
+//            }
+//        }
         return StmtListNode(stmts, newScope)
     }
 
@@ -91,7 +99,8 @@ class Parser(private val tokens: List<Token>) {
                 consume(TokenType.PAREN_CLOSE)
                 consumeLineBreak()
                 val body = parseStmt()
-                StmtDeclNode(func.name, body, params)
+                val addr = addProcedureToText(NodeProcedureValue(body, params))
+                StmtDeclNode(func.name, addr)
             }
             TokenType.RETURN -> {
                 consume(TokenType.RETURN)
@@ -264,8 +273,8 @@ class Parser(private val tokens: List<Token>) {
                 consume(TokenType.PAREN_CLOSE)
                 consumeLineBreak()
                 val body = parseStmt()
-                // have to make sure caller is assigned to self
-                NodeProcedureValue(body, params, null).toNode()
+                val procedureAddr = addProcedureToText(NodeProcedureValue(body, params))
+                return ClosureNode(procedureAddr)
             }
             TokenType.BRACE_OPEN -> {
                 consume(TokenType.BRACE_OPEN)
@@ -279,7 +288,8 @@ class Parser(private val tokens: List<Token>) {
                 val body = parseStmt()
                 consume(TokenType.BRACE_CLOSE)
                 consumeLineBreak()
-                NodeProcedureValue(body, params, null).toNode()
+                val procedureAddr = addProcedureToText(NodeProcedureValue(body, params))
+                return ClosureNode(procedureAddr)
             }
             else -> throw UnexpectedTokenException(peek(), TokenType.FUNC)
         }
@@ -348,12 +358,12 @@ class Parser(private val tokens: List<Token>) {
             TokenType.DOT -> { // attribute access
                 consume(TokenType.DOT)
                 val attribute = IdentifierNode(consume(TokenType.IDENTIFIER))
-                AccessViewNode(termHead, SubscriptNode(attribute.name.toNodeValue().toNode(), false))
+                AccessViewNode(termHead, SubscriptNode(StringNode(attribute.name), false))
             }
             TokenType.BRACKET_OPEN -> { // subscript access
                 consume(TokenType.BRACKET_OPEN)
                 val begin = if (peek().type == TokenType.COLON) {
-                    0.toNodeValue().toNode()
+                    IntegerNode(0)
                 } else parseExpr()
                 val subscript = if (peek().type == TokenType.COLON) {
                     consume(TokenType.COLON)
@@ -372,7 +382,7 @@ class Parser(private val tokens: List<Token>) {
                 consume(TokenType.PAREN_OPEN)
                 val params = parseParamList()
                 consume(TokenType.PAREN_CLOSE)
-                ProcedureNode(termHead, params)
+                ProcedureCallNode(termHead, params)
             }
             else -> termHead
         }

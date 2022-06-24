@@ -1,13 +1,17 @@
 package top.saucecode.yqlang.NodeValue
 
+import kotlinx.serialization.Contextual
 import kotlinx.serialization.Serializable
 import top.saucecode.yqlang.InterpretationRuntimeException
-import top.saucecode.yqlang.Node.ValueNode
+import top.saucecode.yqlang.Runtime.Memory
+import top.saucecode.yqlang.Runtime.PassingScheme
+import top.saucecode.yqlang.Runtime.Pointer
 
 class OperationRuntimeException(message: String) : InterpretationRuntimeException(message)
 
 @Serializable
 sealed class NodeValue : Comparable<NodeValue> {
+    abstract val passingScheme: PassingScheme
     abstract fun toBoolean(): Boolean
     fun asString() = (this as? StringValue)?.value
     fun asInteger() = (this as? IntegerValue)?.value
@@ -16,7 +20,7 @@ sealed class NodeValue : Comparable<NodeValue> {
     fun asObject() = this as? ObjectValue
     fun asProcedure() = (this as? ProcedureValue)
     fun asRegEx() = (this as? RegExValue)
-    fun toNode() = ValueNode(this)
+    // fun toNode() = ValueNode(this)
     abstract val debugStr: String
     abstract val printStr: String
     override fun toString() = debugStr
@@ -60,4 +64,30 @@ sealed class NodeValue : Comparable<NodeValue> {
         }
     }
 
+}
+
+@Serializable
+sealed class PassByValueNodeValue : NodeValue() {
+    override val passingScheme: PassingScheme = PassingScheme.BY_VALUE
+    // PassByValueNodeValue must not have mutable states
+    // abstract fun copy(): PassByValueNodeValue
+}
+
+class AccessingUnsolidifiedValueException(subject: Any) : InterpretationRuntimeException("Accessing unsolidified value: $subject")
+@Serializable
+sealed class PassByReferenceNodeValue : NodeValue() {
+    override val passingScheme: PassingScheme = PassingScheme.BY_REFERENCE
+
+    protected var memory: Memory? = null
+        private set
+    var address: Pointer? = null
+        private set
+    // TODO: add constructors that take memory as argument to avoid typing solidify everywhere
+    open fun solidify(memory: Memory) {
+        if (this.memory != null) {
+            throw InterpretationRuntimeException("Solidifying for more than once: $this")
+        }
+        this.memory = memory
+        address = memory.allocate(this)
+    }
 }

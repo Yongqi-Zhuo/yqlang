@@ -4,37 +4,47 @@ import kotlinx.serialization.Serializable
 import top.saucecode.yqlang.ExecutionContext
 import top.saucecode.yqlang.InterpretationRuntimeException
 import top.saucecode.yqlang.NodeValue.*
+import top.saucecode.yqlang.Runtime.Memory
+import top.saucecode.yqlang.Runtime.Pointer
 import top.saucecode.yqlang.Token
 import top.saucecode.yqlang.TokenType
-import kotlin.math.min
 
 class TypeMismatchRuntimeException(expected: List<Class<*>>, got: Any) :
     InterpretationRuntimeException("Type mismatch, expected one of ${
         expected.joinToString(", ") { it.simpleName }
     }, got ${got.javaClass.simpleName}")
 
-@Serializable
-class ValueNode(private val value: NodeValue) : Node() {
-    override fun exec(context: ExecutionContext): NodeValue {
-        return value
-    }
+//@Serializable
+//class ValueNode(private val value: NodeValue) : Node() {
+//    override fun exec(context: ExecutionContext): NodeValue {
+//        return value
+//    }
+//
+//    override fun toString(): String {
+//        return value.toString()
+//    }
+//}
 
-    override fun toString(): String {
-        return value.toString()
-    }
-}
-
 @Serializable
-class IdentifierNode(val name: String) : Node() {
+class IdentifierNode(val name: String) : Node(), ConvertibleToAssignablePattern {
 
     constructor(token: Token) : this(token.value)
 
     override fun exec(context: ExecutionContext): NodeValue {
-        return context.stack[name] ?: NullValue
+        context.referenceEnvironment.getName(name)?.let {
+            return context.memory[it]
+        } ?: throw InterpretationRuntimeException("Undefined name $name")
     }
 
-    override fun assign(context: ExecutionContext, value: NodeValue) {
-        context.stack[name] = value
+    override fun toPattern(context: ExecutionContext): AssignablePattern {
+        val ptr = context.referenceEnvironment.getName(name)
+        return if (ptr == null) {
+            val addr = context.memory.allocate(NullValue)
+            context.referenceEnvironment.setLocalName(name, addr)
+            AddressAssignablePattern(addr)
+        } else {
+            AddressAssignablePattern(ptr)
+        }
     }
 
     override fun toString(): String {
@@ -44,12 +54,16 @@ class IdentifierNode(val name: String) : Node() {
 }
 
 @Serializable
-class IntegerNode(private val value: Long) : Node() {
+class IntegerNode(private val value: Long) : Node(), ConvertibleToAssignablePattern {
 
     constructor(token: Token) : this(token.value.toLong())
 
     override fun exec(context: ExecutionContext): NodeValue {
         return value.toNodeValue()
+    }
+
+    override fun toPattern(context: ExecutionContext): ConstantAssignablePattern {
+        return ConstantAssignablePattern(value.toNodeValue())
     }
 
     override fun toString(): String {
@@ -58,12 +72,16 @@ class IntegerNode(private val value: Long) : Node() {
 }
 
 @Serializable
-class FloatNode(private val value: Double) : Node() {
+class FloatNode(private val value: Double) : Node(), ConvertibleToAssignablePattern {
 
     constructor(token: Token) : this(token.value.toDouble())
 
     override fun exec(context: ExecutionContext): NodeValue {
         return value.toNodeValue()
+    }
+
+    override fun toPattern(context: ExecutionContext): ConstantAssignablePattern {
+        return ConstantAssignablePattern(value.toNodeValue())
     }
 
     override fun toString(): String {
@@ -72,12 +90,16 @@ class FloatNode(private val value: Double) : Node() {
 }
 
 @Serializable
-class StringNode(private val value: String) : Node() {
+class StringNode(private val value: String) : Node(), ConvertibleToAssignablePattern {
 
     constructor(token: Token) : this(token.value)
 
     override fun exec(context: ExecutionContext): NodeValue {
-        return value.toNodeValue()
+        return StringValue(value).apply { solidify(context.memory) }
+    }
+
+    override fun toPattern(context: ExecutionContext): ConstantAssignablePattern {
+        return ConstantAssignablePattern(exec(context))
     }
 
     override fun toString(): String {
@@ -86,19 +108,22 @@ class StringNode(private val value: String) : Node() {
 }
 
 @Serializable
-class ListNode(private val items: List<Node>) : Node() {
+class ListNode(private val items: List<Node>) : Node(), ConvertibleToAssignablePattern {
     override fun exec(context: ExecutionContext): ListValue {
-        return items.map { it.exec(context) }.toNodeValue()
+        // create new instance on heap
+        return ListValue(items.mapTo(mutableListOf()) {
+            context.memory.createReference(it.exec(context))
+        }).apply { solidify(context.memory) }
     }
 
-    override fun assign(context: ExecutionContext, value: NodeValue) {
-        val list = value.asList()
-        if (list != null) {
-            val cnt = min(items.size, list.size)
-            for (i in 0 until cnt) {
-                items[i].assign(context, list[i])
+    override fun toPattern(context: ExecutionContext): AssignablePattern {
+        return ListAssignablePattern(items.map { node ->
+            if (node is ConvertibleToAssignablePattern) {
+                node.toPattern(context)
+            } else {
+                throw TypeMismatchRuntimeException(listOf(ConvertibleToAssignablePattern::class.java), node)
             }
-        }
+        })
     }
 
     constructor(vararg items: String) : this(items.map { IdentifierNode(Token(TokenType.IDENTIFIER, it)) })
@@ -128,9 +153,9 @@ class SubscriptNode(private val begin: Node, private val extended: Boolean, priv
 @Serializable
 class ObjectNode(private val items: List<Pair<IdentifierNode, Node>>) : Node() {
     override fun exec(context: ExecutionContext): ObjectValue {
-        return items.associateTo(mutableMapOf()) { (key, value) ->
-            key.name to value.exec(context)
-        }.toNodeValue()
+        return ObjectValue(items.associateTo(mutableMapOf()) { (key, value) ->
+            key.name to context.memory.createReference(value.exec(context))
+        }).apply { solidify(context.memory) }
     }
 
     override fun toString(): String {
@@ -139,11 +164,22 @@ class ObjectNode(private val items: List<Pair<IdentifierNode, Node>>) : Node() {
 }
 
 @Serializable
-class ProcedureNode(private val func: Node, private val args: ListNode) : Node() {
+class ClosureNode(private val label: Int) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
-        val procedure = func.exec(context).asProcedure()!!
-        val args = args.exec(context)
-        return procedure.call(context, args)
+        return context.memory[Pointer(Memory.Location.STATIC, label)]
+    }
+
+    override fun toString(): String {
+        return "closure($label)"
+    }
+}
+
+@Serializable
+class ProcedureCallNode(private val func: Node, private val args: ListNode) : Node() {
+    override fun exec(context: ExecutionContext): NodeValue {
+        val procedure = func.exec(context) as CallableProcedure
+        val args = context.memory.createReference(args.exec(context))
+        return procedure.call(context, 0, args)
     }
 
     override fun toString(): String {

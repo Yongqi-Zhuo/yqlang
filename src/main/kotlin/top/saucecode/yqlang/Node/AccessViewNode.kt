@@ -15,7 +15,8 @@ sealed class AccessView(protected val parent: AccessView?, protected val context
         NONE, SLICE, INDEX
     }
 
-    abstract var value: NodeValue
+    abstract fun exec(): NodeValue
+    open fun toPattern(): AssignablePattern? = null
     abstract fun subscript(accessor: SubscriptValue): AccessView
 
     companion object {
@@ -31,9 +32,7 @@ sealed class AccessView(protected val parent: AccessView?, protected val context
 }
 
 class NullAccessView(parent: AccessView?, context: ExecutionContext) : AccessView(parent, context) {
-    override var value: NodeValue
-        get() = NullValue
-        set(what) = throw IndexOutOfRangeRuntimeException(null, "failed to set value $what to a nonexistent child of $parent")
+    override fun exec(): NodeValue = NullValue
 
     override fun subscript(accessor: SubscriptValue): AccessView =
         throw IndexOutOfRangeRuntimeException(accessor, "failed to subscript a nonexistent child of $parent")
@@ -41,11 +40,8 @@ class NullAccessView(parent: AccessView?, context: ExecutionContext) : AccessVie
 
 class NonCollectionAccessView(private val self: NodeValue, parent: AccessView?, context: ExecutionContext) :
     AccessView(parent, context) {
-    override var value: NodeValue
-        get() = self
-        set(newValue) {
-            parent!!.value = newValue
-        }
+    override fun exec(): NodeValue = self
+    override fun toPattern(): AssignablePattern? = parent?.toPattern()
 
     override fun subscript(accessor: SubscriptValue): AccessView {
         if (accessor is KeySubscriptValue) {
@@ -56,16 +52,12 @@ class NonCollectionAccessView(private val self: NodeValue, parent: AccessView?, 
 
 class MethodCallAccessView(private val funcName: String, parent: AccessView, context: ExecutionContext) :
     AccessView(parent, context) {
-    override var value: NodeValue
-        get() {
-            val func = try { (context.stack[funcName]!! as ProcedureValue).copy() } catch (e: Exception) {
-                throw IndexOutOfRangeRuntimeException(funcName, "$parent has no such method as $funcName")
-            }
-            return func.bind(parent!!.value)
-        }
-        set(newValue) {
-            parent!!.value = newValue
-        }
+    override fun exec(): NodeValue {
+        return context.referenceEnvironment.getName(funcName)?.let {
+            return BoundProcedureValue(it, context.memory.createReference(parent!!.exec()))
+        } ?: throw IndexOutOfRangeRuntimeException(funcName, "$parent has no such method as $funcName")
+    }
+    override fun toPattern(): AssignablePattern? = parent?.toPattern()
 
     override fun subscript(accessor: SubscriptValue): AccessView =
         throw IndexOutOfRangeRuntimeException(accessor, "cannot access a child of a method")
@@ -76,25 +68,22 @@ class ListAccessView(private val list: ListValue, parent: AccessView?, context: 
     private var accessState: AccessState = AccessState.NONE
     private var range: IntRange? = null
     private var index: Int? = null
-    override var value: NodeValue
-        get() = when (accessState) {
+    override fun exec(): NodeValue {
+        return when (accessState) {
             AccessState.NONE -> list
-            AccessState.SLICE -> list.value.slice(range!!).toNodeValue()
-            AccessState.INDEX -> list[index!!]
+            AccessState.SLICE -> ListValue(list.value.slice(range!!).toMutableList()).apply { solidify(context.memory) }
+            AccessState.INDEX -> context.memory[list[index!!]]
         }
-        set(value) {
-            when (accessState) {
-                AccessState.NONE -> parent!!.value = value
-                AccessState.SLICE -> {
-                    list.value.subList(range!!.first, range!!.last + 1).clear()
-                    when (value) {
-                        is ListValue -> value.value.reversed().forEach { list.value.add(range!!.first, it) }
-                        else -> list.value.add(range!!.first, value)
-                    }
-                }
-                AccessState.INDEX -> list[index!!] = value
+    }
+    override fun toPattern(): AssignablePattern? {
+        return when (accessState) {
+            AccessState.NONE -> parent?.toPattern()
+            AccessState.SLICE -> {
+                ListAssignablePattern(list.value.subList(range!!.first, range!!.last + 1).map { AddressAssignablePattern(it) })
             }
+            AccessState.INDEX -> AddressAssignablePattern(list[index!!])
         }
+    }
 
     override fun subscript(accessor: SubscriptValue): AccessView {
         when (accessor) {
@@ -120,7 +109,7 @@ class ListAccessView(private val list: ListValue, parent: AccessView?, context: 
                         accessState = AccessState.INDEX
                         range = null
                         this.index = index
-                        create(list[index], this, context)
+                        create(context.memory[list[index]], this, context)
                     } else {
                         NullAccessView(this, context)
                     }
@@ -135,29 +124,24 @@ class StringAccessView(private val string: StringValue, parent: AccessView?, con
     private var accessState: AccessState = AccessState.NONE
     private var range: IntRange? = null
     private var index: Int? = null
-    override var value: NodeValue
-        get() = when (accessState) {
+    override fun exec(): NodeValue {
+        return when (accessState) {
             AccessState.NONE -> string
-            AccessState.SLICE -> string.value.substring(range!!).toNodeValue()
-            AccessState.INDEX -> string.value[index!!].toString().toNodeValue()
+            AccessState.SLICE -> StringValue(string.value.substring(range!!)).apply { solidify(context.memory) }
+            AccessState.INDEX -> StringValue(string.value[index!!].toString()).apply { solidify(context.memory) }
         }
-        set(value) {
-            when (accessState) {
-                AccessState.NONE -> parent!!.value = value
-                AccessState.SLICE -> {
-                    val begin = range!!.first
-                    val end = range!!.last + 1
-                    val first = if (begin > 0) string.value.substring(0, begin) else ""
-                    val second = if (end < string.value.length) string.value.substring(end) else ""
-                    parent!!.value = (first + value.toString() + second).toNodeValue()
-                }
-                AccessState.INDEX -> {
-                    val first = if (index!! > 0) string.value.substring(0, index!!) else ""
-                    val second = if (index!! + 1 < string.value.length) string.value.substring(index!! + 1) else ""
-                    parent!!.value = (first + value.toString() + second).toNodeValue()
-                }
+    }
+    override fun toPattern(): AssignablePattern? {
+        return when (accessState) {
+            AccessState.NONE -> parent?.toPattern()
+            AccessState.SLICE -> {
+                return StringAssignablePattern(string, range!!.first, range!!.last + 1)
+            }
+            AccessState.INDEX -> {
+                return StringAssignablePattern(string, index!!, index!! + 1)
             }
         }
+    }
 
     override fun subscript(accessor: SubscriptValue): AccessView {
         when (accessor) {
@@ -197,21 +181,19 @@ class ObjectAccessView(private val objectValue: ObjectValue, parent: AccessView?
     AccessView(parent, context) {
     private var accessed: Boolean = false
     private var key: String? = null
-    override var value: NodeValue
-        get() = if (accessed) try { objectValue[key!!]!! } catch (e: Exception) {
+    override fun exec(): NodeValue = if (accessed) {
+        objectValue[key!!]?.let { context.memory[it] } ?:
             throw IndexOutOfRangeRuntimeException(key, "object $objectValue has no such key as $key")
-        } else objectValue
-        set(value) {
-            if (accessed) {
-                if (value is ProcedureValue) {
-                    objectValue[key!!] = value.copy().bind(objectValue)
-                } else {
-                    objectValue[key!!] = value
-                }
-            } else {
-                parent!!.value = value
-            }
+    } else objectValue
+    override fun toPattern(): AssignablePattern? {
+        return if (accessed) {
+            (objectValue[key!!] ?: context.memory.allocate(NullValue).also {
+                objectValue.directSet(key!!, it)
+            }).let { AddressAssignablePattern(it) }
+        } else {
+            parent?.toPattern()
         }
+    }
 
     override fun subscript(accessor: SubscriptValue): AccessView {
         return when (accessor) {
@@ -221,7 +203,7 @@ class ObjectAccessView(private val objectValue: ObjectValue, parent: AccessView?
                 if (objectValue[accessor.key] == null) {
                     MethodCallAccessView(accessor.key, this, context)
                 } else {
-                    create(objectValue[accessor.key]!!, this, context)
+                    create(context.memory[objectValue[accessor.key]!!], this, context)
                 }
             }
             is IntegerSubscriptValue -> {
@@ -232,7 +214,7 @@ class ObjectAccessView(private val objectValue: ObjectValue, parent: AccessView?
 }
 
 @Serializable
-class AccessViewNode(private val list: Node, private val subscripts: List<SubscriptNode>) : Node() {
+class AccessViewNode(private val list: Node, private val subscripts: List<SubscriptNode>) : Node(), ConvertibleToAssignablePattern {
     constructor(
         existing: Node, subscript: SubscriptNode
     ) : this(
@@ -245,15 +227,15 @@ class AccessViewNode(private val list: Node, private val subscripts: List<Subscr
         for (subscript in subscripts) {
             accessor = accessor.subscript(subscript.exec(context))
         }
-        return accessor.value
+        return accessor.exec()
     }
 
-    override fun assign(context: ExecutionContext, value: NodeValue) {
+    override fun toPattern(context: ExecutionContext): AssignablePattern {
         var accessor = AccessView.create(list.exec(context), null, context)
         for (subscript in subscripts) {
             accessor = accessor.subscript(subscript.exec(context))
         }
-        accessor.value = value
+        return accessor.toPattern() ?: throw TypeMismatchRuntimeException(listOf(ConstantAssignablePattern::class.java), this)
     }
 
     override fun toString(): String {

@@ -155,7 +155,7 @@ class Tokenizer(private val input: String) {
                     val start = index
                     do {
                         advance()
-                    } while ((currentChar.isLetterOrDigit() || currentChar == '_') && index < input.length)
+                    } while (index < input.length && (currentChar.isLetterOrDigit() || currentChar == '_'))
                     when (val value = input.substring(start, index)) {
                         "if" -> tokens.add(Token(TokenType.IF, "if"))
                         "else" -> tokens.add(Token(TokenType.ELSE, "else"))

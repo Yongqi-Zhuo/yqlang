@@ -7,6 +7,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import top.saucecode.yqlang.Node.Node
 import top.saucecode.yqlang.NodeValue.NodeValue
+import top.saucecode.yqlang.Runtime.Memory
 import java.util.concurrent.CancellationException
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ExecutionException
@@ -15,13 +16,13 @@ import kotlin.system.measureTimeMillis
 
 open class YqlangException(message: String) : Exception(message)
 
-abstract class ExecutionContext(rootScope: Scope, val firstRun: Boolean, events: Map<String, NodeValue>) {
-    val stack: Stack
+abstract class ExecutionContext(val memory: Memory, rootScope: Scope, val firstRun: Boolean, events: Map<String, NodeValue>) {
+    val referenceEnvironment: ReferenceEnvironment
     var sleepTime: Long = 0
         private set
 
     init {
-        stack = Stack(rootScope,  events)
+        referenceEnvironment = ReferenceEnvironment(rootScope,  events)
     }
 
     abstract fun say(text: String)
@@ -39,7 +40,7 @@ abstract class ExecutionContext(rootScope: Scope, val firstRun: Boolean, events:
     }
 }
 
-class ConsoleContext(rootScope: Scope? = null, events: Map<String, NodeValue>) : ExecutionContext(rootScope ?: Scope.createRoot(), true, events) {
+class ConsoleContext(memory: Memory, rootScope: Scope? = null, events: Map<String, NodeValue> = mapOf()) : ExecutionContext(memory, rootScope ?: Scope.createRoot(), true, events) {
     override fun say(text: String) {
         println(text)
     }
@@ -87,7 +88,7 @@ sealed class Output {
     }
 }
 
-open class ControlledContext(rootScope: Scope, firstRun: Boolean, events: Map<String, NodeValue>) : ExecutionContext(rootScope, firstRun, events) {
+open class ControlledContext(memory: Memory, rootScope: Scope, firstRun: Boolean, events: Map<String, NodeValue>) : ExecutionContext(memory, rootScope, firstRun, events) {
     private val record = mutableListOf<Output>()
     override fun say(text: String) {
         synchronized(record) {
@@ -124,21 +125,6 @@ open class ControlledContext(rootScope: Scope, firstRun: Boolean, events: Map<St
             dump
         }
         return res
-    }
-}
-
-class Interpreter(source: String) {
-    private val ast: Node
-
-    init {
-        val tokens = Tokenizer(source).scan()
-        val parser = Parser(tokens)
-        val res = parser.parse()
-        ast = res
-    }
-
-    fun run(context: ExecutionContext) {
-        ast.exec(context)
     }
 }
 
@@ -207,59 +193,60 @@ class RestrictedInterpreter(source: String) {
     }
 }
 
-class REPL(private val debug: Boolean = false) {
-    val rootScope = Scope.createRoot()
-
-    fun run() {
-        val inputs = mutableListOf<String>()
-        while (true) {
-            print("> ")
-            val input = readLine() ?: break
-            if (input.isEmpty()) continue
-            if (input == "exit" || input == "stop") break
-            inputs.add(input)
-            val ast: Node
-            val compileTime: Long
-            try {
-                compileTime = measureTimeMillis {
-                    ast = Parser(Tokenizer(inputs.joinToString("\n")).scan()).parse()
-                }
-            } catch (e: UnexpectedTokenException) {
-                if (e.token.type == TokenType.EOF) {
-                    continue
-                } else {
-                    println("Compile Error: ${e.message}")
-                    inputs.clear()
-                    continue
-                }
-            } catch (e: Exception) {
-                println("Compile Error: ${e.message}")
-                inputs.clear()
-                continue
-            }
-            inputs.clear()
-            val context = ControlledContext(rootScope, true, mapOf())
-            var runTime: Long? = null
-            try {
-                val res: NodeValue
-                runTime = measureTimeMillis {
-                    res = ast.exec(context)
-                }
-                val output = context.dumpOutput()
-                if (output.isNotEmpty()) {
-                    output.forEach { println(it) }
-                } else {
-                    println(res)
-                }
-                if (debug) {
-                    println("Serialized: ${Json.encodeToString(res)}")
-                }
-            } catch (e: Exception) {
-                println("Runtime Error: ${e.message}")
-            }
-            if (debug) {
-                println("Compile: $compileTime ms${runTime?.let { ", Run: $runTime ms" } ?: ""}")
-            }
-        }
-    }
-}
+// TODO: implement REPL
+//class REPL(private val debug: Boolean = false) {
+//    val rootScope = Scope.createRoot()
+//
+//    fun run() {
+//        val inputs = mutableListOf<String>()
+//        while (true) {
+//            print("> ")
+//            val input = readLine() ?: break
+//            if (input.isEmpty()) continue
+//            if (input == "exit" || input == "stop") break
+//            inputs.add(input)
+//            val ast: Node
+//            val compileTime: Long
+//            try {
+//                compileTime = measureTimeMillis {
+//                    ast = Parser(Tokenizer(inputs.joinToString("\n")).scan()).parse()
+//                }
+//            } catch (e: UnexpectedTokenException) {
+//                if (e.token.type == TokenType.EOF) {
+//                    continue
+//                } else {
+//                    println("Compile Error: ${e.message}")
+//                    inputs.clear()
+//                    continue
+//                }
+//            } catch (e: Exception) {
+//                println("Compile Error: ${e.message}")
+//                inputs.clear()
+//                continue
+//            }
+//            inputs.clear()
+//            val context = ControlledContext(rootScope, true, mapOf())
+//            var runTime: Long? = null
+//            try {
+//                val res: NodeValue
+//                runTime = measureTimeMillis {
+//                    res = ast.exec(context)
+//                }
+//                val output = context.dumpOutput()
+//                if (output.isNotEmpty()) {
+//                    output.forEach { println(it) }
+//                } else {
+//                    println(res)
+//                }
+//                if (debug) {
+//                    println("Serialized: ${Json.encodeToString(res)}")
+//                }
+//            } catch (e: Exception) {
+//                println("Runtime Error: ${e.message}")
+//            }
+//            if (debug) {
+//                println("Compile: $compileTime ms${runTime?.let { ", Run: $runTime ms" } ?: ""}")
+//            }
+//        }
+//    }
+//}

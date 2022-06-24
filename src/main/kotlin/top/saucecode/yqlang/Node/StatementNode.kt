@@ -6,13 +6,19 @@ import top.saucecode.yqlang.InterpretationRuntimeException
 import top.saucecode.yqlang.NodeValue.NodeProcedureValue
 import top.saucecode.yqlang.NodeValue.NodeValue
 import top.saucecode.yqlang.NodeValue.NullValue
+import top.saucecode.yqlang.Runtime.Memory
+import top.saucecode.yqlang.Runtime.Pointer
 import top.saucecode.yqlang.Token
 
 @Serializable
 class StmtAssignNode(private val lvalue: Node, private val expr: Node) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
-        val value = expr.exec(context)
-        lvalue.assign(context, value)
+        val value = context.memory.createReference(expr.exec(context))
+        if (lvalue is ConvertibleToAssignablePattern) {
+            lvalue.toPattern(context).assign(context, value)
+        } else {
+            throw TypeMismatchRuntimeException(listOf(ConvertibleToAssignablePattern::class.java), lvalue)
+        }
         return lvalue.exec(context)
     }
 
@@ -85,15 +91,15 @@ class StmtInitNode(private val stmt: Node) : Node() {
 }
 
 @Serializable
-class StmtDeclNode(private val name: String, private val body: Node, private val params: ListNode) : Node() {
+class StmtDeclNode(private val name: String, private val label: Int) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
-        val procedure = NodeProcedureValue(body, params, null)
-        context.stack.declare(name, procedure)
-        return procedure
+        val addr = Pointer(Memory.Location.STATIC, label)
+        context.referenceEnvironment.setScopeName(name, addr)
+        return context.memory[addr]
     }
 
     override fun toString(): String {
-        return "decl($name, $body, $params)"
+        return "decl($name, $label)"
     }
 }
 
@@ -163,7 +169,8 @@ class StmtForNode(private val iterator: Node, private val collection: Node, priv
         var res: NodeValue = NullValue
         if (collection is Iterable<*>) {
             for (item in collection) {
-                iterator.assign(context, item as NodeValue)
+                (iterator as ConvertibleToAssignablePattern).toPattern(context).assign(context,
+                    context.memory.createReference(item as NodeValue))
                 try {
                     res = body.exec(context)
                 } catch (continueEx: ContinueException) {
@@ -185,14 +192,14 @@ class StmtListNode(private val stmts: List<Node>, private val newScope: Boolean)
         var res: NodeValue = NullValue
         try {
             if (newScope) {
-                context.stack.push()
+                context.referenceEnvironment.pushScope()
             }
             for (node in stmts) {
                 res = node.exec(context)
             }
         } finally {
             if (newScope) {
-                context.stack.pop()
+                context.referenceEnvironment.popScope()
             }
         }
         return res

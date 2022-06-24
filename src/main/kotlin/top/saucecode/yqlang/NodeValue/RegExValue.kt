@@ -8,9 +8,11 @@ import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.encoding.decodeStructure
 import kotlinx.serialization.encoding.encodeStructure
+import top.saucecode.yqlang.ExecutionContext
+import top.saucecode.yqlang.Runtime.PassingScheme
 
 @Serializable(with = RegExValue.Serializer::class)
-class RegExValue(private val pattern: String, private val rawFlags: String) : NodeValue() {
+class RegExValue(private val pattern: String, private val rawFlags: String) : PassByValueNodeValue() {
     override val debugStr: String
         get() = "/$pattern/$rawFlags"
     override val printStr: String
@@ -39,47 +41,47 @@ class RegExValue(private val pattern: String, private val rawFlags: String) : No
         regex = Regex(pattern, flags.mapNotNull { it.value }.toSet())
     }
 
-    fun match(input: StringValue): NodeValue {
-        if (Flag.GLOBAL !in flags) {
-            val matches = regex.find(input.value) ?: return NullValue
-            return matches.groupValues.map { it.toNodeValue() }.toNodeValue()
-        } else {
-            val matches = regex.findAll(input.value)
-            return matches.toList().map { it.value.toNodeValue() }.toNodeValue()
-        }
-    }
+//    fun match(context: ExecutionContext, input: StringValue): List<NodeValue> {
+//        if (Flag.GLOBAL !in flags) {
+//            val matches = regex.find(input.value) ?: return emptyList()
+//            return matches.groupValues.map { it.toNodeValue() }
+//        } else {
+//            val matches = regex.findAll(input.value)
+//            return matches.toList().map { it.value.toNodeValue() }
+//        }
+//    }
+//
+//    fun matchAll(input: StringValue): List<List<NodeValue>> {
+//        val matches = regex.findAll(input.value)
+//        return matches.toList().map { each -> each.groupValues.map { group -> group.toNodeValue() } }
+//    }
+//
+//    fun find(input: StringValue): NodeValue {
+//        val matches = regex.find(input.value) ?: return IntegerValue(-1)
+//        return matches.range.first.toNodeValue()
+//    }
+//
+//    fun findAll(input: StringValue): List<NodeValue> {
+//        val matches = regex.findAll(input.value)
+//        return matches.toList().map { each -> each.range.first.toNodeValue() }
+//    }
+//
+//    fun contains(input: StringValue): NodeValue {
+//        return regex.containsMatchIn(input.value).toNodeValue()
+//    }
+//
+//    fun replace(input: StringValue, replacement: StringValue): NodeValue {
+//        return input.value.replace(regex, replacement.value).toNodeValue()
+//    }
 
-    fun matchAll(input: StringValue): NodeValue {
-        val matches = regex.findAll(input.value)
-        return matches.toList().map { each -> each.groupValues.map { group -> group.toNodeValue() }.toNodeValue() }.toNodeValue()
+    fun split(input: StringValue): List<NodeValue> {
+        return input.value.split(regex).map { StringValue(it) }
     }
-
-    fun find(input: StringValue): NodeValue {
-        val matches = regex.find(input.value) ?: return IntegerValue(-1)
-        return matches.range.first.toNodeValue()
-    }
-
-    fun findAll(input: StringValue): NodeValue {
-        val matches = regex.findAll(input.value)
-        return matches.toList().map { each -> each.range.first.toNodeValue() }.toNodeValue()
-    }
-
-    fun contains(input: StringValue): NodeValue {
-        return regex.containsMatchIn(input.value).toNodeValue()
-    }
-
-    fun replace(input: StringValue, replacement: StringValue): NodeValue {
-        return input.value.replace(regex, replacement.value).toNodeValue()
-    }
-
-    fun split(input: StringValue): NodeValue {
-        return input.value.split(regex).map { it.toNodeValue() }.toNodeValue()
-    }
-
-    fun matchEntire(input: StringValue): NodeValue {
-        val matches = regex.matchEntire(input.value)
-        return (matches != null).toNodeValue()
-    }
+//
+//    fun matchEntire(input: StringValue): NodeValue {
+//        val matches = regex.matchEntire(input.value)
+//        return (matches != null).toNodeValue()
+//    }
 
     class Serializer : KSerializer<RegExValue> {
         override val descriptor = buildClassSerialDescriptor("top.saucecode.yqlang.NodeValue.RegExValue") {

@@ -13,52 +13,64 @@ import top.saucecode.yqlang.ExecutionContext
 import top.saucecode.yqlang.Node.ListNode
 import top.saucecode.yqlang.Node.Node
 import top.saucecode.yqlang.Node.ReturnException
+import top.saucecode.yqlang.Runtime.Pointer
+
+interface CallableProcedure {
+    fun call(context: ExecutionContext, pc: Int, args: Pointer): NodeValue
+}
 
 @Serializable
-sealed class ProcedureValue(protected val params: ListNode, protected var self: NodeValue?) : NodeValue() {
+sealed class ProcedureValue(protected val params: ListNode) : PassByReferenceNodeValue(), CallableProcedure {
     override fun toBoolean(): Boolean = true
-    abstract fun execute(context: ExecutionContext): NodeValue // Must nameArgs and catch ReturnException
-    fun call(context: ExecutionContext, args: ListValue): NodeValue {
+    protected abstract fun execute(context: ExecutionContext): NodeValue
+    fun call(context: ExecutionContext, pc: Int, caller: Pointer?, args: Pointer): NodeValue {
         val res: NodeValue
         try {
-            context.stack.push(args)
+            context.referenceEnvironment.pushFrame()
+            context.memory.pushFrame(0, caller, args)
+            params.toPattern(context).assign(context, args)
             res = execute(context)
         } finally {
-            context.stack.pop()
+            context.referenceEnvironment.popScope()
+            val savedPc = context.memory.popFrame()
         }
         return res
     }
 
-    fun bind(self: NodeValue?): ProcedureValue {
-        this.self = self
-        return this
+    override fun call(context: ExecutionContext, pc: Int, args: Pointer): NodeValue {
+        return call(context, pc, null, args)
     }
+}
 
-    abstract fun copy(): ProcedureValue
+@Serializable
+class BoundProcedureValue(private val procedure: Pointer, private val self: Pointer) : PassByReferenceNodeValue(), CallableProcedure {
+    override val debugStr: String
+        get() = "BoundProcedure"
+    override val printStr: String
+        get() = debugStr
+    override fun toBoolean(): Boolean = true
+    override fun call(context: ExecutionContext, pc: Int, args: Pointer): NodeValue {
+        val procedureValue = context.memory[procedure] as ProcedureValue
+        return procedureValue.call(context, pc, self, args)
+    }
 }
 
 @Serializable(with = BuiltinProcedureValue.Serializer::class)
 class BuiltinProcedureValue(
     private val name: String,
     params: ListNode,
-    private val func: (context: ExecutionContext) -> NodeValue,
-    self: NodeValue?
-) : ProcedureValue(params, self) {
+    private val func: (context: ExecutionContext) -> NodeValue
+) : ProcedureValue(params) {
     override val debugStr: String
         get() = "builtin($name)"
     override val printStr: String
         get() = debugStr
     override fun execute(context: ExecutionContext): NodeValue {
-        context.stack.nameArgs(context, params, self)
         return try {
             func(context)
         } catch (e: ReturnException) {
             e.value
         }
-    }
-
-    override fun copy(): ProcedureValue {
-        return BuiltinProcedureValue(name, params, func, self)
     }
 
     class Serializer : KSerializer<BuiltinProcedureValue> {
@@ -78,23 +90,17 @@ class BuiltinProcedureValue(
 }
 
 @Serializable(with = NodeProcedureValue.Serializer::class)
-class NodeProcedureValue(private val func: Node, params: ListNode, self: NodeValue?) :
-    ProcedureValue(params, self) {
+class NodeProcedureValue(private val func: Node, params: ListNode) : ProcedureValue(params) {
     override val debugStr: String
         get() = "procedure($func($params))"
     override val printStr: String
         get() = debugStr
     override fun execute(context: ExecutionContext): NodeValue {
-        context.stack.nameArgs(context, params, self)
         return try {
             func.exec(context)
         } catch (e: ReturnException) {
             e.value
         }
-    }
-
-    override fun copy(): ProcedureValue {
-        return NodeProcedureValue(func, params, self)
     }
 
     class Serializer : KSerializer<NodeProcedureValue> {
@@ -106,8 +112,7 @@ class NodeProcedureValue(private val func: Node, params: ListNode, self: NodeVal
         override fun deserialize(decoder: Decoder) = decoder.decodeStructure(descriptor) {
             NodeProcedureValue(
                 decodeSerializableElement(descriptor, 0, Node.serializer()),
-                decodeSerializableElement(descriptor, 1, ListNode.serializer()),
-                null
+                decodeSerializableElement(descriptor, 1, ListNode.serializer())
             )
         }
 

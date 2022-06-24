@@ -31,8 +31,15 @@ sealed class OperatorNode : Node() {
     }
 }
 
+// TODO: delete ValueNode
 @Serializable
-class BinaryOperatorNode(private val components: List<Node>, private val ops: List<TokenType>) : OperatorNode() {
+class ValueNode(val value: NodeValue) : OperatorNode() {
+    override fun exec(context: ExecutionContext): NodeValue {
+        return value
+    }
+}
+@Serializable
+class BinaryOperatorNode(private val components: List<Node>, private val ops: List<TokenType>) : OperatorNode(), ConvertibleToAssignablePattern {
     companion object {
         private val opMap =
             mapOf<TokenType, (ExecutionContext, Node, Node) -> NodeValue>(
@@ -79,18 +86,20 @@ class BinaryOperatorNode(private val components: List<Node>, private val ops: Li
             for (i in 1 until components.size) {
                 val op = ops[i - 1]
                 val next = components[i]
-                res = opMap[op]!!(context, res.toNode(), next)
+                res = opMap[op]!!(context, ValueNode(res), next)
             }
             res
         }
     }
 
-    override fun assign(context: ExecutionContext, value: NodeValue) {
+    override fun toPattern(context: ExecutionContext): AssignablePattern {
         if (components.size == 1) {
-            components[0].assign(context, value)
-        } else {
-            throw AssignmentRuntimeException(this, value, "the expression is an arithmetic expression")
+            val what = components[0]
+            if (what is ConvertibleToAssignablePattern) {
+                return what.toPattern(context)
+            }
         }
+        throw TypeMismatchRuntimeException(listOf(ConvertibleToAssignablePattern::class.java), this)
     }
 
     override fun toString(): String {
@@ -112,10 +121,6 @@ class UnaryOperatorNode(private val component: Node, private val op: TokenType) 
 
     override fun exec(context: ExecutionContext): NodeValue {
         return opMap[op]!!(context, component)
-    }
-
-    override fun assign(context: ExecutionContext, value: NodeValue) {
-        throw AssignmentRuntimeException(this, value, "the expression is an arithmetic expression")
     }
 
     override fun toString(): String {
