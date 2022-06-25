@@ -8,12 +8,14 @@ open class ParserException(message: String) : Exception(message)
 class UnexpectedTokenException(val token: Token, private val expected: TokenType? = null) :
     ParserException(if (expected != null) "Unexpected token $token, expected $expected" else "Unexpected token $token")
 
-class Parser(private val tokens: List<Token>) {
+class Parser() {
+    private var tokens: List<Token> = listOf()
     private var current = 0
 
     // compiled code, TODO: generate linear intermediate form
     // TODO: move ast to memory first
     val text: MutableList<NodeValue> = mutableListOf()
+    var lastStatics = 0
     private fun addProcedureToText(procedure: NodeProcedureValue): Int {
         text.add(procedure)
         return text.lastIndex
@@ -274,7 +276,7 @@ class Parser(private val tokens: List<Token>) {
                 consumeLineBreak()
                 val body = parseStmt()
                 val procedureAddr = addProcedureToText(NodeProcedureValue(body, params))
-                return ClosureNode(procedureAddr)
+                ClosureNode(procedureAddr)
             }
             TokenType.BRACE_OPEN -> {
                 consume(TokenType.BRACE_OPEN)
@@ -289,7 +291,7 @@ class Parser(private val tokens: List<Token>) {
                 consume(TokenType.BRACE_CLOSE)
                 consumeLineBreak()
                 val procedureAddr = addProcedureToText(NodeProcedureValue(body, params))
-                return ClosureNode(procedureAddr)
+                ClosureNode(procedureAddr)
             }
             else -> throw UnexpectedTokenException(peek(), TokenType.FUNC)
         }
@@ -396,7 +398,16 @@ class Parser(private val tokens: List<Token>) {
         return term
     }
 
-    fun parse(): Node {
-        return parseStmtList(false)
+    data class ParseResult(val text: Node, val statics: List<NodeValue>)
+
+    fun parse(tokens: List<Token>): ParseResult {
+        this.tokens = tokens
+        this.current = 0
+        // in case exception is thrown
+        while (text.size > lastStatics) text.removeLast()
+        val ast = parseStmtList(false)
+        val newStatics = text.subList(lastStatics, text.size)
+        lastStatics = text.size
+        return ParseResult(ast, newStatics)
     }
 }

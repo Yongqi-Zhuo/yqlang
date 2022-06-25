@@ -1,7 +1,7 @@
 package top.saucecode.yqlang.NodeValue
 
-import kotlinx.serialization.Contextual
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import top.saucecode.yqlang.InterpretationRuntimeException
 import top.saucecode.yqlang.Runtime.Memory
 import top.saucecode.yqlang.Runtime.PassingScheme
@@ -78,12 +78,11 @@ class AccessingUnsolidifiedValueException(subject: Any) : InterpretationRuntimeE
 sealed class PassByReferenceNodeValue : NodeValue() {
     override val passingScheme: PassingScheme = PassingScheme.BY_REFERENCE
 
-    protected var memory: Memory? = null
+    @Transient protected var memory: Memory? = null
         private set
     var address: Pointer? = null
         private set
-    // TODO: add constructors that take memory as argument to avoid typing solidify everywhere
-    open fun solidify(memory: Memory) {
+    fun solidify(memory: Memory) {
         if (this.memory != null) {
             throw InterpretationRuntimeException("Solidifying for more than once: $this")
         }

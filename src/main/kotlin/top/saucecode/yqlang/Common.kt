@@ -5,7 +5,6 @@ import top.saucecode.yqlang.Node.ListNode
 import top.saucecode.yqlang.NodeValue.*
 import top.saucecode.yqlang.Runtime.Pointer
 import java.util.regex.Pattern
-import kotlin.math.pow
 
 @Serializable
 enum class TokenType {
@@ -107,23 +106,25 @@ class Constants {
                         .split(str.value)
                         .filter { it.isNotEmpty() }
                         .mapTo(mutableListOf()) {
-                            StringValue(it).let { context.memory.createReference(it) }
-                        }
-                ).also { it.solidify(context.memory) }
+                            StringValue(it, context.memory).address!!
+                        }, context.memory
+                )
             } else {
                 if (arg is StringValue)
                     return@BuiltinProcedureValue ListValue(str.value
                         .split(arg.value)
                         .mapTo(mutableListOf()) {
-                            StringValue(it).let { context.memory.createReference(it) }
-                        }).also { it.solidify(context.memory) }
+                            StringValue(it, context.memory).address!!
+                        }, context.memory)
                 else if (arg is RegExValue)
                     return@BuiltinProcedureValue ListValue(
                         arg.split(str)
-                            .mapTo(mutableListOf()) { context.memory.createReference(it) }).also { it.solidify(context.memory) }
+                            .mapTo(mutableListOf()) { StringValue(it, context.memory).address!! }, context.memory)
             }
             throw InterpretationRuntimeException("$str has no such method as \"split\"")
         }
+        // TODO: fix builtins
+
         //        private val Join = BuiltinProcedureValue("join", ListNode("separator"), { context ->
 //            val list = context.referenceEnvironment["this"]!!
 //            return@BuiltinProcedureValue if (list is Iterable<*>) {

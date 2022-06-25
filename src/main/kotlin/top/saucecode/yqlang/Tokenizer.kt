@@ -147,7 +147,10 @@ class Tokenizer(private val input: String) {
                     }
                 }
                 currentChar.isLetterOrDigit() || currentChar == '_' || currentChar == '$' -> {
-                    if (currentChar == 'r' && index < input.length - 1 && (input[index + 1] in listOf('"', '\''))) {
+                    if (currentChar == 'r'
+                        && index < input.length - 1
+                        && (input[index + 1] in (listOf('"', '\'') + chineseQuotes))
+                    ) {
                         rawStringFlag = true
                         advance()
                         continue

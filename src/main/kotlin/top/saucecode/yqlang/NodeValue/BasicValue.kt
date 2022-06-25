@@ -68,6 +68,7 @@ sealed class ArithmeticValue : PassByValueNodeValue() {
         }
     }
     companion object {
+        // TODO: avoid reflection
         private val coercionLevels = listOf(BooleanValue::class, IntegerValue::class, FloatValue::class)
         private fun getHigherLevel(value1: ArithmeticValue, value2: ArithmeticValue): KClass<out ArithmeticValue> {
             val level1 = coercionLevels.indexOf(value1::class)
@@ -79,6 +80,9 @@ sealed class ArithmeticValue : PassByValueNodeValue() {
 
 @Serializable
 data class StringValue(var value: String) : PassByReferenceNodeValue(), Iterable<StringValue> {
+    constructor(value: String, memory: Memory): this(value) {
+        solidify(memory)
+    }
     override val debugStr: String
         get() = "\"$value\""
     override val printStr: String
@@ -97,20 +101,25 @@ data class StringValue(var value: String) : PassByReferenceNodeValue(), Iterable
         }
     }
     override fun exchangeablePlus(that: NodeValue, inverse: Boolean): NodeValue {
+        if (memory == null) throw AccessingUnsolidifiedValueException(this)
         return if (that !is ListValue) { // format to string
             val fmt = that.printStr
             if (!inverse) {
-                StringValue(value + fmt)
+                StringValue(value + fmt, memory!!)
             } else {
-                StringValue(fmt + value)
+                StringValue(fmt + value, memory!!)
             }
         } else {
             that.exchangeablePlus(this, !inverse)
         }
     }
     override operator fun times(that: NodeValue): NodeValue {
+        if (memory == null) throw AccessingUnsolidifiedValueException(this)
         return when (that) {
-            is ArithmeticValue -> StringValue(value.repeat(that.coercedTo(IntegerValue::class).value.toInt()))
+            is ArithmeticValue -> StringValue(
+                value.repeat(that.coercedTo(IntegerValue::class).value.toInt()),
+                memory!!
+            )
             else -> super.times(that) // throws exception
         }
     }
@@ -120,6 +129,9 @@ data class StringValue(var value: String) : PassByReferenceNodeValue(), Iterable
 
 @Serializable
 data class ListValue(val value: MutableList<Pointer>) : PassByReferenceNodeValue(), Iterable<NodeValue> {
+    constructor(value: MutableList<Pointer>, memory: Memory): this(value) {
+        solidify(memory)
+    }
     override val debugStr: String
         get() = "[${value.joinToString(", ") { memory?.get(it)?.debugStr ?: it.toString() }}]"
     override val printStr: String
@@ -152,25 +164,24 @@ data class ListValue(val value: MutableList<Pointer>) : PassByReferenceNodeValue
         }
     }
 
-    // TODO: check solidify() !
     override fun exchangeablePlus(that: NodeValue, inverse: Boolean): NodeValue {
         if (memory == null) throw AccessingUnsolidifiedValueException(this)
         return if (that !is ListValue) {
             val ref = memory!!.createReference(that)
             if (!inverse) {
-                ListValue(value.toMutableList().apply { add(ref) })
+                ListValue(value.toMutableList().apply { add(ref) }, memory!!)
             } else {
-                ListValue(mutableListOf(ref).apply { addAll(value) })
+                ListValue(mutableListOf(ref).apply { addAll(value) }, memory!!)
             }
         } else {
-            ListValue(value.toMutableList().apply { addAll(that.value) })
+            ListValue(value.toMutableList().apply { addAll(that.value) }, memory!!)
         }
     }
     override operator fun times(that: NodeValue): NodeValue {
         return when (that) {
             is ArithmeticValue -> {
                 val cnt = that.coercedTo(IntegerValue::class).value.toInt()
-                ListValue(MutableList(cnt * size) { index -> value[index % size] })
+                ListValue(MutableList(cnt * size) { index -> value[index % size] }, memory!!)
             }
             else -> super.times(that) // throws
         }
@@ -326,20 +337,14 @@ data class KeySubscriptValue(val key: String) : SubscriptValue() {
 
 @Serializable
 data class ObjectValue(private val attributes: MutableMap<String, Pointer> = mutableMapOf()) : PassByReferenceNodeValue() {
+    constructor(value: MutableMap<String, Pointer>, memory: Memory): this(value) {
+        solidify(memory)
+    }
     override val debugStr: String
         get() = "{${attributes.map { "\"${it.key}\": ${memory?.get(it.value)?.debugStr ?: it.value}" }.joinToString(", ")}}"
     override val printStr: String
         get() = debugStr
     override fun toString(): String = debugStr
-//    override fun solidify(memory: Memory) {
-//        super.solidify(memory)
-//        for (key in attributes.keys) {
-//            val what = memory[attributes[key]!!]
-//            if (what is ProcedureValue) {
-//                attributes[key] = memory.allocate(what.copy().bind(this))
-//            }
-//        }
-//    }
 
     override fun toBoolean(): Boolean = attributes.isNotEmpty()
     operator fun get(key: String): Pointer? = attributes[key]

@@ -3,7 +3,6 @@ package top.saucecode.yqlang.Node
 import kotlinx.serialization.Serializable
 import top.saucecode.yqlang.ExecutionContext
 import top.saucecode.yqlang.InterpretationRuntimeException
-import top.saucecode.yqlang.NodeValue.NodeProcedureValue
 import top.saucecode.yqlang.NodeValue.NodeValue
 import top.saucecode.yqlang.NodeValue.NullValue
 import top.saucecode.yqlang.Runtime.Memory
@@ -119,7 +118,7 @@ class StmtReturnNode(private val expr: Node) : Node() {
 @Serializable
 class StmtWhileNode(private val condition: Node, private val body: Node) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
-        while (condition.exec(context).toBoolean()) {
+        while (condition.exec(context).toBoolean() && !Thread.currentThread().isInterrupted) {
             try {
                 body.exec(context)
             } catch (continueEx: ContinueException) {
@@ -169,6 +168,7 @@ class StmtForNode(private val iterator: Node, private val collection: Node, priv
         var res: NodeValue = NullValue
         if (collection is Iterable<*>) {
             for (item in collection) {
+                if (Thread.currentThread().isInterrupted) break
                 (iterator as ConvertibleToAssignablePattern).toPattern(context).assign(context,
                     context.memory.createReference(item as NodeValue))
                 try {

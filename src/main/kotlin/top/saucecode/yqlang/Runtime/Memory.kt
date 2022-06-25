@@ -1,8 +1,10 @@
 package top.saucecode.yqlang.Runtime
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import top.saucecode.yqlang.Constants
 import top.saucecode.yqlang.InterpretationRuntimeException
+import top.saucecode.yqlang.Node.Node
 import top.saucecode.yqlang.NodeValue.NodeValue
 import top.saucecode.yqlang.NodeValue.NullValue
 import top.saucecode.yqlang.NodeValue.PassByReferenceNodeValue
@@ -26,8 +28,8 @@ class Memory {
     enum class Location {
         STACK, HEAP, BUILTIN, STATIC
     }
-    private val stack: MutableList<Int> = mutableListOf()
-    private var bp: Int = 0
+    @Transient private val stack: MutableList<Int> = mutableListOf()
+    @Transient private var bp: Int = 0
     fun pushFrame(pc: Int, caller: Pointer?, args: Pointer) {
         stack.add(bp)
         bp = stack.lastIndex
@@ -42,8 +44,7 @@ class Memory {
         stack.add(args.offset)
         val argPointers = get(args).asList()!!
         argPointers.forEach {
-            val ptr = allocate(NullValue)
-            mov(ptr, it)
+            val ptr = createReference(get(it))
             stack.add(ptr.offset)
         }
     }
@@ -58,8 +59,8 @@ class Memory {
     }
 
     private val heap: MutableList<NodeValue> = mutableListOf()
-    private val builtins: MutableList<NodeValue> = mutableListOf()
-    fun addBuiltins(builtins: List<NodeValue>) {
+    @Transient private val builtins: MutableList<NodeValue> = mutableListOf()
+    private fun addBuiltins(builtins: List<NodeValue>) {
         this.builtins.addAll(builtins)
     }
     init {
@@ -70,6 +71,8 @@ class Memory {
     fun addStatics(statics: List<NodeValue>) {
         this.statics.addAll(statics)
     }
+    // TODO: do not serialize Node? it's fine
+    var text: Node? = null
 
     operator fun get(pointer: Pointer): NodeValue {
         return when (pointer.loc) {
@@ -85,12 +88,6 @@ class Memory {
             Location.HEAP -> heap[pointer.offset] = value
             else -> throw InterpretationRuntimeException("Cannot set value in readonly memory")
         }
-    }
-    fun mov(dst: Pointer, src: Pointer) {
-        set(dst, get(src))
-    }
-    fun movi(dst: Pointer, value: NodeValue) {
-        set(dst, value)
     }
 
     fun allocate(value: NodeValue): Pointer {

@@ -2,14 +2,13 @@ package top.saucecode.yqlang
 
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import top.saucecode.yqlang.NodeValue.ListValue
 import top.saucecode.yqlang.NodeValue.NodeValue
 import top.saucecode.yqlang.Runtime.Memory
 import top.saucecode.yqlang.Runtime.Pointer
 
 open class InterpretationRuntimeException(message: String) : YqlangException(message)
 
-class Scope(private val symbols: MutableMap<String, Pointer>, val args: ListValue = ListValue(mutableListOf())) {
+class Scope(private val symbols: MutableMap<String, Pointer> = mutableMapOf()) {
     // get pointer from symbol
     operator fun get(name: String): Pointer? {
         return symbols[name]
@@ -21,21 +20,15 @@ class Scope(private val symbols: MutableMap<String, Pointer>, val args: ListValu
     }
 
     override fun toString(): String {
-        return "Scope(symbols=$symbols, args=$args)"
+        return "Scope(symbols=$symbols)"
     }
 
+    // TODO: supply memory to it
     fun displaySymbols(): String {
         return symbols.toString()
     }
 
     companion object {
-        fun createRoot(defs: Map<String, NodeValue> = mapOf()): Scope {
-            // val builtins = defs.toMutableMap()
-            // return Scope(builtins)
-            // TODO: implement
-            return Scope(mutableMapOf())
-        }
-
         fun deserialize(input: String): Scope {
 //            val dict = Json.decodeFromString<MutableMap<String, String>>(serializer(), input)
 //            val reconstructed = mutableMapOf<String, NodeValue>()
@@ -66,8 +59,7 @@ class Scope(private val symbols: MutableMap<String, Pointer>, val args: ListValu
 }
 typealias SymbolTable = Scope
 
-class RecursionTooDeepException(private val depth: Int) : InterpretationRuntimeException("Recursion too deep: $depth")
-
+// TODO: implement events
 class ReferenceEnvironment(rootScope: Scope, private val events: Map<String, NodeValue>) {
     private val scopes: MutableList<Scope>
     private val frames: MutableList<Int> = mutableListOf(0)

@@ -9,8 +9,8 @@ import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.encoding.decodeStructure
 import kotlinx.serialization.encoding.encodeStructure
-import top.saucecode.yqlang.Runtime.PassingScheme
 
+// TODO: Remove all Iterable<*> and implement iterator in VM.
 @Serializable
 sealed class RangeValue<T : NodeValue>(
     protected val begin: T, protected val end: T, protected val inclusive: Boolean

@@ -14,26 +14,15 @@ class TypeMismatchRuntimeException(expected: List<Class<*>>, got: Any) :
         expected.joinToString(", ") { it.simpleName }
     }, got ${got.javaClass.simpleName}")
 
-//@Serializable
-//class ValueNode(private val value: NodeValue) : Node() {
-//    override fun exec(context: ExecutionContext): NodeValue {
-//        return value
-//    }
-//
-//    override fun toString(): String {
-//        return value.toString()
-//    }
-//}
-
 @Serializable
 class IdentifierNode(val name: String) : Node(), ConvertibleToAssignablePattern {
 
     constructor(token: Token) : this(token.value)
 
     override fun exec(context: ExecutionContext): NodeValue {
-        context.referenceEnvironment.getName(name)?.let {
-            return context.memory[it]
-        } ?: throw InterpretationRuntimeException("Undefined name $name")
+        return context.referenceEnvironment.getName(name)?.let {
+            context.memory[it]
+        } ?: NullValue
     }
 
     override fun toPattern(context: ExecutionContext): AssignablePattern {
@@ -95,7 +84,7 @@ class StringNode(private val value: String) : Node(), ConvertibleToAssignablePat
     constructor(token: Token) : this(token.value)
 
     override fun exec(context: ExecutionContext): NodeValue {
-        return StringValue(value).apply { solidify(context.memory) }
+        return StringValue(value, context.memory)
     }
 
     override fun toPattern(context: ExecutionContext): ConstantAssignablePattern {
@@ -113,7 +102,7 @@ class ListNode(private val items: List<Node>) : Node(), ConvertibleToAssignableP
         // create new instance on heap
         return ListValue(items.mapTo(mutableListOf()) {
             context.memory.createReference(it.exec(context))
-        }).apply { solidify(context.memory) }
+        }, context.memory)
     }
 
     override fun toPattern(context: ExecutionContext): AssignablePattern {
@@ -155,7 +144,7 @@ class ObjectNode(private val items: List<Pair<IdentifierNode, Node>>) : Node() {
     override fun exec(context: ExecutionContext): ObjectValue {
         return ObjectValue(items.associateTo(mutableMapOf()) { (key, value) ->
             key.name to context.memory.createReference(value.exec(context))
-        }).apply { solidify(context.memory) }
+        }, context.memory)
     }
 
     override fun toString(): String {
@@ -177,7 +166,7 @@ class ClosureNode(private val label: Int) : Node() {
 @Serializable
 class ProcedureCallNode(private val func: Node, private val args: ListNode) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
-        val procedure = func.exec(context) as CallableProcedure
+        val procedure = func.exec(context) as ConvertibleToCallableProcedure
         val args = context.memory.createReference(args.exec(context))
         return procedure.call(context, 0, args)
     }

@@ -15,12 +15,12 @@ import top.saucecode.yqlang.Node.Node
 import top.saucecode.yqlang.Node.ReturnException
 import top.saucecode.yqlang.Runtime.Pointer
 
-interface CallableProcedure {
+interface ConvertibleToCallableProcedure {
     fun call(context: ExecutionContext, pc: Int, args: Pointer): NodeValue
 }
 
 @Serializable
-sealed class ProcedureValue(protected val params: ListNode) : PassByReferenceNodeValue(), CallableProcedure {
+sealed class ProcedureValue(protected val params: ListNode) : PassByReferenceNodeValue(), ConvertibleToCallableProcedure {
     override fun toBoolean(): Boolean = true
     protected abstract fun execute(context: ExecutionContext): NodeValue
     fun call(context: ExecutionContext, pc: Int, caller: Pointer?, args: Pointer): NodeValue {
@@ -43,7 +43,7 @@ sealed class ProcedureValue(protected val params: ListNode) : PassByReferenceNod
 }
 
 @Serializable
-class BoundProcedureValue(private val procedure: Pointer, private val self: Pointer) : PassByReferenceNodeValue(), CallableProcedure {
+class BoundProcedureValue(private val procedure: Pointer, private val self: Pointer) : PassByValueNodeValue(), ConvertibleToCallableProcedure {
     override val debugStr: String
         get() = "BoundProcedure"
     override val printStr: String

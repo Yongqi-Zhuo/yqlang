@@ -2,9 +2,9 @@ package top.saucecode.yqlang.Node
 
 import kotlinx.serialization.Serializable
 import top.saucecode.yqlang.ExecutionContext
+import top.saucecode.yqlang.NodeValue.BooleanValue
 import top.saucecode.yqlang.NodeValue.NodeValue
 import top.saucecode.yqlang.NodeValue.NullValue
-import top.saucecode.yqlang.NodeValue.toNodeValue
 import top.saucecode.yqlang.TokenType
 
 @Serializable
@@ -31,50 +31,35 @@ sealed class OperatorNode : Node() {
     }
 }
 
-// TODO: delete ValueNode
-@Serializable
-class ValueNode(val value: NodeValue) : OperatorNode() {
-    override fun exec(context: ExecutionContext): NodeValue {
-        return value
-    }
-}
 @Serializable
 class BinaryOperatorNode(private val components: List<Node>, private val ops: List<TokenType>) : OperatorNode(), ConvertibleToAssignablePattern {
+    class LazyNodeValue(private val node: Node? = null, private val context: ExecutionContext? = null) {
+        private var result: NodeValue? = null
+        constructor(value: NodeValue) : this(null, null) {
+            result = value
+        }
+        operator fun invoke(): NodeValue {
+            return result ?: node!!.exec(context!!)
+        }
+    }
     companion object {
         private val opMap =
-            mapOf<TokenType, (ExecutionContext, Node, Node) -> NodeValue>(
-                TokenType.PLUS
-                        to { context, left, right -> left.exec(context) + right.exec(context) },
-                TokenType.MINUS
-                        to { context, left, right -> left.exec(context) - right.exec(context) },
-                TokenType.MULT
-                        to { context, left, right -> left.exec(context) * right.exec(context) },
-                TokenType.DIV
-                        to { context, left, right -> left.exec(context) / right.exec(context) },
-                TokenType.MOD
-                        to { context, left, right -> left.exec(context) % right.exec(context) },
-                TokenType.EQUAL
-                        to { context, left, right -> (left.exec(context) == right.exec(context)).toNodeValue() },
-                TokenType.NOT_EQUAL
-                        to { context, left, right -> (left.exec(context) != right.exec(context)).toNodeValue() },
-                TokenType.GREATER
-                        to { context, left, right -> (left.exec(context) > right.exec(context)).toNodeValue() },
-                TokenType.LESS
-                        to { context, left, right -> (left.exec(context) < right.exec(context)).toNodeValue() },
-                TokenType.GREATER_EQ
-                        to { context, left, right -> (left.exec(context) >= right.exec(context)).toNodeValue() },
-                TokenType.LESS_EQ
-                        to { context, left, right -> (left.exec(context) <= right.exec(context)).toNodeValue() },
-                TokenType.LOGIC_AND
-                        to { context, left, right ->
-                    (left.exec(context).toBoolean() && right.exec(context).toBoolean()).toNodeValue()
-                },
-                TokenType.LOGIC_OR
-                        to { context, left, right ->
-                    (left.exec(context).toBoolean() || right.exec(context).toBoolean()).toNodeValue()
-                },
-                TokenType.IN
-                        to { context, left, right -> (left.exec(context) in right.exec(context)).toNodeValue() })
+            mapOf<TokenType, (LazyNodeValue, LazyNodeValue) -> LazyNodeValue>(
+                TokenType.PLUS to { a, b -> LazyNodeValue(a() + b()) },
+                TokenType.MINUS to { a, b -> LazyNodeValue(a() - b()) },
+                TokenType.MULT to { a, b -> LazyNodeValue(a() * b()) },
+                TokenType.DIV to { a, b -> LazyNodeValue(a() / b()) },
+                TokenType.MOD to { a, b -> LazyNodeValue(a() % b()) },
+                TokenType.EQUAL to { a, b -> LazyNodeValue(BooleanValue(a() == b())) },
+                TokenType.NOT_EQUAL to { a, b -> LazyNodeValue(BooleanValue(a() != b())) },
+                TokenType.GREATER to { a, b -> LazyNodeValue(BooleanValue(a() > b())) },
+                TokenType.LESS to { a, b -> LazyNodeValue(BooleanValue(a() < b())) },
+                TokenType.GREATER_EQ to { a, b -> LazyNodeValue(BooleanValue(a() >= b())) },
+                TokenType.LESS_EQ to { a, b -> LazyNodeValue(BooleanValue(a() <= b())) },
+                TokenType.LOGIC_AND to { a, b -> LazyNodeValue(BooleanValue(a().toBoolean() && b().toBoolean())) },
+                TokenType.LOGIC_OR to { a, b -> LazyNodeValue(BooleanValue(a().toBoolean() || b().toBoolean())) },
+                TokenType.IN to { a, b -> LazyNodeValue(BooleanValue(a() in b())) }
+            )
     }
 
     override fun exec(context: ExecutionContext): NodeValue {
@@ -82,13 +67,14 @@ class BinaryOperatorNode(private val components: List<Node>, private val ops: Li
         else if (components.size == 1) {
             components[0].exec(context)
         } else {
-            var res = components[0].exec(context)
+            val lazyValues = components.map { LazyNodeValue(it, context) }
+            var res = lazyValues[0]
             for (i in 1 until components.size) {
                 val op = ops[i - 1]
-                val next = components[i]
-                res = opMap[op]!!(context, ValueNode(res), next)
+                val next = lazyValues[i]
+                res = opMap[op]!!(res, next)
             }
-            res
+            res()
         }
     }
 

@@ -1,17 +1,9 @@
 package top.saucecode.yqlang.NodeValue
 
-import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.descriptors.buildClassSerialDescriptor
-import kotlinx.serialization.descriptors.element
-import kotlinx.serialization.encoding.Decoder
-import kotlinx.serialization.encoding.Encoder
-import kotlinx.serialization.encoding.decodeStructure
-import kotlinx.serialization.encoding.encodeStructure
-import top.saucecode.yqlang.ExecutionContext
-import top.saucecode.yqlang.Runtime.PassingScheme
+import kotlinx.serialization.Transient
 
-@Serializable(with = RegExValue.Serializer::class)
+@Serializable
 class RegExValue(private val pattern: String, private val rawFlags: String) : PassByValueNodeValue() {
     override val debugStr: String
         get() = "/$pattern/$rawFlags"
@@ -35,11 +27,8 @@ class RegExValue(private val pattern: String, private val rawFlags: String) : Pa
         }
     }
     override fun toBoolean(): Boolean = pattern.isNotEmpty()
-    private val regex: Regex
-    private val flags: Set<Flag> = rawFlags.mapNotNull { Flag.fromChar(it) }.toSet()
-    init {
-        regex = Regex(pattern, flags.mapNotNull { it.value }.toSet())
-    }
+    @Transient private val flags: Set<Flag> = rawFlags.mapNotNull { Flag.fromChar(it) }.toSet()
+    @Transient private val regex: Regex = Regex(pattern, flags.mapNotNull { it.value }.toSet())
 
 //    fun match(context: ExecutionContext, input: StringValue): List<NodeValue> {
 //        if (Flag.GLOBAL !in flags) {
@@ -74,26 +63,12 @@ class RegExValue(private val pattern: String, private val rawFlags: String) : Pa
 //        return input.value.replace(regex, replacement.value).toNodeValue()
 //    }
 
-    fun split(input: StringValue): List<NodeValue> {
-        return input.value.split(regex).map { StringValue(it) }
+    fun split(input: StringValue): List<String> {
+        return input.value.split(regex)
     }
 //
 //    fun matchEntire(input: StringValue): NodeValue {
 //        val matches = regex.matchEntire(input.value)
 //        return (matches != null).toNodeValue()
 //    }
-
-    class Serializer : KSerializer<RegExValue> {
-        override val descriptor = buildClassSerialDescriptor("top.saucecode.yqlang.NodeValue.RegExValue") {
-            element<String>("pattern")
-            element<String>("rawFlags")
-        }
-        override fun deserialize(decoder: Decoder): RegExValue = decoder.decodeStructure(descriptor) {
-            RegExValue(decodeStringElement(descriptor, 0), decodeStringElement(descriptor, 1))
-        }
-        override fun serialize(encoder: Encoder, value: RegExValue) = encoder.encodeStructure(descriptor) {
-            encodeStringElement(descriptor, 0, value.pattern)
-            encodeStringElement(descriptor, 1, value.rawFlags)
-        }
-    }
 }

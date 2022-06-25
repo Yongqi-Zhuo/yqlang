@@ -3,7 +3,6 @@ package top.saucecode.yqlang.Node
 import kotlinx.serialization.Serializable
 import top.saucecode.yqlang.ExecutionContext
 import top.saucecode.yqlang.InterpretationRuntimeException
-import top.saucecode.yqlang.NodeValue.ListValue
 import top.saucecode.yqlang.NodeValue.NodeValue
 import top.saucecode.yqlang.NodeValue.StringValue
 import top.saucecode.yqlang.Runtime.Pointer
@@ -42,10 +41,10 @@ class ConstantAssignablePattern(val value: NodeValue) : AssignablePattern() {
 
 class AddressAssignablePattern(private val ptr: Pointer) : AssignablePattern() {
     override fun assign(context: ExecutionContext, value: Pointer) {
-        context.memory.mov(ptr, value)
+        assignImmediate(context, context.memory[value])
     }
     override fun assignImmediate(context: ExecutionContext, value: NodeValue) {
-        context.memory.movi(ptr, value)
+        context.memory[ptr] = value
     }
 }
 
@@ -65,13 +64,14 @@ class ListAssignablePattern(private val content: List<AssignablePattern>) : Assi
     }
 }
 
-class StringAssignablePattern(private val string: StringValue, private val begin: Int, private val end: Int) : AssignablePattern() {
+class StringAssignablePattern(private val string: Pointer, private val begin: Int, private val end: Int) : AssignablePattern() {
     override fun assign(context: ExecutionContext, value: Pointer) {
         assignImmediate(context, context.memory[value])
     }
     override fun assignImmediate(context: ExecutionContext, value: NodeValue) {
-        val first = if (begin > 0) string.value.substring(0, begin) else ""
-        val second = if (end < string.value.length) string.value.substring(end) else ""
-        string.value = first + value.printStr + second
+        val storedString = context.memory[string] as StringValue
+        val first = if (begin > 0) storedString.value.substring(0, begin) else ""
+        val second = if (end < storedString.value.length) storedString.value.substring(end) else ""
+        storedString.value = first + value.printStr + second
     }
 }
