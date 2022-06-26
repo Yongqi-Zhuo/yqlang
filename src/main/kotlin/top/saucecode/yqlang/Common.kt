@@ -97,32 +97,33 @@ class Constants {
     companion object {
         val builtinSymbols = mapOf("true" to true.toNodeValue(), "false" to false.toNodeValue(), "null" to NullValue)
         private val whiteSpace = Pattern.compile("\\s+")
-        private val Split = BuiltinProcedureValue("split", ListNode("separator")) { context ->
-            val str = context.memory[Pointer.caller] as StringValue
-            val arg = context.referenceEnvironment.getName("seperator")?.let { context.memory[it] }
-            if (arg == null) {
-                return@BuiltinProcedureValue ListValue(
-                    whiteSpace
-                        .split(str.value)
-                        .filter { it.isNotEmpty() }
-                        .mapTo(mutableListOf()) {
-                            StringValue(it, context.memory).address!!
-                        }, context.memory
-                )
-            } else {
-                if (arg is StringValue)
-                    return@BuiltinProcedureValue ListValue(str.value
-                        .split(arg.value)
-                        .mapTo(mutableListOf()) {
-                            StringValue(it, context.memory).address!!
-                        }, context.memory)
-                else if (arg is RegExValue)
-                    return@BuiltinProcedureValue ListValue(
-                        arg.split(str)
-                            .mapTo(mutableListOf()) { StringValue(it, context.memory).address!! }, context.memory)
-            }
-            throw InterpretationRuntimeException("$str has no such method as \"split\"")
-        }
+//        private val Split = BuiltinProcedureValue("split", ListNode("separator")) { context ->
+//            val str = context.memory[Pointer.caller(context.memory)] as StringValue
+//            val args = context.memory[Pointer.args(context.memory)] as ListValue
+//            val arg = if (args.size > 0) context.memory[args[0]] else null
+//            if (arg == null) {
+//                return@BuiltinProcedureValue ListValue(
+//                    whiteSpace
+//                        .split(str.value)
+//                        .filter { it.isNotEmpty() }
+//                        .mapTo(mutableListOf()) {
+//                            StringValue(it, context.memory).address!!
+//                        }, context.memory
+//                )
+//            } else {
+//                if (arg is StringValue)
+//                    return@BuiltinProcedureValue ListValue(str.value
+//                        .split(arg.value)
+//                        .mapTo(mutableListOf()) {
+//                            StringValue(it, context.memory).address!!
+//                        }, context.memory)
+//                else if (arg is RegExValue)
+//                    return@BuiltinProcedureValue ListValue(
+//                        arg.split(str)
+//                            .mapTo(mutableListOf()) { StringValue(it, context.memory).address!! }, context.memory)
+//            }
+//            throw InterpretationRuntimeException("$str has no such method as \"split\"")
+//        }
         // TODO: fix builtins
 
         //        private val Join = BuiltinProcedureValue("join", ListNode("separator"), { context ->
@@ -167,18 +168,18 @@ class Constants {
 //            else if (expr is RangeValue<*>) return@BuiltinProcedureValue expr.contains(arg).toNodeValue()
 //            throw InterpretationRuntimeException("$expr has no such method as \"contains\"")
 //        }, null)
-//        private val Length = BuiltinProcedureValue("length", ListNode(), { context ->
-//            val expr = context.referenceEnvironment["this"]!!
+//        private val Length = BuiltinProcedureValue("length", ListNode()) { context ->
+//            val expr = context.memory[Pointer.caller(context.memory)]
 //            return@BuiltinProcedureValue when (expr) {
 //                is StringValue -> expr.value.length.toNodeValue()
 //                is ListValue -> expr.value.size.toNodeValue()
 //                is RangeValue<*> -> expr.size.toNodeValue()
 //                else -> throw InterpretationRuntimeException("$expr has no such method as \"length\"")
 //            }
-//        }, null)
-//        private val Time = BuiltinProcedureValue("time", ListNode(), {
-//            System.currentTimeMillis().toNodeValue()
-//        }, null)
+//        }
+        private val Time = BuiltinProcedureValue("time", ListNode()) {
+            System.currentTimeMillis().toNodeValue()
+        }
 //        private val Random = BuiltinProcedureValue("random", ListNode("first", "second"), { context ->
 //            val collection = context.referenceEnvironment["this"]
 //            return@BuiltinProcedureValue if (collection?.toBoolean() == true) {
@@ -314,17 +315,18 @@ class Constants {
 //        private val Boolean = BuiltinProcedureValue("boolean", ListNode("value"), { context ->
 //            context.referenceEnvironment["value"]!!.toBoolean().toNodeValue()
 //        }, null)
-//        private val Filter = BuiltinProcedureValue("filter", ListNode("predicate"), { context ->
-//            val predicate = context.referenceEnvironment["predicate"]!!.asProcedure()!!
-//            fun predicateCall(it: NodeValue) = predicate.call(context, ListValue(mutableListOf(it)))
-//            val list = context.referenceEnvironment["this"]!!
-//            return@BuiltinProcedureValue if (list is Iterable<*>) {
-//                @Suppress("UNCHECKED_CAST") (list.filter { predicateCall(it as NodeValue).toBoolean() } as List<NodeValue>).toNodeValue()
-//            } else {
-//                throw InterpretationRuntimeException("$list has no such method as \"filter\"")
-//            }
-//        }, null)
-//        private val Reduce = BuiltinProcedureValue("reduce", ListNode("initial", "reducer"), { context ->
+//        private val Filter = BuiltinProcedureValue("filter", ListNode("predicate")) { context ->
+//            val listPointer = Pointer.caller(context.memory)
+//            val predicate = context.memory[Pointer.arg(0, context.memory)] as ConvertibleToCallableProcedure
+//            val list = context.memory[listPointer]
+//            if (list !is Iterable<*>) throw InterpretationRuntimeException("$list has no such method as \"filter\"")
+//            fun predicateCall(it: NodeValue) = predicate.call(context, 0, listOf(it))
+//            val copies = list.map { predicateCall(it as NodeValue) to context.memory.createReference(it as NodeValue) }
+//            return@BuiltinProcedureValue (ListValue(copies
+//                .filter { it.first.toBoolean() }.mapTo(mutableListOf()) { it.second }, context.memory))
+//        }
+
+        //        private val Reduce = BuiltinProcedureValue("reduce", ListNode("initial", "reducer"), { context ->
 //            val reducer = context.referenceEnvironment["reducer"]!!.asProcedure()!!
 //            fun reducerCall(acc: NodeValue, it: NodeValue) = reducer.call(context, listOf(acc, it).toNodeValue())
 //            val list = context.referenceEnvironment["this"]!!
@@ -422,7 +424,7 @@ class Constants {
 //        }, null)
         val builtinProcedures = mapOf(
             // functions
-//            "time" to Time,
+            "time" to Time,
 //            "range" to Range,
 //            "rangeInclusive" to RangeInclusive,
 //            "number" to Number,
@@ -443,7 +445,7 @@ class Constants {
 //            "re" to Re,
 //            "sleep" to Sleep,
             // methods
-            "split" to Split,
+//            "split" to Split,
 //            "join" to Join,
 //            "find" to Find,
 //            "findAll" to FindAll,

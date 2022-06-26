@@ -97,7 +97,7 @@ class StringNode(private val value: String) : Node(), ConvertibleToAssignablePat
 }
 
 @Serializable
-class ListNode(private val items: List<Node>) : Node(), ConvertibleToAssignablePattern {
+class ListNode(val items: List<Node>) : Node(), ConvertibleToAssignablePattern {
     override fun exec(context: ExecutionContext): ListValue {
         // create new instance on heap
         return ListValue(items.mapTo(mutableListOf()) {
@@ -167,8 +167,7 @@ class ClosureNode(private val label: Int) : Node() {
 class ProcedureCallNode(private val func: Node, private val args: ListNode) : Node() {
     override fun exec(context: ExecutionContext): NodeValue {
         val procedure = func.exec(context) as ConvertibleToCallableProcedure
-        val args = context.memory.createReference(args.exec(context))
-        return procedure.call(context, 0, args)
+        return procedure.call(context, 0, args.items.map { it.exec(context) })
     }
 
     override fun toString(): String {

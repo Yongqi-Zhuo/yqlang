@@ -16,19 +16,19 @@ import top.saucecode.yqlang.Node.ReturnException
 import top.saucecode.yqlang.Runtime.Pointer
 
 interface ConvertibleToCallableProcedure {
-    fun call(context: ExecutionContext, pc: Int, args: Pointer): NodeValue
+    fun call(context: ExecutionContext, pc: Int, args: List<NodeValue>): NodeValue
 }
 
 @Serializable
-sealed class ProcedureValue(protected val params: ListNode) : PassByReferenceNodeValue(), ConvertibleToCallableProcedure {
+sealed class ProcedureValue(protected val params: ListNode) : CollectionValue(), ConvertibleToCallableProcedure {
     override fun toBoolean(): Boolean = true
     protected abstract fun execute(context: ExecutionContext): NodeValue
-    fun call(context: ExecutionContext, pc: Int, caller: Pointer?, args: Pointer): NodeValue {
+    fun call(context: ExecutionContext, pc: Int, caller: Pointer?, args: List<NodeValue>): NodeValue {
         val res: NodeValue
         try {
             context.referenceEnvironment.pushFrame()
             context.memory.pushFrame(0, caller, args)
-            params.toPattern(context).assign(context, args)
+            params.toPattern(context).assign(context, Pointer.args(context.memory))
             res = execute(context)
         } finally {
             context.referenceEnvironment.popScope()
@@ -37,7 +37,7 @@ sealed class ProcedureValue(protected val params: ListNode) : PassByReferenceNod
         return res
     }
 
-    override fun call(context: ExecutionContext, pc: Int, args: Pointer): NodeValue {
+    override fun call(context: ExecutionContext, pc: Int, args: List<NodeValue>): NodeValue {
         return call(context, pc, null, args)
     }
 }
@@ -49,7 +49,7 @@ class BoundProcedureValue(private val procedure: Pointer, private val self: Poin
     override val printStr: String
         get() = debugStr
     override fun toBoolean(): Boolean = true
-    override fun call(context: ExecutionContext, pc: Int, args: Pointer): NodeValue {
+    override fun call(context: ExecutionContext, pc: Int, args: List<NodeValue>): NodeValue {
         val procedureValue = context.memory[procedure] as ProcedureValue
         return procedureValue.call(context, pc, self, args)
     }

@@ -4,7 +4,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
 
 @Serializable
-class RegExValue(private val pattern: String, private val rawFlags: String) : PassByValueNodeValue() {
+class RegExValue(private val pattern: String, private val rawFlags: String) : NodeValue() {
     override val debugStr: String
         get() = "/$pattern/$rawFlags"
     override val printStr: String
