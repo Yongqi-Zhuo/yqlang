@@ -6,10 +6,10 @@ import top.saucecode.yqlang.InterpretationRuntimeException
 import top.saucecode.yqlang.NodeValue.NodeValue
 import top.saucecode.yqlang.NodeValue.StringValue
 import top.saucecode.yqlang.Runtime.Pointer
+import top.saucecode.yqlang.Scope
 import kotlin.math.min
 
-@Serializable
-sealed class Node {
+sealed class Node(val scope: Scope) {
     // return value acts as the return value register
     abstract fun exec(context: ExecutionContext): NodeValue
     // names are not variables: a Node is not supposed to be assignable

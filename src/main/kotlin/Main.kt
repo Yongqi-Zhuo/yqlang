@@ -1,8 +1,4 @@
-import top.saucecode.yqlang.ConsoleContext
-import top.saucecode.yqlang.Parser
 import top.saucecode.yqlang.REPL
-import top.saucecode.yqlang.Runtime.Memory
-import top.saucecode.yqlang.Tokenizer
 
 fun main() {
 //    val inputs = mutableListOf<String>()
@@ -42,7 +38,7 @@ fun main() {
 
     val repl = REPL(debug = true)
     repl.run()
-    println(repl.rootScope.serialize())
+    println(repl.rootRuntimeScope.serialize())
 
 //    while(true) {
 //        val line = readLine() ?: break

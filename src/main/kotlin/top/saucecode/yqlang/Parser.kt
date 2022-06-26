@@ -8,7 +8,7 @@ open class ParserException(message: String) : Exception(message)
 class UnexpectedTokenException(val token: Token, private val expected: TokenType? = null) :
     ParserException(if (expected != null) "Unexpected token $token, expected $expected" else "Unexpected token $token")
 
-class Parser() {
+class Parser {
     private var tokens: List<Token> = listOf()
     private var current = 0
 

@@ -15,6 +15,15 @@ import top.saucecode.yqlang.Node.Node
 import top.saucecode.yqlang.Node.ReturnException
 import top.saucecode.yqlang.Runtime.Pointer
 
+@Serializable
+class ClosureValue(val captureList: Pointer, val entry: Int) : NodeValue() {
+    override fun toBoolean(): Boolean = true
+    override val debugStr: String
+        get() = "closure($captureList, $entry)"
+    override val printStr: String
+        get() = debugStr
+}
+
 interface ConvertibleToCallableProcedure {
     fun call(context: ExecutionContext, pc: Int, args: List<NodeValue>): NodeValue
 }

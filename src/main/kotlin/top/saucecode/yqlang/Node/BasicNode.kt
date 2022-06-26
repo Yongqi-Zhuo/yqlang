@@ -1,23 +1,19 @@
 package top.saucecode.yqlang.Node
 
 import kotlinx.serialization.Serializable
-import top.saucecode.yqlang.ExecutionContext
-import top.saucecode.yqlang.InterpretationRuntimeException
+import top.saucecode.yqlang.*
 import top.saucecode.yqlang.NodeValue.*
 import top.saucecode.yqlang.Runtime.Memory
 import top.saucecode.yqlang.Runtime.Pointer
-import top.saucecode.yqlang.Token
-import top.saucecode.yqlang.TokenType
 
 class TypeMismatchRuntimeException(expected: List<Class<*>>, got: Any) :
     InterpretationRuntimeException("Type mismatch, expected one of ${
         expected.joinToString(", ") { it.simpleName }
     }, got ${got.javaClass.simpleName}")
 
-@Serializable
-class IdentifierNode(val name: String) : Node(), ConvertibleToAssignablePattern {
+class IdentifierNode(scope: Scope, val name: String) : Node(scope), ConvertibleToAssignablePattern {
 
-    constructor(token: Token) : this(token.value)
+    constructor(scope: Scope, token: Token) : this(scope, token.value)
 
     override fun exec(context: ExecutionContext): NodeValue {
         return context.referenceEnvironment.getName(name)?.let {
@@ -42,10 +38,9 @@ class IdentifierNode(val name: String) : Node(), ConvertibleToAssignablePattern 
 
 }
 
-@Serializable
-class IntegerNode(private val value: Long) : Node(), ConvertibleToAssignablePattern {
+class IntegerNode(scope: Scope, private val value: Long) : Node(scope), ConvertibleToAssignablePattern {
 
-    constructor(token: Token) : this(token.value.toLong())
+    constructor(scope: Scope, token: Token) : this(scope, token.value.toLong())
 
     override fun exec(context: ExecutionContext): NodeValue {
         return value.toNodeValue()
@@ -60,10 +55,9 @@ class IntegerNode(private val value: Long) : Node(), ConvertibleToAssignablePatt
     }
 }
 
-@Serializable
-class FloatNode(private val value: Double) : Node(), ConvertibleToAssignablePattern {
+class FloatNode(scope: Scope, private val value: Double) : Node(scope), ConvertibleToAssignablePattern {
 
-    constructor(token: Token) : this(token.value.toDouble())
+    constructor(scope: Scope, token: Token) : this(scope, token.value.toDouble())
 
     override fun exec(context: ExecutionContext): NodeValue {
         return value.toNodeValue()
@@ -78,10 +72,9 @@ class FloatNode(private val value: Double) : Node(), ConvertibleToAssignablePatt
     }
 }
 
-@Serializable
-class StringNode(private val value: String) : Node(), ConvertibleToAssignablePattern {
+class StringNode(scope: Scope, private val value: String) : Node(scope), ConvertibleToAssignablePattern {
 
-    constructor(token: Token) : this(token.value)
+    constructor(scope: Scope, token: Token) : this(scope, token.value)
 
     override fun exec(context: ExecutionContext): NodeValue {
         return StringValue(value, context.memory)
@@ -96,8 +89,7 @@ class StringNode(private val value: String) : Node(), ConvertibleToAssignablePat
     }
 }
 
-@Serializable
-class ListNode(val items: List<Node>) : Node(), ConvertibleToAssignablePattern {
+class ListNode(scope: Scope, val items: List<Node>) : Node(scope), ConvertibleToAssignablePattern {
     override fun exec(context: ExecutionContext): ListValue {
         // create new instance on heap
         return ListValue(items.mapTo(mutableListOf()) {
@@ -122,8 +114,7 @@ class ListNode(val items: List<Node>) : Node(), ConvertibleToAssignablePattern {
     }
 }
 
-@Serializable
-class SubscriptNode(private val begin: Node, private val extended: Boolean, private val end: Node? = null) : Node() {
+class SubscriptNode(scope: Scope, private val begin: Node, private val extended: Boolean, private val end: Node? = null) : Node(scope) {
     override fun exec(context: ExecutionContext): SubscriptValue {
         return when (val begin = begin.exec(context)) {
             is IntegerValue -> IntegerSubscriptValue(
@@ -139,8 +130,7 @@ class SubscriptNode(private val begin: Node, private val extended: Boolean, priv
     }
 }
 
-@Serializable
-class ObjectNode(private val items: List<Pair<IdentifierNode, Node>>) : Node() {
+class ObjectNode(scope: Scope, private val items: List<Pair<IdentifierNode, Node>>) : Node(scope) {
     override fun exec(context: ExecutionContext): ObjectValue {
         return ObjectValue(items.associateTo(mutableMapOf()) { (key, value) ->
             key.name to context.memory.createReference(value.exec(context))
@@ -152,8 +142,7 @@ class ObjectNode(private val items: List<Pair<IdentifierNode, Node>>) : Node() {
     }
 }
 
-@Serializable
-class ClosureNode(private val label: Int) : Node() {
+class ClosureNode(scope: Scope, private val label: Int) : Node(scope) {
     override fun exec(context: ExecutionContext): NodeValue {
         return context.memory[Pointer(Memory.Location.STATIC, label)]
     }
@@ -163,8 +152,7 @@ class ClosureNode(private val label: Int) : Node() {
     }
 }
 
-@Serializable
-class ProcedureCallNode(private val func: Node, private val args: ListNode) : Node() {
+class ProcedureCallNode(scope: Scope, private val func: Node, private val args: ListNode) : Node(scope) {
     override fun exec(context: ExecutionContext): NodeValue {
         val procedure = func.exec(context) as ConvertibleToCallableProcedure
         return procedure.call(context, 0, args.items.map { it.exec(context) })

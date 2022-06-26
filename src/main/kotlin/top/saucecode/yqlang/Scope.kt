@@ -6,9 +6,90 @@ import top.saucecode.yqlang.NodeValue.NodeValue
 import top.saucecode.yqlang.Runtime.Memory
 import top.saucecode.yqlang.Runtime.Pointer
 
+object UniqueID {
+    var id = 0
+    fun get(): Int {
+        return id++
+    }
+}
+
+enum class NameType {
+    GLOBAL, CAPTURE, LOCAL
+}
+class Frame(val parent: Frame?, val name: String) {
+    val isRoot: Boolean get() = parent == null
+    // captured values from parent frames
+    val captures: MutableSet<String> = mutableSetOf() // empty for root
+    // variables that need to be forwarded to next frame
+    val forwards: MutableMap<String, MutableSet<String>> = mutableMapOf() // empty for root, because root vars are global
+    // args are treated as special locals to support pattern matching in function prototypes
+    // val arguments: MutableList<String> = mutableListOf() // empty for root
+    val locals: MutableList<String> = mutableListOf()
+    fun getName(name: String): NameType? {
+        if (isRoot) {
+            return if (name in locals) NameType.GLOBAL
+            else null
+        } else {
+            when (name) {
+                in locals -> return NameType.LOCAL
+                in captures -> return NameType.CAPTURE
+                else -> {
+                    // need to do capture or find global
+                    val res = parent!!.getName(name) ?: return null
+                    when (res) {
+                        NameType.GLOBAL -> return NameType.GLOBAL
+                        else -> { // parent has captured this for us
+                            parent.forwards.getOrPut(this.name) { mutableSetOf() }.add(name)
+                            captures.add(name)
+                        }
+                    }
+                    return NameType.CAPTURE
+                }
+            }
+        }
+    }
+    fun declareLocalName(name: String) {
+        locals.add(name)
+    }
+}
+class Scope(val parent: Scope?, val frame: Frame?) {
+    val currentFrame: Frame
+    val currentFrameScope: Scope
+    val locals: MutableMap<String, String> = mutableMapOf()
+    init {
+        if (frame == null) {
+            currentFrame = parent!!.currentFrame
+            currentFrameScope = parent.currentFrameScope
+        } else {
+            currentFrame = frame
+            currentFrameScope = this
+        }
+    }
+    fun declareScopeName(name: String): String {
+        val mangled = if (parent == null) name else "$name@${UniqueID.get()}"
+        locals[name] = mangled
+        currentFrame.declareLocalName(mangled)
+        return mangled
+    }
+    fun declareLocalName(name: String): String {
+        return currentFrameScope.declareScopeName(name)
+    }
+    // Identifier nodes get their mangled name
+    private fun getMangledName(name: String): String? {
+        return locals[name] ?: parent?.getMangledName(name)
+    }
+    fun getName(name: String): NameType? {
+        if (name.startsWith("$")) {
+            return NameType.LOCAL
+        }
+        val mangled = getMangledName(name) ?: return null
+        return currentFrame.getName(mangled)
+    }
+}
+
 open class InterpretationRuntimeException(message: String) : YqlangException(message)
 
-class Scope(private val symbols: MutableMap<String, Pointer> = mutableMapOf()) {
+class RuntimeScope(private val symbols: MutableMap<String, Pointer> = mutableMapOf()) {
     // get pointer from symbol
     operator fun get(name: String): Pointer? {
         return symbols[name]
@@ -29,7 +110,7 @@ class Scope(private val symbols: MutableMap<String, Pointer> = mutableMapOf()) {
     }
 
     companion object {
-        fun deserialize(input: String): Scope {
+        fun deserialize(input: String): RuntimeScope {
 //            val dict = Json.decodeFromString<MutableMap<String, String>>(serializer(), input)
 //            val reconstructed = mutableMapOf<String, NodeValue>()
 //            try {
@@ -40,7 +121,7 @@ class Scope(private val symbols: MutableMap<String, Pointer> = mutableMapOf()) {
 //            }
 //            return Scope(reconstructed)
             // TODO: implement
-            return Scope(mutableMapOf())
+            return RuntimeScope(mutableMapOf())
         }
     }
 
@@ -57,16 +138,16 @@ class Scope(private val symbols: MutableMap<String, Pointer> = mutableMapOf()) {
         return Json.encodeToString(filteredSymbols)
     }
 }
-typealias SymbolTable = Scope
+typealias SymbolTable = RuntimeScope
 
 // TODO: implement events
-class ReferenceEnvironment(rootScope: Scope, private val events: Map<String, NodeValue>) {
-    private val scopes: MutableList<Scope>
+class ReferenceEnvironment(rootRuntimeScope: RuntimeScope, private val events: Map<String, NodeValue>) {
+    private val runtimeScopes: MutableList<RuntimeScope>
     private val frames: MutableList<Int> = mutableListOf(0)
     private val builtins: MutableMap<String, Int> = mutableMapOf()
 
     init {
-        scopes = mutableListOf(rootScope)
+        runtimeScopes = mutableListOf(rootRuntimeScope)
         val symbols = Constants.builtinSymbols.toList().map { it.first }
         val procedures = Constants.builtinProcedures.toList().map { it.first }
         val joined = symbols + procedures
@@ -74,34 +155,34 @@ class ReferenceEnvironment(rootScope: Scope, private val events: Map<String, Nod
     }
 
     fun pushScope() {
-        scopes.add(Scope(mutableMapOf()))
+        runtimeScopes.add(RuntimeScope(mutableMapOf()))
     }
     fun pushFrame() {
-        scopes.add(Scope(mutableMapOf()))
-        frames.add(scopes.lastIndex)
+        runtimeScopes.add(RuntimeScope(mutableMapOf()))
+        frames.add(runtimeScopes.lastIndex)
     }
 
     fun popScope() {
-        if (frames.lastOrNull() == scopes.lastIndex) {
+        if (frames.lastOrNull() == runtimeScopes.lastIndex) {
             frames.removeLast()
         }
-        scopes.removeAt(scopes.lastIndex)
+        runtimeScopes.removeAt(runtimeScopes.lastIndex)
     }
 
     fun getGlobalName(name: String): Pointer? {
-        return scopes.first()[name] ?: builtins[name]?.let { Pointer(Memory.Location.BUILTIN, it) }
+        return runtimeScopes.first()[name] ?: builtins[name]?.let { Pointer(Memory.Location.BUILTIN, it) }
     }
 
     fun getCaptureName(name: String): Pointer? {
         for (i in frames.last() - 1 downTo 1) {
-            scopes[i][name]?.let { return it }
+            runtimeScopes[i][name]?.let { return it }
         }
         return null
     }
 
     fun getLocalName(name: String): Pointer? {
-        for (i in scopes.lastIndex downTo frames.last()) {
-            scopes[i][name]?.let { return it }
+        for (i in runtimeScopes.lastIndex downTo frames.last()) {
+            runtimeScopes[i][name]?.let { return it }
         }
         return null
     }
@@ -121,12 +202,12 @@ class ReferenceEnvironment(rootScope: Scope, private val events: Map<String, Nod
 
     // let name = value
     fun setScopeName(name: String, value: Pointer) {
-        scopes.last()[name] = value
+        runtimeScopes.last()[name] = value
     }
 
     // name = value, implicit declaration upgraded to local frame
     fun setLocalName(name: String, value: Pointer) {
-        scopes[frames.last()][name] = value
+        runtimeScopes[frames.last()][name] = value
     }
 
 //    private var local: Boolean = false

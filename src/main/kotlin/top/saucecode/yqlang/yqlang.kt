@@ -15,7 +15,7 @@ import kotlin.system.measureTimeMillis
 
 open class YqlangException(message: String) : Exception(message)
 
-abstract class ExecutionContext(var memory: Memory, rootScope: Scope, val firstRun: Boolean, events: Map<String, NodeValue>) {
+abstract class ExecutionContext(var memory: Memory, rootRuntimeScope: RuntimeScope, val firstRun: Boolean, events: Map<String, NodeValue>) {
     val referenceEnvironment: ReferenceEnvironment
     var sleepTime: Long = 0
         private set
@@ -24,7 +24,7 @@ abstract class ExecutionContext(var memory: Memory, rootScope: Scope, val firstR
     }
 
     init {
-        referenceEnvironment = ReferenceEnvironment(rootScope,  events)
+        referenceEnvironment = ReferenceEnvironment(rootRuntimeScope,  events)
     }
 
     abstract fun say(text: String)
@@ -42,7 +42,7 @@ abstract class ExecutionContext(var memory: Memory, rootScope: Scope, val firstR
     }
 }
 
-class ConsoleContext(memory: Memory, rootScope: Scope? = null, events: Map<String, NodeValue> = mapOf()) : ExecutionContext(memory, rootScope ?: Scope(), true, events) {
+class ConsoleContext(memory: Memory, rootRuntimeScope: RuntimeScope? = null, events: Map<String, NodeValue> = mapOf()) : ExecutionContext(memory, rootRuntimeScope ?: RuntimeScope(), true, events) {
     override fun say(text: String) {
         println(text)
     }
@@ -90,7 +90,7 @@ sealed class Output {
     }
 }
 
-open class ControlledContext(memory: Memory, rootScope: Scope, firstRun: Boolean, events: Map<String, NodeValue>) : ExecutionContext(memory, rootScope, firstRun, events) {
+open class ControlledContext(memory: Memory, rootRuntimeScope: RuntimeScope, firstRun: Boolean, events: Map<String, NodeValue>) : ExecutionContext(memory, rootRuntimeScope, firstRun, events) {
     private val record = mutableListOf<Output>()
     override fun say(text: String) {
         synchronized(record) {
@@ -199,7 +199,7 @@ class RestrictedInterpreter(source: String) {
 }
 
 class REPL(private val debug: Boolean = false) {
-    val rootScope = Scope()
+    val rootRuntimeScope = RuntimeScope()
     private val parser = Parser()
     private val memory = Memory()
 
@@ -232,7 +232,7 @@ class REPL(private val debug: Boolean = false) {
                 continue
             }
             inputs.clear()
-            val context = ControlledContext(memory, rootScope, true, mapOf())
+            val context = ControlledContext(memory, rootRuntimeScope, true, mapOf())
             var runTime: Long? = null
             try {
                 val res: NodeValue
