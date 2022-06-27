@@ -5,10 +5,7 @@ import kotlinx.serialization.Transient
 import top.saucecode.yqlang.Constants
 import top.saucecode.yqlang.InterpretationRuntimeException
 import top.saucecode.yqlang.Node.Node
-import top.saucecode.yqlang.NodeValue.ListValue
-import top.saucecode.yqlang.NodeValue.NodeValue
-import top.saucecode.yqlang.NodeValue.NullValue
-import top.saucecode.yqlang.NodeValue.CollectionValue
+import top.saucecode.yqlang.NodeValue.*
 
 // Points to location on heap, static
 typealias Pointer = Int
@@ -19,6 +16,7 @@ const val REGION_ID_STATIC = 1
 fun Pointer.region() = this shr REGION_SHIFT
 fun Pointer.offset() = this and REGION_MASK
 fun HeapPointer(offset: Int) = offset or (REGION_ID_HEAP shl REGION_SHIFT)
+fun StaticPointer(offset: Int) = offset or (REGION_ID_STATIC shl REGION_SHIFT)
 typealias CollectionPoolPointer = Int
 
 // TODO: GC
@@ -39,6 +37,9 @@ class Memory {
         stack.add(allocate(argsList.reference)) // args = 3(bp)
         // components of args can be accessed indirectly
     }
+    companion object {
+        val paramsAndCaptureBase = 3 + 1
+    }
     val caller: Pointer get() = stack[bp + 2]
     val args: Pointer get() = stack[bp + 3]
     // returns retAddr
@@ -49,6 +50,15 @@ class Memory {
         val pc = stack.removeLast() // remove pc
         bp = stack.removeLast() // remove bp
         return pc
+    }
+    fun push(ptr: Int) {
+        stack.add(ptr)
+    }
+    fun pop(): Int {
+        return stack.removeLast()
+    }
+    fun getLocal(index: Int): Pointer {
+        return stack[bp + index]
     }
 
     private val heap: MutableList<NodeValue> = mutableListOf()
@@ -65,6 +75,14 @@ class Memory {
     private val statics: MutableList<NodeValue> = mutableListOf()
     fun addStatics(statics: List<NodeValue>) {
         this.statics.addAll(statics)
+    }
+    fun addStaticValue(value: NodeValue): Pointer {
+        statics.add(value)
+        return StaticPointer(statics.lastIndex)
+    }
+    fun addStaticString(value: String): Pointer {
+        statics.add(StringValue(value, this).reference)
+        return StaticPointer(statics.lastIndex)
     }
     // TODO: do not serialize Node? it's fine
 //    var text: Node? = null
@@ -97,7 +115,13 @@ class Memory {
 
     fun allocate(value: NodeValue): Pointer {
         heap.add(value)
-        return heap.lastIndex
+        return HeapPointer(heap.lastIndex)
+    }
+    fun copy(pointer: Pointer): Pointer {
+        return allocate(get(pointer))
+    }
+    fun copyTo(src: Pointer, dst: Pointer) {
+        set(dst, get(src))
     }
     // no need to createReference, just copy, because references are passed by value
 //    fun createReference(value: NodeValue): Pointer {

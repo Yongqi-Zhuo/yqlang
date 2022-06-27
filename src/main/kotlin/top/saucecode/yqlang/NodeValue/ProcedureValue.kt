@@ -106,7 +106,7 @@ class NodeProcedureValue(private val func: Node, params: ListNode) : ProcedureVa
         get() = debugStr
     override fun execute(context: ExecutionContext): NodeValue {
         return try {
-            func.exec(context)
+            func.generateCode()
         } catch (e: ReturnException) {
             e.value
         }

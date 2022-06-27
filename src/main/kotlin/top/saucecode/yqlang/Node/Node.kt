@@ -1,23 +1,20 @@
 package top.saucecode.yqlang.Node
 
-import top.saucecode.yqlang.ExecutionContext
-import top.saucecode.yqlang.InterpretationRuntimeException
+import top.saucecode.yqlang.*
 import top.saucecode.yqlang.NodeValue.NodeValue
 import top.saucecode.yqlang.NodeValue.StringValue
 import top.saucecode.yqlang.Runtime.Pointer
-import top.saucecode.yqlang.Scope
-import top.saucecode.yqlang.YqlangException
 import kotlin.math.min
 
 sealed class Node(val scope: Scope) {
-    // return value acts as the return value register
-    abstract fun exec(context: ExecutionContext): NodeValue
-    // names are not variables: a Node is not supposed to be assignable
-//    open fun assign(context: ExecutionContext, value: NodeValue): Unit =
-//        throw AssignmentRuntimeException(this, value)
-    open fun testPattern(allBinds: Boolean): Boolean = false
+    // return value put on stack
+    abstract fun generateCode(buffer: CodegenContext)
+    protected var isLvalue = false
+    open fun testPattern(allBinds: Boolean): Boolean {
+        isLvalue = true
+        return false
+    }
     open fun declarePattern(allBinds: Boolean): Unit = throw YqlangException("Cannot declare bind on non-bindable node")
-//    open fun foundNotAssignmentAndDecideToCapture
 }
 
 interface ConvertibleToAssignablePattern {

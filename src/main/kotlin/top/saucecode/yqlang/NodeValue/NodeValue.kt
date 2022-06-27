@@ -17,9 +17,9 @@ sealed class NodeValue : Comparable<NodeValue> {
     fun asInteger() = (this as? IntegerValue)?.value
     fun asArithmetic() = this as? ArithmeticValue
     fun asRegEx() = (this as? RegExValue)
-    fun asString() = (this as? StringValue)?.value
-    fun asList() = (this as? ListValue)?.value
-    fun asObject() = this as? ObjectValue
+    fun asString() = (this as? ReferenceValue)?.asStringValue()
+    fun asList() = (this as? ReferenceValue)?.asListValue()
+    fun asObject() = (this as? ReferenceValue)?.asObjectValue()
     abstract val debugStr: String
     abstract val printStr: String
     override fun toString() = debugStr
@@ -50,6 +50,8 @@ sealed class NodeValue : Comparable<NodeValue> {
             this.value.compareTo(other.value)
         } else if (this is NullValue && other is NullValue) {
             0
+        } else if (this is ArithmeticValue && other is ArithmeticValue) {
+            this.coercedTo(FloatValue::class).value.compareTo(other.coercedTo(FloatValue::class).value)
         } else {
             throw OperationRuntimeException("Invalid operation: $this <=> $other")
         }
@@ -110,4 +112,7 @@ data class ReferenceValue(private val address: CollectionPoolPointer) : NodeValu
             super.compareTo(other)
         }
     }
+    fun asStringValue() = value as? StringValue
+    fun asListValue() = value as? ListValue
+    fun asObjectValue() = value as? ObjectValue
 }

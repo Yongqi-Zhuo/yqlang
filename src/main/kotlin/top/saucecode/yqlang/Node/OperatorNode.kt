@@ -1,6 +1,6 @@
 package top.saucecode.yqlang.Node
 
-import kotlinx.serialization.Serializable
+import top.saucecode.yqlang.CodegenContext
 import top.saucecode.yqlang.ExecutionContext
 import top.saucecode.yqlang.NodeValue.BooleanValue
 import top.saucecode.yqlang.NodeValue.NodeValue
@@ -38,7 +38,7 @@ class BinaryOperatorNode(scope: Scope, private val components: List<Node>, priva
             result = value
         }
         operator fun invoke(): NodeValue {
-            return result ?: node!!.exec(context!!)
+            return result ?: node!!.generateCode()
         }
     }
     companion object {
@@ -61,10 +61,10 @@ class BinaryOperatorNode(scope: Scope, private val components: List<Node>, priva
             )
     }
 
-    override fun exec(context: ExecutionContext): NodeValue {
+    override fun generateCode(buffer: CodegenContext) {
         return if (components.isEmpty()) NullValue
         else if (components.size == 1) {
-            components[0].exec(context)
+            components[0].generateCode()
         } else {
             val lazyValues = components.map { LazyNodeValue(it, context) }
             var res = lazyValues[0]
@@ -104,12 +104,12 @@ class BinaryOperatorNode(scope: Scope, private val components: List<Node>, priva
 class UnaryOperatorNode(scope: Scope, private val component: Node, private val op: TokenType) : OperatorNode(scope) {
     companion object {
         private val opMap = mapOf<TokenType, (ExecutionContext, Node) -> NodeValue>(
-            TokenType.MINUS to { context, node -> -node.exec(context) },
-            TokenType.NOT to { context, node -> !node.exec(context) },
+            TokenType.MINUS to { context, node -> -node.generateCode() },
+            TokenType.NOT to { context, node -> !node.generateCode() },
         )
     }
 
-    override fun exec(context: ExecutionContext): NodeValue {
+    override fun generateCode(buffer: CodegenContext) {
         return opMap[op]!!(context, component)
     }
 

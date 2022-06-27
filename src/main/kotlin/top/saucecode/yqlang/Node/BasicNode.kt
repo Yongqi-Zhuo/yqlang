@@ -2,39 +2,35 @@ package top.saucecode.yqlang.Node
 
 import top.saucecode.yqlang.*
 import top.saucecode.yqlang.NodeValue.*
+import top.saucecode.yqlang.Runtime.ByteCode
+import top.saucecode.yqlang.Runtime.ImmediateCode
+import top.saucecode.yqlang.Runtime.Op
 
 class TypeMismatchRuntimeException(expected: List<Class<*>>, got: Any) :
     InterpretationRuntimeException("Type mismatch, expected one of ${
         expected.joinToString(", ") { it.simpleName }
     }, got ${got.javaClass.simpleName}")
 
-class IdentifierNode(scope: Scope, val name: String) : Node(scope), ConvertibleToAssignablePattern {
+class IdentifierNode(scope: Scope, val name: String) : Node(scope) {
 
     constructor(scope: Scope, token: Token) : this(scope, token.value)
 
-    override fun exec(context: ExecutionContext): NodeValue {
-        return context.referenceEnvironment.getName(name)?.let {
-            context.memory[it]
-        } ?: NullValue
+    override fun generateCode(buffer: CodegenContext) {
+        if (!isLvalue) {
+            buffer.add(ByteCode(Op.LOAD_LOCAL_PUSH.code, scope.getMemoryLayout(name)))
+        } else {
+            buffer.add(ByteCode(Op.POP_SAVE_LOCAL.code, scope.getMemoryLayout(name)))
+        }
     }
-
-    override fun testPattern(allBinds: Boolean): Boolean = true
+    override fun testPattern(allBinds: Boolean): Boolean {
+        super.testPattern(allBinds)
+        return true
+    }
     override fun declarePattern(allBinds: Boolean) {
         if (!allBinds && scope.testName(name)) {
             scope.acquireExistingName(name)
         } else {
             scope.declareLocalName(name)
-        }
-    }
-
-    override fun toPattern(context: ExecutionContext): AssignablePattern {
-        val ptr = context.referenceEnvironment.getName(name)
-        return if (ptr == null) {
-            val addr = context.memory.allocate(NullValue)
-            context.referenceEnvironment.setLocalName(name, addr)
-            AddressAssignablePattern(addr)
-        } else {
-            AddressAssignablePattern(ptr)
         }
     }
 
@@ -44,21 +40,24 @@ class IdentifierNode(scope: Scope, val name: String) : Node(scope), ConvertibleT
 
 }
 
-class IntegerNode(scope: Scope, private val value: Long) : Node(scope), ConvertibleToAssignablePattern {
+class IntegerNode(scope: Scope, private val value: Long) : Node(scope) {
 
     constructor(scope: Scope, token: Token) : this(scope, token.value.toLong())
 
-    override fun exec(context: ExecutionContext): NodeValue {
-        return value.toNodeValue()
+    override fun generateCode(buffer: CodegenContext) {
+        val addr = buffer.addStaticValue(IntegerValue(value))
+        if (!isLvalue) {
+            buffer.add(ByteCode(Op.COPY_PUSH.code, addr))
+        } else {
+            buffer.add(ByteCode(Op.POP_ASSERT_EQ.code, addr))
+        }
     }
-
-    override fun testPattern(allBinds: Boolean): Boolean = true
+    override fun testPattern(allBinds: Boolean): Boolean {
+        super.testPattern(allBinds)
+        return true
+    }
     override fun declarePattern(allBinds: Boolean) {
         return
-    }
-
-    override fun toPattern(context: ExecutionContext): ConstantAssignablePattern {
-        return ConstantAssignablePattern(value.toNodeValue())
     }
 
     override fun toString(): String {
@@ -66,21 +65,24 @@ class IntegerNode(scope: Scope, private val value: Long) : Node(scope), Converti
     }
 }
 
-class FloatNode(scope: Scope, private val value: Double) : Node(scope), ConvertibleToAssignablePattern {
+class FloatNode(scope: Scope, private val value: Double) : Node(scope) {
 
     constructor(scope: Scope, token: Token) : this(scope, token.value.toDouble())
 
-    override fun exec(context: ExecutionContext): NodeValue {
-        return value.toNodeValue()
+    override fun generateCode(buffer: CodegenContext) {
+        val addr = buffer.addStaticValue(FloatValue(value))
+        if (!isLvalue) {
+            buffer.add(ByteCode(Op.COPY_PUSH.code, addr))
+        } else {
+            buffer.add(ByteCode(Op.POP_ASSERT_EQ.code, addr))
+        }
     }
-
-    override fun testPattern(allBinds: Boolean): Boolean = true
+    override fun testPattern(allBinds: Boolean): Boolean {
+        super.testPattern(allBinds)
+        return true
+    }
     override fun declarePattern(allBinds: Boolean) {
         return
-    }
-
-    override fun toPattern(context: ExecutionContext): ConstantAssignablePattern {
-        return ConstantAssignablePattern(value.toNodeValue())
     }
 
     override fun toString(): String {
@@ -88,21 +90,24 @@ class FloatNode(scope: Scope, private val value: Double) : Node(scope), Converti
     }
 }
 
-class StringNode(scope: Scope, private val value: String) : Node(scope), ConvertibleToAssignablePattern {
+class StringNode(scope: Scope, private val value: String) : Node(scope) {
 
     constructor(scope: Scope, token: Token) : this(scope, token.value)
 
-    override fun exec(context: ExecutionContext): NodeValue {
-        return StringValue(value, context.memory).reference
+    override fun generateCode(buffer: CodegenContext) {
+        val addr = buffer.addStaticString(value)
+        if (!isLvalue) {
+            buffer.add(ByteCode(Op.COPY_PUSH.code, addr))
+        } else {
+            buffer.add(ByteCode(Op.POP_ASSERT_EQ.code, addr))
+        }
     }
-
-    override fun testPattern(allBinds: Boolean): Boolean = true
+    override fun testPattern(allBinds: Boolean): Boolean {
+        super.testPattern(allBinds)
+        return true
+    }
     override fun declarePattern(allBinds: Boolean) {
         return
-    }
-
-    override fun toPattern(context: ExecutionContext): ConstantAssignablePattern {
-        return ConstantAssignablePattern(exec(context))
     }
 
     override fun toString(): String {
@@ -110,41 +115,78 @@ class StringNode(scope: Scope, private val value: String) : Node(scope), Convert
     }
 }
 
-class ListNode(scope: Scope, val items: List<Node>) : Node(scope), ConvertibleToAssignablePattern {
-    override fun exec(context: ExecutionContext): NodeValue {
-        // create new instance on heap
-        return ListValue(items.mapTo(mutableListOf()) {
-            context.memory.allocate(it.exec(context))
-        }, context.memory).reference
+class BooleanNode(scope: Scope, private val value: Boolean) : Node(scope) {
+    constructor(scope: Scope, token: Token) : this(scope, token.value.toBooleanStrict())
+    override fun generateCode(buffer: CodegenContext) {
+        val constCode = if (value) ImmediateCode.TRUE else ImmediateCode.FALSE
+        if (!isLvalue) {
+            buffer.add(ByteCode(Op.PUSH_IMM.code, constCode.code))
+        } else {
+            buffer.add(ByteCode(Op.POP_ASSERT_EQ_IMM.code, constCode.code))
+        }
     }
+    override fun testPattern(allBinds: Boolean): Boolean {
+        super.testPattern(allBinds)
+        return true
+    }
+    override fun declarePattern(allBinds: Boolean) {
+        return
+    }
+    override fun toString(): String {
+        return "$value"
+    }
+}
 
-    override fun testPattern(allBinds: Boolean): Boolean = items.all { it.testPattern(allBinds) }
+class NullNode(scope: Scope) : Node(scope) {
+    constructor(scope: Scope, token: Token) : this(scope)
+    override fun generateCode(buffer: CodegenContext) {
+        if (!isLvalue) {
+            buffer.add(ByteCode(Op.PUSH_IMM.code, ImmediateCode.NULL.code))
+        } else {
+            buffer.add(ByteCode(Op.POP_ASSERT_EQ_IMM.code, ImmediateCode.NULL.code))
+        }
+    }
+    override fun testPattern(allBinds: Boolean): Boolean {
+        super.testPattern(allBinds)
+        return true
+    }
+    override fun declarePattern(allBinds: Boolean) {
+        return
+    }
+    override fun toString(): String {
+        return "null"
+    }
+}
+
+class ListNode(scope: Scope, val items: List<Node>) : Node(scope) {
+    override fun generateCode(buffer: CodegenContext) {
+        if (!isLvalue) {
+            items.forEach { it.generateCode(buffer) }
+            buffer.add(ByteCode(Op.CONS_PUSH.code, items.size))
+        } else {
+            buffer.add(ByteCode(Op.EXTRACT_LIST.code, items.size))
+            items.forEach { it.generateCode(buffer) }
+        }
+    }
+    override fun testPattern(allBinds: Boolean): Boolean {
+        super.testPattern(allBinds)
+        return items.all { it.testPattern(allBinds) }
+    }
     override fun declarePattern(allBinds: Boolean) = items.forEach { it.declarePattern(allBinds) }
-
-    override fun toPattern(context: ExecutionContext): AssignablePattern {
-        return ListAssignablePattern(items.map { node ->
-            if (node is ConvertibleToAssignablePattern) {
-                node.toPattern(context)
-            } else {
-                throw TypeMismatchRuntimeException(listOf(ConvertibleToAssignablePattern::class.java), node)
-            }
-        })
-    }
 
     override fun toString(): String {
         return "[${items.joinToString(", ")}]"
     }
 }
 
+// subscript type: 0 => not extended, 1 => extended but upper bound is null, 2 => extended and upper bound is not null
+// only 2 has 2nd element
 class SubscriptNode(scope: Scope, private val begin: Node, private val extended: Boolean, private val end: Node? = null) : Node(scope) {
-    override fun exec(context: ExecutionContext): SubscriptValue {
-        return when (val begin = begin.exec(context)) {
-            is IntegerValue -> IntegerSubscriptValue(
-                begin.value.toInt(), extended, end?.exec(context)?.asInteger()?.toInt()
-            )
-            is StringValue -> KeySubscriptValue(begin.value)
-            else -> throw TypeMismatchRuntimeException(listOf(IntegerValue::class.java, StringValue::class.java), begin)
-        }
+    override fun generateCode(buffer: CodegenContext) {
+        val subscriptType = (if (extended) 1 else 0) + (if (end != null) 1 else 0)
+        begin.generateCode(buffer)
+        if (end != null) end.generateCode(buffer)
+        buffer.add(ByteCode(Op.SUBSCRIPT_PUSH.code, subscriptType))
     }
 
     override fun toString(): String {
@@ -153,10 +195,14 @@ class SubscriptNode(scope: Scope, private val begin: Node, private val extended:
 }
 
 class ObjectNode(scope: Scope, private val items: List<Pair<String, Node>>) : Node(scope) {
-    override fun exec(context: ExecutionContext): NodeValue {
-        return ObjectValue(items.associateTo(mutableMapOf()) { (key, value) ->
-            key to context.memory.allocate(value.exec(context))
-        }, context.memory).reference
+    // maybe add pattern matching in the future?
+    override fun generateCode(buffer: CodegenContext) {
+        items.forEach { (key, value) ->
+            val addr = buffer.addStaticString(key)
+            buffer.add(ByteCode(Op.COPY_PUSH.code, addr))
+            value.generateCode(buffer)
+        }
+        buffer.add(ByteCode(Op.CONS_OBJ_PUSH.code, items.size))
     }
 
     override fun toString(): String {
@@ -164,27 +210,8 @@ class ObjectNode(scope: Scope, private val items: List<Pair<String, Node>>) : No
     }
 }
 
-class BooleanNode(scope: Scope, private val value: Boolean) : Node(scope) {
-    constructor(scope: Scope, token: Token) : this(scope, token.value.toBooleanStrict())
-    override fun exec(context: ExecutionContext): NodeValue {
-        return BooleanValue(value)
-    }
-    override fun toString(): String {
-        return "true"
-    }
-}
-class NullNode(scope: Scope) : Node(scope) {
-    constructor(scope: Scope, token: Token) : this(scope)
-    override fun exec(context: ExecutionContext): NodeValue {
-        return NullValue
-    }
-    override fun toString(): String {
-        return "null"
-    }
-}
-
 class ClosureNode(scope: Scope, private val name: String, private val params: ListNode, private val body: Node) : Node(scope) {
-    override fun exec(context: ExecutionContext): NodeValue {
+    override fun generateCode(buffer: CodegenContext) {
         TODO("not implemented")
     }
 
@@ -193,9 +220,8 @@ class ClosureNode(scope: Scope, private val name: String, private val params: Li
     }
 }
 
-// TODO: add NullNode to represent null self
 class NamedCallNode(scope: Scope, private val func: String, private val caller: Node, private val args: ListNode) : Node(scope) {
-    override fun exec(context: ExecutionContext): NodeValue {
+    override fun generateCode(buffer: CodegenContext) {
         TODO("not implemented")
     }
 
@@ -206,7 +232,7 @@ class NamedCallNode(scope: Scope, private val func: String, private val caller: 
 
 // TODO: make sure the func produces a BoundClosureValue(caller: Pointer, label: Int)
 class DynamicCallNode(scope: Scope, private val func: Node, private val args: ListNode) : Node(scope) {
-    override fun exec(context: ExecutionContext): NodeValue {
+    override fun generateCode(buffer: CodegenContext) {
         TODO("not implemented")
     }
 

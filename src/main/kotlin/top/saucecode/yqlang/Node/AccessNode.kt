@@ -5,10 +5,13 @@ import top.saucecode.yqlang.NodeValue.*
 import top.saucecode.yqlang.Runtime.Pointer
 
 sealed class AccessNode(scope: Scope, val parent: Node) : Node(scope) {
-    override fun exec(context: ExecutionContext): NodeValue {
+    override fun generateCode(buffer: CodegenContext) {
         TODO("Not yet implemented")
     }
-    override fun testPattern(allBinds: Boolean): Boolean = !allBinds
+    override fun testPattern(allBinds: Boolean): Boolean {
+        super.testPattern(allBinds)
+        return !allBinds
+    }
     override fun declarePattern(allBinds: Boolean) {
         if (!testPattern(allBinds)) super.declarePattern(allBinds)
     }
@@ -251,16 +254,16 @@ class DynamicAccessNode(scope: Scope, private val list: Node, private val subscr
         val what = if (list is IdentifierNode) {
             context.referenceEnvironment.getName(list.name)!!
         } else {
-            context.memory.createReference(list.exec(context))
+            context.memory.createReference(list.generateCode())
         }
         var accessor = AccessView.create(what, null, context)
         for (subscript in subscripts) {
-            accessor = accessor.subscript(subscript.exec(context))
+            accessor = accessor.subscript(subscript.generateCode())
         }
         return accessor
     }
 
-    override fun exec(context: ExecutionContext): NodeValue {
+    override fun generateCode(buffer: CodegenContext) {
         return context.memory[getAccessor(context).exec()]
     }
 

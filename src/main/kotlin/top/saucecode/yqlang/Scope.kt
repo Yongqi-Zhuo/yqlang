@@ -53,6 +53,15 @@ class Frame(val parent: Frame?, val name: String) {
     fun declareLocalName(name: String) {
         locals.add(name)
     }
+    fun getMemoryLayout(name: String): Int {
+        var offset = captures.indexOf(name)
+        if (offset == -1) {
+            offset = locals.indexOf(name)
+            assert(offset != -1)
+            offset += captures.size
+        }
+        return Memory.paramsAndCaptureBase + offset
+    }
     companion object {
         fun isReserved(name: String): Boolean {
             return name == "this" || name.startsWith("$")
@@ -140,6 +149,10 @@ class Scope(val parent: Scope?, frame: Frame?) {
     // returns mangled name
     fun declareLocalName(name: String): String {
         return currentFrameScope.declareScopeName(name)
+    }
+    // get stack layout
+    fun getMemoryLayout(name: String): Int {
+        return currentFrame.getMemoryLayout(getMangledName(name)!!)
     }
 }
 
