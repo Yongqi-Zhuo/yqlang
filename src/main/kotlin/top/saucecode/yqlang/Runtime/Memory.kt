@@ -67,7 +67,7 @@ class Memory {
         this.statics.addAll(statics)
     }
     // TODO: do not serialize Node? it's fine
-    var text: Node? = null
+//    var text: Node? = null
 
     operator fun get(pointer: Pointer): NodeValue {
         val region = pointer.region()

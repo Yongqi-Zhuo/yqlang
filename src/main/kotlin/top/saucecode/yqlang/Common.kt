@@ -22,7 +22,7 @@ enum class TokenType {
     LOGIC_AND, // LOGIC_OP
     LOGIC_OR, // LOGIC_OP
     // Operators end
-    ACTION, IDENTIFIER, NUMBER_LITERAL, STRING_LITERAL, EOF;
+    ACTION, IDENTIFIER, NUMBER_LITERAL, STRING_LITERAL, BOOLEAN_LITERAL, NULL, EOF;
 
     fun toHumanReadable(): String {
         return when (this) {
@@ -67,6 +67,8 @@ enum class TokenType {
             IDENTIFIER -> "identifier"
             NUMBER_LITERAL -> "number_literal"
             STRING_LITERAL -> "string_literal"
+            BOOLEAN_LITERAL -> "boolean_literal"
+            NULL -> "null"
             EOF -> "EOF"
         }
     }
@@ -95,7 +97,6 @@ data class Token(val type: TokenType, val value: String) {
 
 class Constants {
     companion object {
-        val builtinSymbols = mapOf("true" to true.toNodeValue(), "false" to false.toNodeValue(), "null" to NullValue)
         private val whiteSpace = Pattern.compile("\\s+")
 //        private val Split = BuiltinProcedureValue("split", ListNode("separator")) { context ->
 //            val str = context.memory[Pointer.caller(context.memory)] as StringValue
@@ -177,9 +178,9 @@ class Constants {
 //                else -> throw InterpretationRuntimeException("$expr has no such method as \"length\"")
 //            }
 //        }
-        private val Time = BuiltinProcedureValue("time", ListNode()) {
-            System.currentTimeMillis().toNodeValue()
-        }
+//        private val Time = BuiltinProcedureValue("time", ListNode()) {
+//            System.currentTimeMillis().toNodeValue()
+//        }
 //        private val Random = BuiltinProcedureValue("random", ListNode("first", "second"), { context ->
 //            val collection = context.referenceEnvironment["this"]
 //            return@BuiltinProcedureValue if (collection?.toBoolean() == true) {
@@ -422,9 +423,9 @@ class Constants {
 //            context.sleep(ms)
 //            return@BuiltinProcedureValue NullValue
 //        }, null)
-        val builtinProcedures = mapOf(
+        val builtinProcedures = mapOf<String, Int>(
             // functions
-            "time" to Time,
+//            "time" to Time,
 //            "range" to Range,
 //            "rangeInclusive" to RangeInclusive,
 //            "number" to Number,

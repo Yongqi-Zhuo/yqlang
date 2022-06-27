@@ -174,6 +174,9 @@ class Tokenizer(private val input: String) {
                         "nudge" -> tokens.add(Token(TokenType.ACTION, "nudge"))
                         "picsave" -> tokens.add(Token(TokenType.ACTION, "picsave"))
                         "picsend" -> tokens.add(Token(TokenType.ACTION, "picsend"))
+                        "true" -> tokens.add(Token(TokenType.BOOLEAN_LITERAL, "true"))
+                        "false" -> tokens.add(Token(TokenType.BOOLEAN_LITERAL, "false"))
+                        "null" -> tokens.add(Token(TokenType.NULL, "null"))
                         // "text" -> tokens.add(Token(TokenType.IDENTIFIER, "text")) // events are special identifiers
                         else -> tokens.add(Token(TokenType.IDENTIFIER, value))
                     }

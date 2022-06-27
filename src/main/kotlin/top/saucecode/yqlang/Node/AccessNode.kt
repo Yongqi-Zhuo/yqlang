@@ -1,12 +1,26 @@
 package top.saucecode.yqlang.Node
 
-import kotlinx.serialization.Serializable
-import top.saucecode.yqlang.ExecutionContext
-import top.saucecode.yqlang.InterpretationRuntimeException
+import top.saucecode.yqlang.*
 import top.saucecode.yqlang.NodeValue.*
 import top.saucecode.yqlang.Runtime.Pointer
-import top.saucecode.yqlang.safeSlice
-import top.saucecode.yqlang.safeSubscript
+
+sealed class AccessNode(scope: Scope, val parent: Node) : Node(scope) {
+    override fun exec(context: ExecutionContext): NodeValue {
+        TODO("Not yet implemented")
+    }
+    override fun testPattern(allBinds: Boolean): Boolean = !allBinds
+    override fun declarePattern(allBinds: Boolean) {
+        if (!testPattern(allBinds)) super.declarePattern(allBinds)
+    }
+}
+
+class AttributeAccessNode(scope: Scope, parent: Node, val name: String) : AccessNode(scope, parent) {
+    // calls DynamicAccessNode to generate code
+}
+
+class SubscriptAccessNode(scope: Scope, parent: Node, val subscript: SubscriptNode) : AccessNode(scope, parent) {
+    // calls DynamicAccessNode to generate code
+}
 
 class IndexOutOfRangeRuntimeException(index: Any?, msg: String? = null) :
     InterpretationRuntimeException("Index${index?.let { " $it" } ?: ""} out of range${msg?.let { ": $it" } ?: ""}")
@@ -223,13 +237,13 @@ class ObjectAccessView(private val objectValue: Pointer, parent: AccessView?, co
     }
 }
 
-@Serializable
-class AccessViewNode(private val list: Node, private val subscripts: List<SubscriptNode>) : Node(), ConvertibleToAssignablePattern {
+class DynamicAccessNode(scope: Scope, private val list: Node, private val subscripts: List<SubscriptNode>) : Node(scope), ConvertibleToAssignablePattern {
     constructor(
-        existing: Node, subscript: SubscriptNode
+        scope: Scope, existing: Node, subscript: SubscriptNode
     ) : this(
-        if (existing is AccessViewNode) existing.list else existing,
-        if (existing is AccessViewNode) existing.subscripts + subscript else listOf(subscript)
+        scope,
+        if (existing is DynamicAccessNode) existing.list else existing,
+        if (existing is DynamicAccessNode) existing.subscripts + subscript else listOf(subscript)
     )
 
     private fun getAccessor(context: ExecutionContext): AccessView {

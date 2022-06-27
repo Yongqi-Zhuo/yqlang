@@ -7,12 +7,12 @@ import top.saucecode.yqlang.NodeValue.NodeValue
 import top.saucecode.yqlang.NodeValue.NullValue
 import top.saucecode.yqlang.Runtime.Memory
 import top.saucecode.yqlang.Runtime.Pointer
+import top.saucecode.yqlang.Scope
 import top.saucecode.yqlang.Token
 
-@Serializable
-class StmtAssignNode(private val lvalue: Node, private val expr: Node) : Node() {
+class StmtAssignNode(scope: Scope, private val lvalue: Node, private val expr: Node) : Node(scope) {
     override fun exec(context: ExecutionContext): NodeValue {
-        val value = context.memory.createReference(expr.exec(context))
+        val value = context.memory.allocate(expr.exec(context))
         if (lvalue is ConvertibleToAssignablePattern) {
             lvalue.toPattern(context).assign(context, value)
         } else {
@@ -28,9 +28,8 @@ class StmtAssignNode(private val lvalue: Node, private val expr: Node) : Node() 
 
 class UnimplementedActionException(action: String): InterpretationRuntimeException("Unimplemented action: $action")
 
-@Serializable
-class StmtActionNode(private val action: String, private val expr: Node) : Node() {
-    constructor(action: Token, expr: Node) : this(action.value, expr)
+class StmtActionNode(scope: Scope, private val action: String, private val expr: Node) : Node(scope) {
+    constructor(scope: Scope, action: Token, expr: Node) : this(scope, action.value, expr)
 
     override fun exec(context: ExecutionContext): NodeValue {
         val value = expr.exec(context)
@@ -57,10 +56,9 @@ class StmtActionNode(private val action: String, private val expr: Node) : Node(
     }
 }
 
-@Serializable
 class StmtIfNode(
-    private val condition: Node, private val ifBody: Node, private val elseBody: Node? = null
-) : Node() {
+    scope: Scope, private val condition: Node, private val ifBody: Node, private val elseBody: Node? = null
+) : Node(scope) {
     override fun exec(context: ExecutionContext): NodeValue {
         return if (condition.exec(context).toBoolean()) {
             ifBody.exec(context)
@@ -75,8 +73,7 @@ class StmtIfNode(
     }
 }
 
-@Serializable
-class StmtInitNode(private val stmt: Node) : Node() {
+class StmtInitNode(scope: Scope, private val stmt: Node) : Node(scope) {
     override fun exec(context: ExecutionContext): NodeValue {
         if (context.firstRun) {
             stmt.exec(context)
@@ -89,23 +86,9 @@ class StmtInitNode(private val stmt: Node) : Node() {
     }
 }
 
-@Serializable
-class StmtDeclNode(private val name: String, private val label: Int) : Node() {
-    override fun exec(context: ExecutionContext): NodeValue {
-        val addr = Pointer(Memory.Location.STATIC, label)
-        context.referenceEnvironment.setScopeName(name, addr)
-        return context.memory[addr]
-    }
-
-    override fun toString(): String {
-        return "decl($name, $label)"
-    }
-}
-
 class ReturnException(val value: NodeValue) : Exception()
 
-@Serializable
-class StmtReturnNode(private val expr: Node) : Node() {
+class StmtReturnNode(scope: Scope, private val expr: Node) : Node(scope) {
     override fun exec(context: ExecutionContext): NodeValue {
         throw ReturnException(expr.exec(context))
     }
@@ -115,8 +98,7 @@ class StmtReturnNode(private val expr: Node) : Node() {
     }
 }
 
-@Serializable
-class StmtWhileNode(private val condition: Node, private val body: Node) : Node() {
+class StmtWhileNode(scope: Scope, private val condition: Node, private val body: Node) : Node(scope) {
     override fun exec(context: ExecutionContext): NodeValue {
         while (condition.exec(context).toBoolean() && !Thread.currentThread().isInterrupted) {
             try {
@@ -137,8 +119,7 @@ class StmtWhileNode(private val condition: Node, private val body: Node) : Node(
 
 class ContinueException : Exception()
 
-@Serializable
-object StmtContinueNode : Node() {
+class StmtContinueNode(scope: Scope) : Node(scope) {
     override fun exec(context: ExecutionContext): NodeValue {
         throw ContinueException()
     }
@@ -150,8 +131,7 @@ object StmtContinueNode : Node() {
 
 class BreakException : Exception()
 
-@Serializable
-object StmtBreakNode : Node() {
+class StmtBreakNode(scope: Scope) : Node(scope) {
     override fun exec(context: ExecutionContext): NodeValue {
         throw BreakException()
     }
@@ -161,8 +141,7 @@ object StmtBreakNode : Node() {
     }
 }
 
-@Serializable
-class StmtForNode(private val iterator: Node, private val collection: Node, private val body: Node) : Node() {
+class StmtForNode(scope: Scope, private val iterator: Node, private val collection: Node, private val body: Node) : Node(scope) {
     override fun exec(context: ExecutionContext): NodeValue {
         val collection = collection.exec(context)
         var res: NodeValue = NullValue
@@ -170,7 +149,7 @@ class StmtForNode(private val iterator: Node, private val collection: Node, priv
             for (item in collection) {
                 if (Thread.currentThread().isInterrupted) break
                 (iterator as ConvertibleToAssignablePattern).toPattern(context).assign(context,
-                    context.memory.createReference(item as NodeValue))
+                    context.memory.allocate(item as NodeValue))
                 try {
                     res = body.exec(context)
                 } catch (continueEx: ContinueException) {
@@ -186,8 +165,7 @@ class StmtForNode(private val iterator: Node, private val collection: Node, priv
     }
 }
 
-@Serializable
-class StmtListNode(private val stmts: List<Node>, private val newScope: Boolean) : Node() {
+class StmtListNode(scope: Scope, private val stmts: List<Node>, private val newScope: Boolean) : Node(scope) {
     override fun exec(context: ExecutionContext): NodeValue {
         var res: NodeValue = NullValue
         try {

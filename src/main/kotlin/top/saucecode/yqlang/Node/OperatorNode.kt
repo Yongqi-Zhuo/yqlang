@@ -5,10 +5,10 @@ import top.saucecode.yqlang.ExecutionContext
 import top.saucecode.yqlang.NodeValue.BooleanValue
 import top.saucecode.yqlang.NodeValue.NodeValue
 import top.saucecode.yqlang.NodeValue.NullValue
+import top.saucecode.yqlang.Scope
 import top.saucecode.yqlang.TokenType
 
-@Serializable
-sealed class OperatorNode : Node() {
+sealed class OperatorNode(scope: Scope) : Node(scope) {
     enum class OperatorType {
         UNARY, BINARY
     }
@@ -31,8 +31,7 @@ sealed class OperatorNode : Node() {
     }
 }
 
-@Serializable
-class BinaryOperatorNode(private val components: List<Node>, private val ops: List<TokenType>) : OperatorNode(), ConvertibleToAssignablePattern {
+class BinaryOperatorNode(scope: Scope, private val components: List<Node>, private val ops: List<TokenType>) : OperatorNode(scope) {
     class LazyNodeValue(private val node: Node? = null, private val context: ExecutionContext? = null) {
         private var result: NodeValue? = null
         constructor(value: NodeValue) : this(null, null) {
@@ -78,15 +77,21 @@ class BinaryOperatorNode(private val components: List<Node>, private val ops: Li
         }
     }
 
-    override fun toPattern(context: ExecutionContext): AssignablePattern {
-        if (components.size == 1) {
-            val what = components[0]
-            if (what is ConvertibleToAssignablePattern) {
-                return what.toPattern(context)
-            }
-        }
-        throw TypeMismatchRuntimeException(listOf(ConvertibleToAssignablePattern::class.java), this)
-    }
+//    override fun testPattern(allBinds: Boolean): Boolean = components.size == 1 && components[0].testPattern(allBinds)
+//    override fun declarePattern(allBinds: Boolean) {
+//        if (components.size == 1) components[0].declarePattern(allBinds)
+//        else super.declarePattern(allBinds)
+//    }
+//
+//    override fun toPattern(context: ExecutionContext): AssignablePattern {
+//        if (components.size == 1) {
+//            val what = components[0]
+//            if (what is ConvertibleToAssignablePattern) {
+//                return what.toPattern(context)
+//            }
+//        }
+//        throw TypeMismatchRuntimeException(listOf(ConvertibleToAssignablePattern::class.java), this)
+//    }
 
     override fun toString(): String {
         if (components.size == 1) return components[0].toString()
@@ -96,8 +101,7 @@ class BinaryOperatorNode(private val components: List<Node>, private val ops: Li
     }
 }
 
-@Serializable
-class UnaryOperatorNode(private val component: Node, private val op: TokenType) : OperatorNode() {
+class UnaryOperatorNode(scope: Scope, private val component: Node, private val op: TokenType) : OperatorNode(scope) {
     companion object {
         private val opMap = mapOf<TokenType, (ExecutionContext, Node) -> NodeValue>(
             TokenType.MINUS to { context, node -> -node.exec(context) },

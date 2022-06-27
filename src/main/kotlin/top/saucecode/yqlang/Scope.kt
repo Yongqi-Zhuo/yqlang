@@ -2,6 +2,7 @@ package top.saucecode.yqlang
 
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import top.saucecode.yqlang.Node.IdentifierNode
 import top.saucecode.yqlang.NodeValue.NodeValue
 import top.saucecode.yqlang.Runtime.Memory
 import top.saucecode.yqlang.Runtime.Pointer
@@ -19,15 +20,16 @@ enum class NameType {
 class Frame(val parent: Frame?, val name: String) {
     val isRoot: Boolean get() = parent == null
     // captured values from parent frames
-    val captures: MutableSet<String> = mutableSetOf() // empty for root
+    val captures: MutableList<String> = mutableListOf() // empty for root
     // variables that need to be forwarded to next frame
-    val forwards: MutableMap<String, MutableSet<String>> = mutableMapOf() // empty for root, because root vars are global
+    val forwards: MutableMap<String, MutableList<String>> = mutableMapOf() // empty for root, because root vars are global
     // args are treated as special locals to support pattern matching in function prototypes
     // val arguments: MutableList<String> = mutableListOf() // empty for root
     val locals: MutableList<String> = mutableListOf()
-    fun getName(name: String): NameType? {
+    fun acquireName(name: String): NameType? {
+        if (isReserved(name)) return NameType.LOCAL
         if (isRoot) {
-            return if (name in locals) NameType.GLOBAL
+            return if (name in locals || isBuiltin(name)) NameType.GLOBAL
             else null
         } else {
             when (name) {
@@ -35,11 +37,11 @@ class Frame(val parent: Frame?, val name: String) {
                 in captures -> return NameType.CAPTURE
                 else -> {
                     // need to do capture or find global
-                    val res = parent!!.getName(name) ?: return null
+                    val res = parent!!.acquireName(name) ?: return null
                     when (res) {
                         NameType.GLOBAL -> return NameType.GLOBAL
                         else -> { // parent has captured this for us
-                            parent.forwards.getOrPut(this.name) { mutableSetOf() }.add(name)
+                            parent.forwards.getOrPut(this.name) { mutableListOf() }.add(name)
                             captures.add(name)
                         }
                     }
@@ -51,11 +53,48 @@ class Frame(val parent: Frame?, val name: String) {
     fun declareLocalName(name: String) {
         locals.add(name)
     }
+    companion object {
+        fun isReserved(name: String): Boolean {
+            return name == "this" || name.startsWith("$")
+        }
+        fun isBuiltin(name: String): Boolean {
+            return name in Constants.builtinProcedures.keys
+        }
+    }
 }
-class Scope(val parent: Scope?, val frame: Frame?) {
+
+class CompileException(message: String) : YqlangException(message)
+
+class Scope(val parent: Scope?, frame: Frame?) {
     val currentFrame: Frame
     val currentFrameScope: Scope
     val locals: MutableMap<String, String> = mutableMapOf()
+    private var captureNamesField: Boolean? = null
+    val captureNames: Boolean get() = captureNamesField ?: (parent?.captureNames ?: false)
+    var tracedIdentifiers: MutableList<MutableList<IdentifierNode>> = mutableListOf()
+    fun preserveAndTraceNames(block: () -> Unit): List<IdentifierNode> {
+        val list = mutableListOf<IdentifierNode>()
+        tracedIdentifiers.add(list)
+        val oldCaptureNames = captureNamesField
+        captureNamesField = false
+        try {
+            block()
+        } finally {
+            captureNamesField = oldCaptureNames
+            assert(tracedIdentifiers.remove(list))
+        }
+//        println("id trace: ${list.joinToString(", ") { it.name }}")
+        return list
+    }
+    fun<T> captureNames(block: () -> T): T {
+        val oldCaptureNames = captureNamesField
+        captureNamesField = true
+        return try {
+            block()
+        } finally {
+            captureNamesField = oldCaptureNames
+        }
+    }
     init {
         if (frame == null) {
             currentFrame = parent!!.currentFrame
@@ -65,25 +104,42 @@ class Scope(val parent: Scope?, val frame: Frame?) {
             currentFrameScope = this
         }
     }
+    private fun getMangledName(name: String): String? {
+        if (Frame.isReserved(name)) return name
+        return locals[name] ?: if (parent != null) {
+            parent.getMangledName(name)
+        } else if (Frame.isBuiltin(name)) {
+            name
+        } else {
+            null
+        }
+    }
+    fun testName(name: String): Boolean {
+        return getMangledName(name) != null
+    }
+    fun acquireExistingName(name: String) {
+        if (Frame.isReserved(name)) {
+            return
+        }
+        val mangled = getMangledName(name) ?: throw CompileException("Name $name is not defined")
+        currentFrame.acquireName(mangled) ?: throw CompileException("Name $name cannot be captured. This should not happen.")
+    }
+    // returns mangled name
     fun declareScopeName(name: String): String {
-        val mangled = if (parent == null) name else "$name@${UniqueID.get()}"
+        if (name.startsWith("$")) {
+            throw CompileException("Cannot declare reserved name $name")
+        }
+        val mangled = if (parent == null) {
+            if (name in locals) throw CompileException("Name $name already declared in this scope")
+            name
+        } else "$name@${UniqueID.get()}"
         locals[name] = mangled
         currentFrame.declareLocalName(mangled)
         return mangled
     }
+    // returns mangled name
     fun declareLocalName(name: String): String {
         return currentFrameScope.declareScopeName(name)
-    }
-    // Identifier nodes get their mangled name
-    private fun getMangledName(name: String): String? {
-        return locals[name] ?: parent?.getMangledName(name)
-    }
-    fun getName(name: String): NameType? {
-        if (name.startsWith("$")) {
-            return NameType.LOCAL
-        }
-        val mangled = getMangledName(name) ?: return null
-        return currentFrame.getName(mangled)
     }
 }
 

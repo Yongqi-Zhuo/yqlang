@@ -1,10 +1,7 @@
 package top.saucecode.yqlang.Node
 
-import kotlinx.serialization.Serializable
 import top.saucecode.yqlang.*
 import top.saucecode.yqlang.NodeValue.*
-import top.saucecode.yqlang.Runtime.Memory
-import top.saucecode.yqlang.Runtime.Pointer
 
 class TypeMismatchRuntimeException(expected: List<Class<*>>, got: Any) :
     InterpretationRuntimeException("Type mismatch, expected one of ${
@@ -19,6 +16,15 @@ class IdentifierNode(scope: Scope, val name: String) : Node(scope), ConvertibleT
         return context.referenceEnvironment.getName(name)?.let {
             context.memory[it]
         } ?: NullValue
+    }
+
+    override fun testPattern(allBinds: Boolean): Boolean = true
+    override fun declarePattern(allBinds: Boolean) {
+        if (!allBinds && scope.testName(name)) {
+            scope.acquireExistingName(name)
+        } else {
+            scope.declareLocalName(name)
+        }
     }
 
     override fun toPattern(context: ExecutionContext): AssignablePattern {
@@ -46,6 +52,11 @@ class IntegerNode(scope: Scope, private val value: Long) : Node(scope), Converti
         return value.toNodeValue()
     }
 
+    override fun testPattern(allBinds: Boolean): Boolean = true
+    override fun declarePattern(allBinds: Boolean) {
+        return
+    }
+
     override fun toPattern(context: ExecutionContext): ConstantAssignablePattern {
         return ConstantAssignablePattern(value.toNodeValue())
     }
@@ -63,6 +74,11 @@ class FloatNode(scope: Scope, private val value: Double) : Node(scope), Converti
         return value.toNodeValue()
     }
 
+    override fun testPattern(allBinds: Boolean): Boolean = true
+    override fun declarePattern(allBinds: Boolean) {
+        return
+    }
+
     override fun toPattern(context: ExecutionContext): ConstantAssignablePattern {
         return ConstantAssignablePattern(value.toNodeValue())
     }
@@ -77,7 +93,12 @@ class StringNode(scope: Scope, private val value: String) : Node(scope), Convert
     constructor(scope: Scope, token: Token) : this(scope, token.value)
 
     override fun exec(context: ExecutionContext): NodeValue {
-        return StringValue(value, context.memory)
+        return StringValue(value, context.memory).reference
+    }
+
+    override fun testPattern(allBinds: Boolean): Boolean = true
+    override fun declarePattern(allBinds: Boolean) {
+        return
     }
 
     override fun toPattern(context: ExecutionContext): ConstantAssignablePattern {
@@ -90,12 +111,15 @@ class StringNode(scope: Scope, private val value: String) : Node(scope), Convert
 }
 
 class ListNode(scope: Scope, val items: List<Node>) : Node(scope), ConvertibleToAssignablePattern {
-    override fun exec(context: ExecutionContext): ListValue {
+    override fun exec(context: ExecutionContext): NodeValue {
         // create new instance on heap
         return ListValue(items.mapTo(mutableListOf()) {
-            context.memory.createReference(it.exec(context))
-        }, context.memory)
+            context.memory.allocate(it.exec(context))
+        }, context.memory).reference
     }
+
+    override fun testPattern(allBinds: Boolean): Boolean = items.all { it.testPattern(allBinds) }
+    override fun declarePattern(allBinds: Boolean) = items.forEach { it.declarePattern(allBinds) }
 
     override fun toPattern(context: ExecutionContext): AssignablePattern {
         return ListAssignablePattern(items.map { node ->
@@ -106,8 +130,6 @@ class ListNode(scope: Scope, val items: List<Node>) : Node(scope), ConvertibleTo
             }
         })
     }
-
-    constructor(vararg items: String) : this(items.map { IdentifierNode(Token(TokenType.IDENTIFIER, it)) })
 
     override fun toString(): String {
         return "[${items.joinToString(", ")}]"
@@ -130,11 +152,11 @@ class SubscriptNode(scope: Scope, private val begin: Node, private val extended:
     }
 }
 
-class ObjectNode(scope: Scope, private val items: List<Pair<IdentifierNode, Node>>) : Node(scope) {
-    override fun exec(context: ExecutionContext): ObjectValue {
+class ObjectNode(scope: Scope, private val items: List<Pair<String, Node>>) : Node(scope) {
+    override fun exec(context: ExecutionContext): NodeValue {
         return ObjectValue(items.associateTo(mutableMapOf()) { (key, value) ->
-            key.name to context.memory.createReference(value.exec(context))
-        }, context.memory)
+            key to context.memory.allocate(value.exec(context))
+        }, context.memory).reference
     }
 
     override fun toString(): String {
@@ -142,23 +164,53 @@ class ObjectNode(scope: Scope, private val items: List<Pair<IdentifierNode, Node
     }
 }
 
-class ClosureNode(scope: Scope, private val label: Int) : Node(scope) {
+class BooleanNode(scope: Scope, private val value: Boolean) : Node(scope) {
+    constructor(scope: Scope, token: Token) : this(scope, token.value.toBooleanStrict())
     override fun exec(context: ExecutionContext): NodeValue {
-        return context.memory[Pointer(Memory.Location.STATIC, label)]
+        return BooleanValue(value)
     }
-
     override fun toString(): String {
-        return "closure($label)"
+        return "true"
+    }
+}
+class NullNode(scope: Scope) : Node(scope) {
+    constructor(scope: Scope, token: Token) : this(scope)
+    override fun exec(context: ExecutionContext): NodeValue {
+        return NullValue
+    }
+    override fun toString(): String {
+        return "null"
     }
 }
 
-class ProcedureCallNode(scope: Scope, private val func: Node, private val args: ListNode) : Node(scope) {
+class ClosureNode(scope: Scope, private val name: String, private val params: ListNode, private val body: Node) : Node(scope) {
     override fun exec(context: ExecutionContext): NodeValue {
-        val procedure = func.exec(context) as ConvertibleToCallableProcedure
-        return procedure.call(context, 0, args.items.map { it.exec(context) })
+        TODO("not implemented")
     }
 
     override fun toString(): String {
-        return "$func($args)"
+        return "decl($name, $params, $body)"
+    }
+}
+
+// TODO: add NullNode to represent null self
+class NamedCallNode(scope: Scope, private val func: String, private val caller: Node, private val args: ListNode) : Node(scope) {
+    override fun exec(context: ExecutionContext): NodeValue {
+        TODO("not implemented")
+    }
+
+    override fun toString(): String {
+        return "call($func, $caller, $args)"
+    }
+}
+
+// TODO: make sure the func produces a BoundClosureValue(caller: Pointer, label: Int)
+class DynamicCallNode(scope: Scope, private val func: Node, private val args: ListNode) : Node(scope) {
+    override fun exec(context: ExecutionContext): NodeValue {
+        TODO("not implemented")
+    }
+
+    override fun toString(): String {
+        return "invoke($func, $args)"
     }
 }
