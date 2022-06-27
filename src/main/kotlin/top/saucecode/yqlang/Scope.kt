@@ -4,8 +4,10 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import top.saucecode.yqlang.Node.IdentifierNode
 import top.saucecode.yqlang.NodeValue.NodeValue
+import top.saucecode.yqlang.NodeValue.NullValue
 import top.saucecode.yqlang.Runtime.Memory
 import top.saucecode.yqlang.Runtime.Pointer
+import top.saucecode.yqlang.Runtime.StaticPointer
 
 object UniqueID {
     var id = 0
@@ -19,6 +21,7 @@ enum class NameType {
 }
 class Frame(val parent: Frame?, val name: String) {
     val isRoot: Boolean get() = parent == null
+    val root: Frame get() = if (isRoot) this else parent!!.root
     // captured values from parent frames
     val captures: MutableList<String> = mutableListOf() // empty for root
     // variables that need to be forwarded to next frame
@@ -53,7 +56,14 @@ class Frame(val parent: Frame?, val name: String) {
     fun declareLocalName(name: String) {
         locals.add(name)
     }
-    fun getMemoryLayout(name: String): Int {
+    fun getLocalMemoryLayout(name: String): Int {
+        if (isReserved(name)) {
+            return when (name) {
+                "this" -> Memory.callerOffset
+                "$" -> Memory.argsOffset
+                else -> throw CompileException("Do not use getLocalMemoryLayout($name), handle it yourself!")
+            }
+        }
         var offset = captures.indexOf(name)
         if (offset == -1) {
             offset = locals.indexOf(name)
@@ -69,6 +79,14 @@ class Frame(val parent: Frame?, val name: String) {
         fun isBuiltin(name: String): Boolean {
             return name in Constants.builtinProcedures.keys
         }
+    }
+    fun reserveGlobals(): List<NodeValue> {
+        // TODO: add builtins to globals
+        // return Constants.builtinProcedures.values() + root.locals.map { NullValue }
+        return root.locals.map { NullValue }
+    }
+    fun getGlobalMemoryLayout(name: String): Int {
+        return StaticPointer(root.locals.indexOf(name))
     }
 }
 
@@ -151,8 +169,14 @@ class Scope(val parent: Scope?, frame: Frame?) {
         return currentFrameScope.declareScopeName(name)
     }
     // get stack layout
-    fun getMemoryLayout(name: String): Int {
-        return currentFrame.getMemoryLayout(getMangledName(name)!!)
+    fun getLocalLayout(name: String): Int {
+        return currentFrame.getLocalMemoryLayout(getMangledName(name)!!)
+    }
+    fun getGlobalLayout(name: String): Int {
+        return currentFrame.getGlobalMemoryLayout(getMangledName(name)!!)
+    }
+    fun getLocalLayoutInParentFrame(name: String): Int {
+        return currentFrame.parent!!.getLocalMemoryLayout(getMangledName(name)!!)
     }
 }
 

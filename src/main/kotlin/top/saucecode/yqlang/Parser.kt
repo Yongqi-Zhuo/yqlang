@@ -467,6 +467,9 @@ class Parser {
 //        lastStatics = text.size
         val scope = Scope(null, Frame(null, "root"))
         val ast = parseStmtList(scope, false)
+        val buffer = CodegenContext()
+        buffer.reserveStatics(scope.currentFrame.reserveGlobals())
+        ast.generateCode(buffer)
         return ParseResult(ast, listOf())
     }
 }

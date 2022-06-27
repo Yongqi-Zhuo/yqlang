@@ -4,6 +4,7 @@ import top.saucecode.yqlang.*
 import top.saucecode.yqlang.NodeValue.*
 import top.saucecode.yqlang.Runtime.ByteCode
 import top.saucecode.yqlang.Runtime.ImmediateCode
+import top.saucecode.yqlang.Runtime.Memory
 import top.saucecode.yqlang.Runtime.Op
 
 class TypeMismatchRuntimeException(expected: List<Class<*>>, got: Any) :
@@ -16,10 +17,27 @@ class IdentifierNode(scope: Scope, val name: String) : Node(scope) {
     constructor(scope: Scope, token: Token) : this(scope, token.value)
 
     override fun generateCode(buffer: CodegenContext) {
-        if (!isLvalue) {
-            buffer.add(ByteCode(Op.LOAD_LOCAL_PUSH.code, scope.getMemoryLayout(name)))
+        val nameType = scope.currentFrame.acquireName(name)!!
+        if (nameType != NameType.GLOBAL) {
+            if (!isLvalue) {
+                val index = if (name.startsWith("$")) {
+                    name.substring(1).toIntOrNull()
+                } else null
+                if (index != null) {
+                    buffer.add(ByteCode(Op.GET_NTH_ARG.code, index))
+                } else {
+                    buffer.add(ByteCode(Op.LOAD_LOCAL_PUSH.code, scope.getLocalLayout(name)))
+                }
+            } else {
+                if (Frame.isReserved(name)) throw CompileException("Cannot assign to reserved name $name")
+                buffer.add(ByteCode(Op.POP_SAVE_LOCAL.code, scope.getLocalLayout(name)))
+            }
         } else {
-            buffer.add(ByteCode(Op.POP_SAVE_LOCAL.code, scope.getMemoryLayout(name)))
+            if (!isLvalue) {
+                buffer.add(ByteCode(Op.COPY_PUSH.code, scope.getGlobalLayout(name)))
+            } else {
+                buffer.add(ByteCode(Op.POP_SAVE.code, scope.getGlobalLayout(name)))
+            }
         }
     }
     override fun testPattern(allBinds: Boolean): Boolean {
@@ -212,7 +230,27 @@ class ObjectNode(scope: Scope, private val items: List<Pair<String, Node>>) : No
 
 class ClosureNode(scope: Scope, private val name: String, private val params: ListNode, private val body: Node) : Node(scope) {
     override fun generateCode(buffer: CodegenContext) {
-        TODO("not implemented")
+        val entry = buffer.requestLabel()
+        val end = buffer.requestLabel()
+        buffer.add(ByteCode(Op.JUMP.code, end))
+
+        buffer.putLabel(entry)
+        buffer.add(ByteCode(Op.PREPARE_FRAME.code, scope.currentFrame.locals.size))
+        // now assign the parameters
+        buffer.add(ByteCode(Op.LOAD_LOCAL_PUSH.code, scope.getLocalLayout("\$")))
+        params.generateCode(buffer)
+        // all set. call the function
+        body.generateCode(buffer)
+        // pop frame and return
+        buffer.add(ByteCode(Op.RETURN.code, -1))
+        buffer.putLabel(end)
+
+        val captures = scope.currentFrame.captures
+        captures.forEach {
+            buffer.add(ByteCode(Op.LOAD_LOCAL_PUSH.code, scope.getLocalLayoutInParentFrame(it)))
+        }
+        buffer.add(ByteCode(Op.CONS_PUSH.code, captures.size))
+        buffer.add(ByteCode(Op.CREATE_CLOSURE.code, entry))
     }
 
     override fun toString(): String {

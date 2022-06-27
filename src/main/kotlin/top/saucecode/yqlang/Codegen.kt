@@ -23,4 +23,7 @@ class CodegenContext {
     val memory = Memory()
     fun addStaticValue(value: NodeValue): Pointer = memory.addStaticValue(value)
     fun addStaticString(value: String): Pointer = memory.addStaticString(value)
+    fun reserveStatics(values: List<NodeValue>) {
+        memory.addStatics(values)
+    }
 }

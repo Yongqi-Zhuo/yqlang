@@ -16,7 +16,7 @@ import top.saucecode.yqlang.Node.ReturnException
 import top.saucecode.yqlang.Runtime.Pointer
 
 @Serializable
-class ClosureValue(val captureList: Pointer, val entry: Int) : NodeValue() {
+data class ClosureValue(val captureList: Pointer, val entry: Int) : NodeValue() {
     override fun toBoolean(): Boolean = true
     override val debugStr: String
         get() = "closure($captureList, $entry)"

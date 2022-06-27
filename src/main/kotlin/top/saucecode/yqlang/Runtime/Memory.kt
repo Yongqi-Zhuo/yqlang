@@ -38,10 +38,13 @@ class Memory {
         // components of args can be accessed indirectly
     }
     companion object {
+        val callerOffset = 2
+        val argsOffset = 3
         val paramsAndCaptureBase = 3 + 1
     }
     val caller: Pointer get() = stack[bp + 2]
     val args: Pointer get() = stack[bp + 3]
+    val captures: Pointer get() = stack[bp + 4]
     // returns retAddr
     fun popFrame(): Int {
         while (stack.lastIndex > bp + 1) {
@@ -84,7 +87,6 @@ class Memory {
         statics.add(StringValue(value, this).reference)
         return StaticPointer(statics.lastIndex)
     }
-    // TODO: do not serialize Node? it's fine
 //    var text: Node? = null
 
     operator fun get(pointer: Pointer): NodeValue {
