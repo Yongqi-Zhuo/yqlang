@@ -2,9 +2,6 @@ package top.saucecode.yqlang.Runtime
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
-import top.saucecode.yqlang.Constants
-import top.saucecode.yqlang.InterpretationRuntimeException
-import top.saucecode.yqlang.Node.Node
 import top.saucecode.yqlang.NodeValue.*
 
 // Points to location on heap, static
@@ -22,6 +19,8 @@ typealias CollectionPoolPointer = Int
 // TODO: GC
 @Serializable
 class Memory {
+    var text: List<ByteCode>? = null
+    var labels: List<Int>? = null
     @Transient private val stack: MutableList<Pointer> = mutableListOf()
     @Transient private var bp: Int = 0
     fun pushFrame(retAddr: Int, caller: Pointer, args: Pointer, captures: Pointer) {
@@ -83,7 +82,6 @@ class Memory {
         statics.add(StringValue(value, this).reference)
         return StaticPointer(statics.lastIndex)
     }
-//    var text: Node? = null
 
     operator fun get(pointer: Pointer): NodeValue {
         val region = pointer.region()
@@ -91,7 +89,7 @@ class Memory {
         return when (region) {
             REGION_ID_HEAP -> heap[offset]
             REGION_ID_STATIC -> statics[offset]
-            else -> throw InterpretationRuntimeException("Invalid pointer: $pointer")
+            else -> throw YqlangRuntimeException("Invalid pointer: $pointer")
         }
     }
     operator fun set(pointer: Pointer, value: NodeValue) {
@@ -100,7 +98,7 @@ class Memory {
         when (region) {
             REGION_ID_HEAP -> heap[offset] = value
             REGION_ID_STATIC -> statics[offset] = value
-            else -> throw InterpretationRuntimeException("Invalid pointer: $pointer")
+            else -> throw YqlangRuntimeException("Invalid pointer: $pointer")
         }
     }
     fun getFromPool(pointer: CollectionPoolPointer): CollectionValue {
@@ -121,16 +119,4 @@ class Memory {
     fun copyTo(src: Pointer, dst: Pointer) {
         set(dst, get(src))
     }
-    // no need to createReference, just copy, because references are passed by value
-//    fun createReference(value: NodeValue): Pointer {
-//        return when (value.passingScheme) {
-//            PassingScheme.BY_VALUE -> allocate(value)
-//            PassingScheme.BY_REFERENCE -> (value as CollectionValue).let {
-//                it.address ?: it.apply { solidify(this@Memory) }.address!!
-//            }
-//        }
-//    }
-//    fun makeCopy(value: Pointer): Pointer {
-//        return createReference(get(value))
-//    }
 }

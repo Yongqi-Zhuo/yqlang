@@ -7,6 +7,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import top.saucecode.yqlang.NodeValue.NodeValue
 import top.saucecode.yqlang.Runtime.Memory
+import top.saucecode.yqlang.Runtime.VirtualMachine
 import java.util.concurrent.CancellationException
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ExecutionException
@@ -15,17 +16,9 @@ import kotlin.system.measureTimeMillis
 
 open class YqlangException(message: String) : Exception(message)
 
-abstract class ExecutionContext(var memory: Memory, rootRuntimeScope: RuntimeScope, val firstRun: Boolean, events: Map<String, NodeValue>) {
-    val referenceEnvironment: ReferenceEnvironment
+abstract class ExecutionContext(val firstRun: Boolean, events: Map<String, NodeValue>) {
     var sleepTime: Long = 0
         private set
-    fun useMemory(memory: Memory) {
-        this.memory = memory
-    }
-
-    init {
-        referenceEnvironment = ReferenceEnvironment(rootRuntimeScope,  events)
-    }
 
     abstract fun say(text: String)
     abstract fun nudge(target: Long)
@@ -42,23 +35,19 @@ abstract class ExecutionContext(var memory: Memory, rootRuntimeScope: RuntimeSco
     }
 }
 
-class ConsoleContext(memory: Memory, rootRuntimeScope: RuntimeScope? = null, events: Map<String, NodeValue> = mapOf()) : ExecutionContext(memory, rootRuntimeScope ?: RuntimeScope(), true, events) {
+class ConsoleContext(events: Map<String, NodeValue> = mapOf()) : ExecutionContext(true, events) {
     override fun say(text: String) {
         println(text)
     }
-
     override fun nudge(target: Long) {
         println("Nudge $target")
     }
-
     override fun picSave(picId: String) {
         println("Save $picId")
     }
-
     override fun picSend(picId: String) {
         println("Picture $picId")
     }
-
     override fun nickname(id: Long): String {
         return "$id"
     }
@@ -70,19 +59,16 @@ sealed class Output {
             return text
         }
     }
-
     data class PicSave(val picId: String) : Output() {
         override fun toString(): String {
             return "Save $picId"
         }
     }
-
     data class PicSend(val picId: String) : Output() {
         override fun toString(): String {
             return "Picture $picId"
         }
     }
-
     data class Nudge(val target: Long) : Output() {
         override fun toString(): String {
             return "Nudge $target"
@@ -90,36 +76,31 @@ sealed class Output {
     }
 }
 
-open class ControlledContext(memory: Memory, rootRuntimeScope: RuntimeScope, firstRun: Boolean, events: Map<String, NodeValue>) : ExecutionContext(memory, rootRuntimeScope, firstRun, events) {
+open class ControlledContext(firstRun: Boolean, events: Map<String, NodeValue>) : ExecutionContext(firstRun, events) {
     private val record = mutableListOf<Output>()
     override fun say(text: String) {
         synchronized(record) {
             record.add(Output.Text(text))
         }
     }
-
     override fun nudge(target: Long) {
         synchronized(record) {
             record.add(Output.Nudge(target))
         }
     }
-
     override fun picSave(picId: String) {
         synchronized(record) {
             record.add(Output.PicSave(picId))
         }
     }
-
     override fun picSend(picId: String) {
         synchronized(record) {
             record.add(Output.PicSend(picId))
         }
     }
-
     override fun nickname(id: Long): String {
         return "$id"
     }
-
     fun dumpOutput(): List<Output> {
         val res = synchronized(record) {
             val dump = record.toList()
@@ -130,7 +111,7 @@ open class ControlledContext(memory: Memory, rootRuntimeScope: RuntimeScope, fir
     }
 }
 
-class RestrictedInterpreter(source: String) {
+class RestrictedContainer(source: String) {
     private val memory: Memory
     private var futureTasks: MutableList<CompletableFuture<*>> = mutableListOf()
 
@@ -138,9 +119,7 @@ class RestrictedInterpreter(source: String) {
         val tokens = Tokenizer(source).scan()
         val parser = Parser()
         val res = parser.parse(tokens)
-        memory = Memory()
-        memory.text = res.text
-        memory.addStatics(res.statics)
+        memory = res.preloadedMemory
     }
 
     // why we need quantum? to avoid sending message too fast.
@@ -159,8 +138,7 @@ class RestrictedInterpreter(source: String) {
                     throw YqlangException("Too many instances of the same script")
                 }
                 val newTask = CompletableFuture.runAsync {
-                    context.useMemory(memory)
-                    memory.text!!.exec(context)
+                    VirtualMachine(context, memory).execute()
                 }
                 futureTasks.add(newTask)
                 newTask
@@ -198,62 +176,62 @@ class RestrictedInterpreter(source: String) {
     }
 }
 
-class REPL(private val debug: Boolean = false) {
-    val rootRuntimeScope = RuntimeScope()
-    private val parser = Parser()
-    private val memory = Memory()
-
-    fun run() {
-        val inputs = mutableListOf<String>()
-        while (true) {
-            print("> ")
-            val input = readLine() ?: break
-            if (input.isEmpty()) continue
-            if (input == "exit" || input == "stop") break
-            inputs.add(input)
-            val compileTime: Long
-            try {
-                compileTime = measureTimeMillis {
-                    val res = parser.parse(Tokenizer(inputs.joinToString("\n")).scan())
-                    memory.text = res.text
-                    memory.addStatics(res.statics)
-                }
-            } catch (e: UnexpectedTokenException) {
-                if (e.token.type == TokenType.EOF) {
-                    continue
-                } else {
-                    println("Compile Error: ${e.message}")
-                    inputs.clear()
-                    continue
-                }
-            } catch (e: Exception) {
-                println("Compile Error: ${e.message}")
-                inputs.clear()
-                continue
-            }
-            inputs.clear()
-            val context = ControlledContext(memory, rootRuntimeScope, true, mapOf())
-            var runTime: Long? = null
-            try {
-                val res: NodeValue
-                runTime = measureTimeMillis {
-                    res = memory.text!!.exec(context)
-                }
-                val output = context.dumpOutput()
-                if (output.isNotEmpty()) {
-                    output.forEach { println(it) }
-                } else {
-                    println(res)
-                }
-                if (debug) {
-                    println("Serialized: ${Json.encodeToString(res)}")
-                }
-            } catch (e: Exception) {
-                println("Runtime Error: ${e.message}")
-            }
-            if (debug) {
-                println("Compile: $compileTime ms${runTime?.let { ", Run: $runTime ms" } ?: ""}")
-            }
-        }
-    }
-}
+//class REPL(private val debug: Boolean = false) {
+//    val rootRuntimeScope = RuntimeScope()
+//    private val parser = Parser()
+//    private val memory = Memory()
+//
+//    fun run() {
+//        val inputs = mutableListOf<String>()
+//        while (true) {
+//            print("> ")
+//            val input = readLine() ?: break
+//            if (input.isEmpty()) continue
+//            if (input == "exit" || input == "stop") break
+//            inputs.add(input)
+//            val compileTime: Long
+//            try {
+//                compileTime = measureTimeMillis {
+//                    val res = parser.parse(Tokenizer(inputs.joinToString("\n")).scan())
+//                    memory.text = res.text
+//                    memory.addStatics(res.statics)
+//                }
+//            } catch (e: UnexpectedTokenException) {
+//                if (e.token.type == TokenType.EOF) {
+//                    continue
+//                } else {
+//                    println("Compile Error: ${e.message}")
+//                    inputs.clear()
+//                    continue
+//                }
+//            } catch (e: Exception) {
+//                println("Compile Error: ${e.message}")
+//                inputs.clear()
+//                continue
+//            }
+//            inputs.clear()
+//            val context = ControlledContext(memory, rootRuntimeScope, true, mapOf())
+//            var runTime: Long? = null
+//            try {
+//                val res: NodeValue
+//                runTime = measureTimeMillis {
+//                    res = memory.text!!.exec(context)
+//                }
+//                val output = context.dumpOutput()
+//                if (output.isNotEmpty()) {
+//                    output.forEach { println(it) }
+//                } else {
+//                    println(res)
+//                }
+//                if (debug) {
+//                    println("Serialized: ${Json.encodeToString(res)}")
+//                }
+//            } catch (e: Exception) {
+//                println("Runtime Error: ${e.message}")
+//            }
+//            if (debug) {
+//                println("Compile: $compileTime ms${runTime?.let { ", Run: $runTime ms" } ?: ""}")
+//            }
+//        }
+//    }
+//}

@@ -1,11 +1,12 @@
 package top.saucecode.yqlang.Runtime
 
 import top.saucecode.yqlang.ExecutionContext
-import top.saucecode.yqlang.Node.ActionCode
-import top.saucecode.yqlang.Node.TypeMismatchRuntimeException
+import top.saucecode.yqlang.Node.*
 import top.saucecode.yqlang.NodeValue.*
+import top.saucecode.yqlang.Runtime.Op.*
 import top.saucecode.yqlang.YqlangException
 import java.util.*
+import kotlinx.serialization.Serializable
 
 enum class Op(val code: Int) {
     // operand: offset from bp.
@@ -125,6 +126,46 @@ enum class Op(val code: Int) {
     // get the next element of the current iterator.
     ITER_NEXT_PUSH(28),
 
+    // operand: none.
+    // create a new AccessView, assuming on stack: a collection.
+    PUSH_ACCESS_VIEW(29),
+
+    // operand: none.
+    // extends the AccessView, assuming on stack: a subscript, and the AccessView on its proprietary stack.
+    EXTEND_ACCESS_VIEW(30),
+
+    // operand: none.
+    // get the value of the AccessView, assuming the AccessView on its proprietary stack.
+    ACCESS_GET(31),
+
+    // operand: none.
+    // set the value of the AccessView, assuming on stack: the rvalue and the AccessView on its proprietary stack.
+    ACCESS_SET(32),
+
+    // operand: binary operator code.
+    // perform a binary operation on the first two on the top of stack.
+    BINARY_OP(33),
+
+    // operand: none.
+    // converts the value on top of stack to boolean.
+    TO_BOOL(34),
+
+    // operand: a label.
+    // jump to the label if the top of stack is not zero.
+    JUMP_NOT_ZERO(35),
+
+    // operand: unary operator code.
+    // perform a unary operation on the top of stack.
+    UNARY_OP(36),
+
+    // operand: none
+    // exit the program.
+    EXIT(127);
+    companion object {
+        fun fromCode(code: Int): Op {
+            return values().firstOrNull { it.code == code } ?: throw YqlangRuntimeException("Unknown op code: $code")
+        }
+    }
 }
 
 enum class ImmediateCode(val code: Int) {
@@ -135,34 +176,44 @@ enum class ImmediateCode(val code: Int) {
         }
     }
 }
-data class ByteCode(val op: Int, val operand: Int = 0)
+@Serializable
+data class ByteCode(val op: Int, val operand: Int = 0) {
+    override fun toString(): String {
+        return "${Op.fromCode(op)} $operand"
+    }
+}
 
 open class YqlangRuntimeException(message: String) : YqlangException(message)
 class PatternMatchingConstantUnmatchedException : YqlangRuntimeException("Pattern matching failed: constant unmatched")
 class InterruptedException : YqlangRuntimeException("Interrupted")
 
 // TODO: implement +=, -=,...
-class VirtualMachine(val executionContext: ExecutionContext) {
-    val memory: Memory = executionContext.memory // separate memory from ExecContext. memory includes text.
-    val text: List<ByteCode> = listOf()
-    val labels = mutableListOf<Int>()
+class VirtualMachine(val executionContext: ExecutionContext, val memory: Memory) {
+    val text: List<ByteCode> = memory.text!!
+    val labels = memory.labels!!
     var pc = 0
     var register: Pointer? = null
     val iteratorStack: Stack<Iterator<Pointer>> = Stack()
+    val accessStack: Stack<AccessView> = Stack()
     fun jump(label: Int) {
         // to avoid recursion, check thread status
         if (Thread.currentThread().isInterrupted) throw InterruptedException()
         pc = labels[label] - 1
     }
+    inline fun performOp(op: NodeValue.(NodeValue) -> NodeValue) {
+        memory.push(memory.allocate(memory[memory.pop()].op(memory[memory.pop()])))
+    }
     fun execute() {
         while (true) {
             val byteCode = text[pc]
-            when (byteCode.op) {
-                Op.LOAD_LOCAL_PUSH.code -> memory.push(memory.getLocal(byteCode.operand))
-                Op.COPY_PUSH.code -> memory.push(memory.copy(byteCode.operand))
-                Op.POP_SAVE_LOCAL.code -> memory.copyTo(memory.pop(), memory.getLocal(byteCode.operand))
-                Op.POP_ASSERT_EQ.code -> if (memory[memory.pop()] != memory[byteCode.operand]) throw PatternMatchingConstantUnmatchedException()
-                Op.CONS_PUSH.code -> {
+            val opCode = Op.fromCode(byteCode.op)
+            when (opCode) {
+                LOAD_LOCAL_PUSH -> memory.push(memory.getLocal(byteCode.operand))
+                COPY_PUSH -> memory.push(memory.copy(byteCode.operand))
+                POP_SAVE_LOCAL -> memory.copyTo(memory.pop(), memory.getLocal(byteCode.operand))
+                POP_SAVE -> memory.copyTo(memory.pop(), byteCode.operand)
+                POP_ASSERT_EQ -> if (memory[memory.pop()] != memory[byteCode.operand]) throw PatternMatchingConstantUnmatchedException()
+                CONS_PUSH -> {
                     val list = mutableListOf<Pointer>()
                     for (i in 0 until byteCode.operand) {
                         list.add(memory.pop())
@@ -170,16 +221,17 @@ class VirtualMachine(val executionContext: ExecutionContext) {
                     list.reverse()
                     memory.push(memory.allocate(ListValue(list, memory).reference))
                 }
-                Op.EXTRACT_LIST.code -> {
+                EXTRACT_LIST -> {
                     val uncheckedList = memory[memory.pop()]
-                    val list = uncheckedList.asList()?.value ?: throw TypeMismatchRuntimeException(listOf(ListValue::class.java), uncheckedList)
+                    val list = uncheckedList.asList()?.value 
+                        ?: throw TypeMismatchRuntimeException(listOf(ListValue::class.java), uncheckedList)
                     val expectedLength = byteCode.operand
                     for (i in list.size until expectedLength) {
                         memory.push(memory.allocate(NullValue))
                     }
                     list.take(expectedLength).reversed().forEach { memory.push(it) }
                 }
-                Op.SUBSCRIPT_PUSH.code -> {
+                SUBSCRIPT_PUSH -> {
                     val subscriptType = byteCode.operand
                     val end = if (subscriptType == 2) memory[memory.pop()] else null
                     val begin = memory[memory.pop()]
@@ -191,26 +243,27 @@ class VirtualMachine(val executionContext: ExecutionContext) {
                     } ?: throw TypeMismatchRuntimeException(listOf(IntegerValue::class.java, StringValue::class.java), begin)
                     memory.push(memory.allocate(subscript))
                 }
-                Op.CONS_OBJ_PUSH.code -> {
+                CONS_OBJ_PUSH -> {
                     val list = mutableListOf<Pair<String, Pointer>>()
                     for (i in 0 until byteCode.operand) {
                         val value = memory.pop()
                         val uncheckedKey = memory[memory.pop()]
-                        val key = uncheckedKey.asString()?.value ?: throw TypeMismatchRuntimeException(listOf(StringValue::class.java), uncheckedKey)
+                        val key = uncheckedKey.asString()?.value 
+                            ?: throw TypeMismatchRuntimeException(listOf(StringValue::class.java), uncheckedKey)
                         list.add(key to value)
                     }
                     list.reverse()
                     val obj = ObjectValue(list.toMap(mutableMapOf()), memory)
                     memory.push(memory.allocate(obj.reference))
                 }
-                Op.PUSH_IMM.code -> {
+                PUSH_IMM -> {
                     when (ImmediateCode.fromCode(byteCode.operand)) {
                         ImmediateCode.NULL -> memory.push(memory.allocate(NullValue))
                         ImmediateCode.FALSE -> memory.push(memory.allocate(BooleanValue(false)))
                         ImmediateCode.TRUE -> memory.push(memory.allocate(BooleanValue(true)))
                     }
                 }
-                Op.POP_ASSERT_EQ_IMM.code -> {
+                POP_ASSERT_EQ_IMM -> {
                     val constCode = ImmediateCode.fromCode(byteCode.operand)
                     val value = memory[memory.pop()]
                     when (constCode) {
@@ -219,64 +272,104 @@ class VirtualMachine(val executionContext: ExecutionContext) {
                         ImmediateCode.TRUE -> if (value != BooleanValue(true)) throw PatternMatchingConstantUnmatchedException()
                     }
                 }
-                Op.ACTION.code -> {
+                ACTION -> {
                     val actionCode = byteCode.operand
                     val target = memory[memory.pop()]
                     when (ActionCode.fromCode(actionCode)) {
                         ActionCode.SAY -> executionContext.say(target.printStr)
-                        ActionCode.NUDGE -> target.asInteger()?.let { executionContext.nudge(it) } ?: throw TypeMismatchRuntimeException(listOf(IntegerValue::class.java), target)
-                        ActionCode.PICSAVE -> target.asString()?.value?.let { executionContext.picSave(it) } ?: throw TypeMismatchRuntimeException(listOf(StringValue::class.java), target)
-                        ActionCode.PICSEND -> target.asString()?.value?.let { executionContext.picSend(it) } ?: throw TypeMismatchRuntimeException(listOf(StringValue::class.java), target)
+                        ActionCode.NUDGE -> target.asInteger()?.let { executionContext.nudge(it) } 
+                            ?: throw TypeMismatchRuntimeException(listOf(IntegerValue::class.java), target)
+                        ActionCode.PICSAVE -> target.asString()?.value?.let { executionContext.picSave(it) } 
+                            ?: throw TypeMismatchRuntimeException(listOf(StringValue::class.java), target)
+                        ActionCode.PICSEND -> target.asString()?.value?.let { executionContext.picSend(it) } 
+                            ?: throw TypeMismatchRuntimeException(listOf(StringValue::class.java), target)
                     }
                 }
-                Op.JUMP.code -> jump(byteCode.operand)
-                Op.CREATE_CLOSURE.code -> {
+                JUMP -> jump(byteCode.operand)
+                CREATE_CLOSURE -> {
                     val closure = ClosureValue(memory.pop(), byteCode.operand)
                     memory.push(memory.allocate(closure))
                 }
-                Op.PREPARE_FRAME.code -> {
+                PREPARE_FRAME -> {
                     // now on stack: lastBp, retAddr, caller, args, captures. Now expand captures
-                    val captures = memory[memory.pop()].asList()?.value ?: throw YqlangRuntimeException("Failed to pass captures. This should not happen.")
+                    val captures = memory[memory.pop()].asList()?.value 
+                        ?: throw YqlangRuntimeException("Failed to pass captures. This should not happen.")
                     captures.forEach { memory.push(it) } // pass by reference!
                     repeat(byteCode.operand) { memory.push(memory.allocate(NullValue)) }
-                    // any need to push something, in order that the return value won't be $?
                 }
-                Op.GET_NTH_ARG.code -> {
+                GET_NTH_ARG -> {
                     val nth = memory.allocate(NullValue)
-                    memory[memory.args].asList()?.value?.getOrNull(byteCode.operand)?.let { memory.copyTo(it, nth) } ?: throw YqlangRuntimeException("Failed to get argument.")
+                    memory[memory.args].asList()?.value?.getOrNull(byteCode.operand)?.let { memory.copyTo(it, nth) } 
+                        ?: throw YqlangRuntimeException("Failed to get argument.")
                     memory.push(nth)
                 }
-                Op.POP_RETURN.code -> {
+                POP_RETURN -> {
                     val retVal = memory.pop() // just pass the last result
                     val label = memory.popFrame()
                     memory.push(retVal)
                     jump(label)
                 }
-                Op.CALL.code -> {
+                CALL -> {
+                    // on stack: caller, closure, args.
                     val args = memory.pop()
                     val uncheckedClosure = memory[memory.pop()]
-                    val closure = uncheckedClosure as? ClosureValue ?: throw TypeMismatchRuntimeException(listOf(ClosureValue::class.java), uncheckedClosure)
+                    val closure = uncheckedClosure as? ClosureValue 
+                        ?: throw TypeMismatchRuntimeException(listOf(ClosureValue::class.java), uncheckedClosure)
                     val caller = memory.pop()
                     val retAddr = byteCode.operand
                     memory.pushFrame(retAddr, caller, args, closure.captureList)
                     jump(closure.entry)
                 }
-                Op.NOP.code -> { } // do nothing
-                Op.JUMP_ZERO.code -> if (!memory[memory.pop()].toBoolean()) jump(byteCode.operand)
-                Op.JUMP_NOT_FIRST_RUN.code -> if (!executionContext.firstRun) jump(byteCode.operand)
-                Op.POP.code -> memory.pop()
-                Op.RETURN.code -> {
+                NOP -> { } // do nothing
+                JUMP_ZERO -> if (!memory[memory.pop()].toBoolean()) jump(byteCode.operand)
+                JUMP_NOT_FIRST_RUN -> if (!executionContext.firstRun) jump(byteCode.operand)
+                POP -> memory.pop()
+                RETURN -> {
                     val label = memory.popFrame()
                     (register ?: memory.allocate(NullValue)).let { memory.push(it) }
                     jump(label)
                 }
-                Op.POP_SAVE_TO_REG.code -> register = memory.pop()
-                Op.CLEAR_REG.code -> register = null
-                Op.PUSH_ITERATOR.code -> iteratorStack.push((memory[memory.pop()] as Iterable<Pointer>).iterator())
-                Op.JUMP_IF_ITER_DONE.code -> if (!iteratorStack.peek().hasNext()) jump(byteCode.operand)
-                Op.POP_ITERATOR.code -> iteratorStack.pop()
-                Op.ITER_NEXT_PUSH.code -> memory.push(iteratorStack.peek().next())
-                else -> throw YqlangRuntimeException("Invalid byte code $byteCode")
+                POP_SAVE_TO_REG -> register = memory.pop()
+                CLEAR_REG -> register = null
+                PUSH_ITERATOR ->
+                    @Suppress("UNCHECKED_CAST") iteratorStack.push((memory[memory.pop()] as Iterable<Pointer>).iterator())
+                JUMP_IF_ITER_DONE -> if (!iteratorStack.peek().hasNext()) jump(byteCode.operand)
+                POP_ITERATOR -> iteratorStack.pop()
+                ITER_NEXT_PUSH -> memory.push(iteratorStack.peek().next())
+                PUSH_ACCESS_VIEW -> {
+                    val uncheckedValue = memory[memory.pop()]
+                    val value = (uncheckedValue as? ReferenceValue)?.value
+                        ?: throw TypeMismatchRuntimeException(listOf(ReferenceValue::class.java), uncheckedValue)
+                    val accessView = AccessView.create(value, null, memory)
+                    accessStack.push(accessView)
+                }
+                EXTEND_ACCESS_VIEW -> accessStack.push(accessStack.pop().subscript(memory[memory.pop()] as? SubscriptValue
+                    ?: throw YqlangRuntimeException("Failed to subscript access view. This should not happen.")))
+                ACCESS_GET -> memory.push(accessStack.pop().exec())
+                ACCESS_SET -> accessStack.pop().assign(memory.pop())
+                BINARY_OP -> when (BinaryOperatorCode.fromValue(byteCode.operand)) {
+                    BinaryOperatorCode.ADD -> performOp(NodeValue::plus)
+                    BinaryOperatorCode.SUB -> performOp(NodeValue::minus)
+                    BinaryOperatorCode.MUL -> performOp(NodeValue::times)
+                    BinaryOperatorCode.DIV -> performOp(NodeValue::div)
+                    BinaryOperatorCode.MOD -> performOp(NodeValue::rem)
+                    BinaryOperatorCode.EQUAL -> performOp { that -> BooleanValue(this == that) }
+                    BinaryOperatorCode.NOT_EQUAL -> performOp { that -> BooleanValue(this != that) }
+                    BinaryOperatorCode.GREATER -> performOp { that -> BooleanValue(this > that) }
+                    BinaryOperatorCode.LESS -> performOp { that -> BooleanValue(this < that) }
+                    BinaryOperatorCode.GREATER_EQ -> performOp { that -> BooleanValue(this >= that) }
+                    BinaryOperatorCode.LESS_EQ -> performOp { that -> BooleanValue(this <= that) }
+                    BinaryOperatorCode.LOGIC_AND -> performOp { that -> BooleanValue(this.toBoolean() && that.toBoolean()) }
+                    BinaryOperatorCode.LOGIC_OR -> performOp { that -> BooleanValue(this.toBoolean() || that.toBoolean()) }
+                    BinaryOperatorCode.IN -> performOp { that -> BooleanValue(this in that) }
+                }
+                TO_BOOL -> memory.push(memory.allocate(BooleanValue(memory[memory.pop()].toBoolean())))
+                JUMP_NOT_ZERO -> if (memory[memory.pop()].toBoolean()) jump(byteCode.operand)
+                UNARY_OP -> when (UnaryOperatorCode.fromValue(byteCode.operand)) {
+                    UnaryOperatorCode.MINUS -> memory.push(memory.allocate(-memory[memory.pop()]))
+                    UnaryOperatorCode.NOT -> memory.push(memory.allocate(!memory[memory.pop()]))
+                }
+                EXIT -> break
             }
             pc++
         }

@@ -2,6 +2,7 @@ package top.saucecode.yqlang
 
 import top.saucecode.yqlang.Node.*
 import top.saucecode.yqlang.Runtime.ByteCode
+import top.saucecode.yqlang.Runtime.Memory
 
 open class ParserException(message: String) : Exception(message)
 class UnexpectedTokenException(val token: Token, private val expected: TokenType? = null) :
@@ -265,7 +266,10 @@ class Parser {
                     ops.add(consume(peek().type).type)
                     nodes.add(parseOperator(scope, precedence - 1))
                 }
-                if (ops.size == 0) nodes[0] else BinaryOperatorNode(scope, nodes, ops)
+                if (ops.size == 0) nodes[0] else {
+                    if (op.isAndOr) LogicBinaryOperatorNode(scope, nodes, ops, op.isAnd)
+                    else BinaryOperatorNode(scope, nodes, ops)
+                }
             }
         }
     }
@@ -416,18 +420,20 @@ class Parser {
             }
             TokenType.BRACKET_OPEN -> { // subscript access
                 consume(TokenType.BRACKET_OPEN)
-                val begin = if (peek().type == TokenType.COLON) {
-                    IntegerNode(scope, 0)
-                } else parseExpr(scope)
-                val subscript = if (peek().type == TokenType.COLON) {
-                    consume(TokenType.COLON)
-                    if (peek().type == TokenType.BRACKET_CLOSE) {
-                        SubscriptNode(scope, begin, true, null)
+                val subscript = scope.captureNames {
+                    val begin = if (peek().type == TokenType.COLON) {
+                        IntegerNode(scope, 0)
+                    } else parseExpr(scope)
+                    if (peek().type == TokenType.COLON) {
+                        consume(TokenType.COLON)
+                        if (peek().type == TokenType.BRACKET_CLOSE) {
+                            SubscriptNode(scope, begin, true, null)
+                        } else {
+                            SubscriptNode(scope, begin, true, parseExpr(scope))
+                        }
                     } else {
-                        SubscriptNode(scope, begin, true, parseExpr(scope))
+                        SubscriptNode(scope, begin, false)
                     }
-                } else {
-                    SubscriptNode(scope, begin, false)
                 }
                 consume(TokenType.BRACKET_CLOSE)
                 SubscriptAccessNode(scope, termHead, subscript)
@@ -449,14 +455,25 @@ class Parser {
     }
 
     private fun parseTerm(scope: Scope): Node {
-        var term = parseTermHead(scope)
+        val tryToPreserve = !scope.captureNames
+        var receipt: List<IdentifierNode>? = null
+        var term = if (tryToPreserve) {
+            var theTerm: Node? = null
+            receipt = scope.preserveAndTraceNames {
+                theTerm = parseTermHead(scope)
+            }
+            theTerm!!
+        } else parseTermHead(scope)
+        var tail = false
         while (peek().type == TokenType.DOT || peek().type == TokenType.BRACKET_OPEN || peek().type == TokenType.PAREN_OPEN) {
             term = parseTermTail(scope, term)
+            tail = true
         }
+        if (tail) receipt?.forEach { it.scope.acquireExistingName(it.name) }
         return term
     }
 
-    data class ParseResult(val text: Node, val statics: List<ByteCode>)
+    data class ParseResult(val symbolTable: SymbolTable, val preloadedMemory: Memory)
 
     fun parse(tokens: List<Token>): ParseResult {
         this.tokens = tokens
@@ -470,6 +487,8 @@ class Parser {
         val buffer = CodegenContext()
         buffer.reserveStatics(scope.currentFrame.reserveGlobals())
         ast.generateCode(buffer)
-        return ParseResult(ast, listOf())
+        buffer.memory.text = buffer.text
+        buffer.memory.labels = buffer.labels
+        return ParseResult(scope.exportSymbolTable(), buffer.memory)
     }
 }

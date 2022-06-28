@@ -2,12 +2,12 @@ package top.saucecode.yqlang.NodeValue
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
-import top.saucecode.yqlang.InterpretationRuntimeException
 import top.saucecode.yqlang.Runtime.CollectionPoolPointer
 import top.saucecode.yqlang.Runtime.Memory
 import top.saucecode.yqlang.Runtime.Pointer
+import top.saucecode.yqlang.Runtime.YqlangRuntimeException
 
-class OperationRuntimeException(message: String) : InterpretationRuntimeException(message)
+class OperationRuntimeException(message: String) : YqlangRuntimeException(message)
 
 @Serializable
 sealed class NodeValue : Comparable<NodeValue> {
@@ -17,6 +17,7 @@ sealed class NodeValue : Comparable<NodeValue> {
     fun asInteger() = (this as? IntegerValue)?.value
     fun asArithmetic() = this as? ArithmeticValue
     fun asRegEx() = (this as? RegExValue)
+    fun asCollection() = (this as? ReferenceValue)?.value
     fun asString() = (this as? ReferenceValue)?.asStringValue()
     fun asList() = (this as? ReferenceValue)?.asListValue()
     fun asObject() = (this as? ReferenceValue)?.asObjectValue()
@@ -59,7 +60,7 @@ sealed class NodeValue : Comparable<NodeValue> {
 
 }
 
-class AccessingUnsolidifiedValueException(subject: Any) : InterpretationRuntimeException("Accessing unsolidified value: $subject")
+class AccessingUnsolidifiedValueException(subject: Any) : YqlangRuntimeException("Accessing unsolidified value: $subject")
 @Serializable
 sealed class CollectionValue : Iterable<Pointer> {
     @Transient protected var memory: Memory? = null

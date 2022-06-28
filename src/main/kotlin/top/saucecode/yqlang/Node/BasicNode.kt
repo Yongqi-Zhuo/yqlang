@@ -5,9 +5,10 @@ import top.saucecode.yqlang.NodeValue.*
 import top.saucecode.yqlang.Runtime.ByteCode
 import top.saucecode.yqlang.Runtime.ImmediateCode
 import top.saucecode.yqlang.Runtime.Op
+import top.saucecode.yqlang.Runtime.YqlangRuntimeException
 
 class TypeMismatchRuntimeException(expected: List<Class<*>>, got: Any) :
-    InterpretationRuntimeException("Type mismatch, expected one of ${
+    YqlangRuntimeException("Type mismatch, expected one of ${
         expected.joinToString(", ") { it.simpleName }
     }, got ${got.javaClass.simpleName}")
 
@@ -23,19 +24,19 @@ class IdentifierNode(scope: Scope, val name: String) : Node(scope) {
                     name.substring(1).toIntOrNull()
                 } else null
                 if (index != null) {
-                    buffer.add(ByteCode(Op.GET_NTH_ARG.code, index))
+                    buffer.add(Op.GET_NTH_ARG, index)
                 } else {
-                    buffer.add(ByteCode(Op.LOAD_LOCAL_PUSH.code, scope.getLocalLayout(name)))
+                    buffer.add(Op.LOAD_LOCAL_PUSH, scope.getLocalLayout(name))
                 }
             } else {
                 if (Frame.isReserved(name)) throw CompileException("Cannot assign to reserved name $name")
-                buffer.add(ByteCode(Op.POP_SAVE_LOCAL.code, scope.getLocalLayout(name)))
+                buffer.add(Op.POP_SAVE_LOCAL, scope.getLocalLayout(name))
             }
         } else {
             if (!isLvalue) {
-                buffer.add(ByteCode(Op.COPY_PUSH.code, scope.getGlobalLayout(name)))
+                buffer.add(Op.COPY_PUSH, scope.getGlobalLayout(name))
             } else {
-                buffer.add(ByteCode(Op.POP_SAVE.code, scope.getGlobalLayout(name)))
+                buffer.add(Op.POP_SAVE, scope.getGlobalLayout(name))
             }
         }
     }
@@ -64,9 +65,9 @@ class IntegerNode(scope: Scope, private val value: Long) : Node(scope) {
     override fun generateCode(buffer: CodegenContext) {
         val addr = buffer.addStaticValue(IntegerValue(value))
         if (!isLvalue) {
-            buffer.add(ByteCode(Op.COPY_PUSH.code, addr))
+            buffer.add(Op.COPY_PUSH, addr)
         } else {
-            buffer.add(ByteCode(Op.POP_ASSERT_EQ.code, addr))
+            buffer.add(Op.POP_ASSERT_EQ, addr)
         }
     }
     override fun testPattern(allBinds: Boolean): Boolean {
@@ -89,9 +90,9 @@ class FloatNode(scope: Scope, private val value: Double) : Node(scope) {
     override fun generateCode(buffer: CodegenContext) {
         val addr = buffer.addStaticValue(FloatValue(value))
         if (!isLvalue) {
-            buffer.add(ByteCode(Op.COPY_PUSH.code, addr))
+            buffer.add(Op.COPY_PUSH, addr)
         } else {
-            buffer.add(ByteCode(Op.POP_ASSERT_EQ.code, addr))
+            buffer.add(Op.POP_ASSERT_EQ, addr)
         }
     }
     override fun testPattern(allBinds: Boolean): Boolean {
@@ -114,9 +115,9 @@ class StringNode(scope: Scope, private val value: String) : Node(scope) {
     override fun generateCode(buffer: CodegenContext) {
         val addr = buffer.addStaticString(value)
         if (!isLvalue) {
-            buffer.add(ByteCode(Op.COPY_PUSH.code, addr))
+            buffer.add(Op.COPY_PUSH, addr)
         } else {
-            buffer.add(ByteCode(Op.POP_ASSERT_EQ.code, addr))
+            buffer.add(Op.POP_ASSERT_EQ, addr)
         }
     }
     override fun testPattern(allBinds: Boolean): Boolean {
@@ -137,9 +138,9 @@ class BooleanNode(scope: Scope, private val value: Boolean) : Node(scope) {
     override fun generateCode(buffer: CodegenContext) {
         val constCode = if (value) ImmediateCode.TRUE else ImmediateCode.FALSE
         if (!isLvalue) {
-            buffer.add(ByteCode(Op.PUSH_IMM.code, constCode.code))
+            buffer.add(Op.PUSH_IMM, constCode.code)
         } else {
-            buffer.add(ByteCode(Op.POP_ASSERT_EQ_IMM.code, constCode.code))
+            buffer.add(Op.POP_ASSERT_EQ_IMM, constCode.code)
         }
     }
     override fun testPattern(allBinds: Boolean): Boolean {
@@ -158,9 +159,9 @@ class NullNode(scope: Scope) : Node(scope) {
     constructor(scope: Scope, token: Token) : this(scope)
     override fun generateCode(buffer: CodegenContext) {
         if (!isLvalue) {
-            buffer.add(ByteCode(Op.PUSH_IMM.code, ImmediateCode.NULL.code))
+            buffer.add(Op.PUSH_IMM, ImmediateCode.NULL.code)
         } else {
-            buffer.add(ByteCode(Op.POP_ASSERT_EQ_IMM.code, ImmediateCode.NULL.code))
+            buffer.add(Op.POP_ASSERT_EQ_IMM, ImmediateCode.NULL.code)
         }
     }
     override fun testPattern(allBinds: Boolean): Boolean {
@@ -179,15 +180,20 @@ class ListNode(scope: Scope, val items: List<Node>) : Node(scope) {
     override fun generateCode(buffer: CodegenContext) {
         if (!isLvalue) {
             items.forEach { it.generateCode(buffer) }
-            buffer.add(ByteCode(Op.CONS_PUSH.code, items.size))
+            buffer.add(Op.CONS_PUSH, items.size)
         } else {
-            buffer.add(ByteCode(Op.EXTRACT_LIST.code, items.size))
+            buffer.add(Op.EXTRACT_LIST, items.size)
             items.forEach { it.generateCode(buffer) }
         }
     }
     override fun testPattern(allBinds: Boolean): Boolean {
         super.testPattern(allBinds)
         return items.all { it.testPattern(allBinds) }
+    }
+
+    override fun actuallyRvalue() {
+        super.actuallyRvalue()
+        items.forEach { it.actuallyRvalue() }
     }
     override fun declarePattern(allBinds: Boolean) = items.forEach { it.declarePattern(allBinds) }
 
@@ -203,7 +209,7 @@ class SubscriptNode(scope: Scope, private val begin: Node, private val extended:
         val subscriptType = (if (extended) 1 else 0) + (if (end != null) 1 else 0)
         begin.generateCode(buffer)
         end?.generateCode(buffer)
-        buffer.add(ByteCode(Op.SUBSCRIPT_PUSH.code, subscriptType))
+        buffer.add(Op.SUBSCRIPT_PUSH, subscriptType)
     }
 
     override fun toString(): String {
@@ -216,10 +222,10 @@ class ObjectNode(scope: Scope, private val items: List<Pair<String, Node>>) : No
     override fun generateCode(buffer: CodegenContext) {
         items.forEach { (key, value) ->
             val addr = buffer.addStaticString(key)
-            buffer.add(ByteCode(Op.COPY_PUSH.code, addr))
+            buffer.add(Op.COPY_PUSH, addr)
             value.generateCode(buffer)
         }
-        buffer.add(ByteCode(Op.CONS_OBJ_PUSH.code, items.size))
+        buffer.add(Op.CONS_OBJ_PUSH, items.size)
     }
 
     override fun toString(): String {
@@ -231,25 +237,25 @@ class ClosureNode(scope: Scope, private val name: String, private val params: Li
     override fun generateCode(buffer: CodegenContext) {
         val entry = buffer.requestLabel()
         val end = buffer.requestLabel()
-        buffer.add(ByteCode(Op.JUMP.code, end))
+        buffer.add(Op.JUMP, end)
 
         buffer.putLabel(entry)
-        buffer.add(ByteCode(Op.PREPARE_FRAME.code, scope.currentFrame.locals.size))
+        buffer.add(Op.PREPARE_FRAME, scope.currentFrame.locals.size)
         // now assign the parameters
-        buffer.add(ByteCode(Op.LOAD_LOCAL_PUSH.code, scope.getLocalLayout("\$")))
+        buffer.add(Op.LOAD_LOCAL_PUSH, scope.getLocalLayout("\$"))
         params.generateCode(buffer)
         // all set. call the function
         body.generateCode(buffer)
         // pop frame and return
-        buffer.add(ByteCode(Op.RETURN.code))
+        buffer.add(Op.RETURN)
         buffer.putLabel(end)
 
         val captures = scope.currentFrame.captures
         captures.forEach {
-            buffer.add(ByteCode(Op.LOAD_LOCAL_PUSH.code, scope.getLocalLayoutInParentFrame(it)))
+            buffer.add(Op.LOAD_LOCAL_PUSH, scope.getLocalLayoutInParentFrame(it))
         }
-        buffer.add(ByteCode(Op.CONS_PUSH.code, captures.size))
-        buffer.add(ByteCode(Op.CREATE_CLOSURE.code, entry))
+        buffer.add(Op.CONS_PUSH, captures.size)
+        buffer.add(Op.CREATE_CLOSURE, entry)
     }
 
     override fun toString(): String {
@@ -262,13 +268,13 @@ class NamedCallNode(scope: Scope, private val func: String, private val caller: 
         caller.generateCode(buffer) // not desired! TODO: pass by reference caller
         val funcType = scope.queryName(func)
         if (funcType != NameType.GLOBAL) {
-            buffer.add(ByteCode(Op.LOAD_LOCAL_PUSH.code, scope.getLocalLayout(func)))
+            buffer.add(Op.LOAD_LOCAL_PUSH, scope.getLocalLayout(func))
         } else {
-            buffer.add(ByteCode(Op.COPY_PUSH.code, scope.getGlobalLayout(func)))
+            buffer.add(Op.COPY_PUSH, scope.getGlobalLayout(func))
         }
         args.generateCode(buffer)
         val ret = buffer.requestLabel()
-        buffer.add(ByteCode(Op.CALL.code, ret))
+        buffer.add(Op.CALL, ret)
         buffer.putLabel(ret)
     }
 
@@ -280,11 +286,11 @@ class NamedCallNode(scope: Scope, private val func: String, private val caller: 
 // Dynamic calls do not have caller! Only calls such as obj.func(args) have caller, which rules out this case.
 class DynamicCallNode(scope: Scope, private val func: Node, private val args: ListNode) : Node(scope) {
     override fun generateCode(buffer: CodegenContext) {
-        buffer.add(ByteCode(Op.PUSH_IMM.code, ImmediateCode.NULL.code))
+        buffer.add(Op.PUSH_IMM, ImmediateCode.NULL.code)
         func.generateCode(buffer)
         args.generateCode(buffer)
         val ret = buffer.requestLabel()
-        buffer.add(ByteCode(Op.CALL.code, ret))
+        buffer.add(Op.CALL, ret)
         buffer.putLabel(ret)
     }
 

@@ -2,15 +2,12 @@ package top.saucecode.yqlang
 
 import top.saucecode.yqlang.NodeValue.CollectionValue
 import top.saucecode.yqlang.NodeValue.NodeValue
-import top.saucecode.yqlang.Runtime.ByteCode
-import top.saucecode.yqlang.Runtime.Memory
-import top.saucecode.yqlang.Runtime.Pointer
-import top.saucecode.yqlang.Runtime.StaticPointer
+import top.saucecode.yqlang.Runtime.*
 
 class CodegenContext {
     val text = mutableListOf<ByteCode>()
-    fun add(code: ByteCode) {
-        this.text.add(code)
+    fun add(opcode: Op, operand: Int = 0) {
+        this.text.add(ByteCode(opcode.code, operand))
     }
     val labels = mutableListOf<Int>()
     fun requestLabel(): Int {
