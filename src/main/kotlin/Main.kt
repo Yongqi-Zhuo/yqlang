@@ -21,7 +21,7 @@ fun main() {
     val parser = Parser()
     println("Parsing...")
     val res = parser.parse(tokens)
-    println(res.preloadedMemory.text!!)
+//    println(res.preloadedMemory.assemblyText())
     println("Executing...")
     val memory = res.preloadedMemory
     val context = ConsoleContext()

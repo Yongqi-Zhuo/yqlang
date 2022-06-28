@@ -7,7 +7,7 @@ import top.saucecode.yqlang.NodeValue.*
 // Points to location on heap, static
 typealias Pointer = Int
 const val REGION_SHIFT = 28
-const val REGION_MASK = 0x3FFFFFFF
+const val REGION_MASK = 0xFFFFFFF
 const val REGION_ID_HEAP = 0
 const val REGION_ID_STATIC = 1
 fun Pointer.region() = this shr REGION_SHIFT
@@ -119,4 +119,14 @@ class Memory {
     fun copyTo(src: Pointer, dst: Pointer) {
         set(dst, get(src))
     }
+
+    fun assemblyText(): String {
+        val lineToLabel = MutableList(text!!.size + 1) { mutableListOf<Int>() }
+        labels!!.forEachIndexed { index, label ->
+            lineToLabel[label].add(index)
+        }
+        val captions = lineToLabel.map { l -> if (l.size > 0) l.joinToString("\n") { "Label$it:" } + "\n" else "" }
+        return text!!.mapIndexed { line, byteCode -> captions[line] + "$line\t$byteCode" }.joinToString("\n")
+    }
+
 }

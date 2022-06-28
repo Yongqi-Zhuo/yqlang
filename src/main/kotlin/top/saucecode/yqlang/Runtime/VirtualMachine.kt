@@ -7,6 +7,7 @@ import top.saucecode.yqlang.Runtime.Op.*
 import top.saucecode.yqlang.YqlangException
 import java.util.*
 import kotlinx.serialization.Serializable
+import java.util.Collections.max
 
 enum class Op(val code: Int) {
     // operand: offset from bp.
@@ -162,6 +163,7 @@ enum class Op(val code: Int) {
     // exit the program.
     EXIT(127);
     companion object {
+        val printLength: Int = values().map { it.toString().length }.maxOf { it } + 1
         fun fromCode(code: Int): Op {
             return values().firstOrNull { it.code == code } ?: throw YqlangRuntimeException("Unknown op code: $code")
         }
@@ -179,7 +181,7 @@ enum class ImmediateCode(val code: Int) {
 @Serializable
 data class ByteCode(val op: Int, val operand: Int = 0) {
     override fun toString(): String {
-        return "${Op.fromCode(op)} $operand"
+        return "${Op.fromCode(op).toString().padEnd(Op.printLength)}${operand.toString(16).padStart(8)}"
     }
 }
 
@@ -201,11 +203,14 @@ class VirtualMachine(val executionContext: ExecutionContext, val memory: Memory)
         pc = labels[label] - 1
     }
     inline fun performOp(op: NodeValue.(NodeValue) -> NodeValue) {
-        memory.push(memory.allocate(memory[memory.pop()].op(memory[memory.pop()])))
+        val op2 = memory.pop()
+        val op1 = memory.pop()
+        memory.push(memory.allocate(memory[op1].op(memory[op2])))
     }
     fun execute() {
-        while (true) {
+        while (pc < text.size) {
             val byteCode = text[pc]
+//            println(byteCode)
             val opCode = Op.fromCode(byteCode.op)
             when (opCode) {
                 LOAD_LOCAL_PUSH -> memory.push(memory.getLocal(byteCode.operand))
@@ -347,27 +352,31 @@ class VirtualMachine(val executionContext: ExecutionContext, val memory: Memory)
                     ?: throw YqlangRuntimeException("Failed to subscript access view. This should not happen.")))
                 ACCESS_GET -> memory.push(accessStack.pop().exec())
                 ACCESS_SET -> accessStack.pop().assign(memory.pop())
-                BINARY_OP -> when (BinaryOperatorCode.fromValue(byteCode.operand)) {
-                    BinaryOperatorCode.ADD -> performOp(NodeValue::plus)
-                    BinaryOperatorCode.SUB -> performOp(NodeValue::minus)
-                    BinaryOperatorCode.MUL -> performOp(NodeValue::times)
-                    BinaryOperatorCode.DIV -> performOp(NodeValue::div)
-                    BinaryOperatorCode.MOD -> performOp(NodeValue::rem)
-                    BinaryOperatorCode.EQUAL -> performOp { that -> BooleanValue(this == that) }
-                    BinaryOperatorCode.NOT_EQUAL -> performOp { that -> BooleanValue(this != that) }
-                    BinaryOperatorCode.GREATER -> performOp { that -> BooleanValue(this > that) }
-                    BinaryOperatorCode.LESS -> performOp { that -> BooleanValue(this < that) }
-                    BinaryOperatorCode.GREATER_EQ -> performOp { that -> BooleanValue(this >= that) }
-                    BinaryOperatorCode.LESS_EQ -> performOp { that -> BooleanValue(this <= that) }
-                    BinaryOperatorCode.LOGIC_AND -> performOp { that -> BooleanValue(this.toBoolean() && that.toBoolean()) }
-                    BinaryOperatorCode.LOGIC_OR -> performOp { that -> BooleanValue(this.toBoolean() || that.toBoolean()) }
-                    BinaryOperatorCode.IN -> performOp { that -> BooleanValue(this in that) }
+                BINARY_OP -> {
+                    when (BinaryOperatorCode.fromValue(byteCode.operand)) {
+                        BinaryOperatorCode.ADD -> performOp(NodeValue::plus)
+                        BinaryOperatorCode.SUB -> performOp(NodeValue::minus)
+                        BinaryOperatorCode.MUL -> performOp(NodeValue::times)
+                        BinaryOperatorCode.DIV -> performOp(NodeValue::div)
+                        BinaryOperatorCode.MOD -> performOp(NodeValue::rem)
+                        BinaryOperatorCode.EQUAL -> performOp { that -> BooleanValue(this == that) }
+                        BinaryOperatorCode.NOT_EQUAL -> performOp { that -> BooleanValue(this != that) }
+                        BinaryOperatorCode.GREATER -> performOp { that -> BooleanValue(this > that) }
+                        BinaryOperatorCode.LESS -> performOp { that -> BooleanValue(this < that) }
+                        BinaryOperatorCode.GREATER_EQ -> performOp { that -> BooleanValue(this >= that) }
+                        BinaryOperatorCode.LESS_EQ -> performOp { that -> BooleanValue(this <= that) }
+                        BinaryOperatorCode.LOGIC_AND -> performOp { that -> BooleanValue(this.toBoolean() && that.toBoolean()) }
+                        BinaryOperatorCode.LOGIC_OR -> performOp { that -> BooleanValue(this.toBoolean() || that.toBoolean()) }
+                        BinaryOperatorCode.IN -> performOp { that -> BooleanValue(this in that) }
+                    }
                 }
                 TO_BOOL -> memory.push(memory.allocate(BooleanValue(memory[memory.pop()].toBoolean())))
                 JUMP_NOT_ZERO -> if (memory[memory.pop()].toBoolean()) jump(byteCode.operand)
-                UNARY_OP -> when (UnaryOperatorCode.fromValue(byteCode.operand)) {
-                    UnaryOperatorCode.MINUS -> memory.push(memory.allocate(-memory[memory.pop()]))
-                    UnaryOperatorCode.NOT -> memory.push(memory.allocate(!memory[memory.pop()]))
+                UNARY_OP -> {
+                    when (UnaryOperatorCode.fromValue(byteCode.operand)) {
+                        UnaryOperatorCode.MINUS -> memory.push(memory.allocate(-memory[memory.pop()]))
+                        UnaryOperatorCode.NOT -> memory.push(memory.allocate(!memory[memory.pop()]))
+                    }
                 }
                 EXIT -> break
             }

@@ -97,28 +97,32 @@ class Parser {
             }
             TokenType.FUNC -> {
                 consume(TokenType.FUNC)
-                val funcName = parseIdentifierName(scope)
-                val mangledFuncName = scope.declareScopeName(funcName)
+                var func: IdentifierNode? = null
+                scope.preserveAndTraceNames { func = parseIdentifier(scope) }
+                func!!.testPattern(true)
+                func!!.declarePattern(true)
+                val mangled = func!!.getMangledName()!!
                 consume(TokenType.PAREN_OPEN)
-                val newScope = Scope(scope, Frame(scope.currentFrame, mangledFuncName))
+                val newScope = Scope(scope, Frame(scope.currentFrame, mangled))
                 var params: ListNode? = null
                 newScope.preserveAndTraceNames { params = parseExprList(newScope) }
                 if (params!!.testPattern(true)) {
                     params!!.declarePattern(true)
                 } else {
-                    throw CompileException("Parameters of closure $funcName must be bindable")
+                    throw CompileException("Parameters of closure ${func!!.name} must be bindable")
                 }
                 consume(TokenType.PAREN_CLOSE)
                 consumeLineBreak()
                 val body = parseStmt(newScope)
-                StmtAssignNode(scope, IdentifierNode(scope, funcName), ClosureNode(newScope, funcName, params!!, body))
+                StmtAssignNode(scope, func!!, ClosureNode(newScope, func!!.name, params!!, body))
             }
             TokenType.RETURN -> {
                 consume(TokenType.RETURN)
-                consumeLineBreak()
-                scope.captureNames {
+                val retNode = scope.captureNames {
                     StmtReturnNode(scope, parseExpr(scope))
                 }
+                consumeLineBreak()
+                retNode
             }
             TokenType.WHILE -> {
                 consume(TokenType.WHILE)
@@ -158,13 +162,31 @@ class Parser {
                     expr = parseExpr(scope)
                 }
                 if (peek().type == TokenType.ASSIGN) {
+                    val assignToken = consume(TokenType.ASSIGN)
+                    val rvalue = scope.captureNames {
+                        parseExpr(scope)
+                    }
+                    consumeLineBreak()
                     if (expr!!.testPattern(false)) {
                         expr!!.declarePattern(false)
                     } else {
                         throw CompileException("${expr!!} is not assignable")
                     }
-                    scope.captureNames {
-                        parseStmtAssign(scope, expr!!)
+                    if (assignToken.value == "=") {
+                        StmtAssignNode(scope, expr!!, rvalue)
+                    } else {
+                        // TODO: really support +=
+                        assert(expr is IdentifierNode)
+                        trace.map { it.scope.acquireExistingName(it.name) }
+                        val another = IdentifierNode(scope, (expr as IdentifierNode).name)
+                        when (assignToken.value) {
+                            "+=" -> StmtAssignNode(scope, expr!!, BinaryOperatorNode(scope, listOf(another, rvalue), listOf(TokenType.PLUS)))
+                            "-=" -> StmtAssignNode(scope, expr!!, BinaryOperatorNode(scope, listOf(another, rvalue), listOf(TokenType.MINUS)))
+                            "*=" -> StmtAssignNode(scope, expr!!, BinaryOperatorNode(scope, listOf(another, rvalue), listOf(TokenType.MULT)))
+                            "/=" -> StmtAssignNode(scope, expr!!, BinaryOperatorNode(scope, listOf(another, rvalue), listOf(TokenType.DIV)))
+                            "%=" -> StmtAssignNode(scope, expr!!, BinaryOperatorNode(scope, listOf(another, rvalue), listOf(TokenType.MOD)))
+                            else -> throw UnexpectedTokenException(assignToken)
+                        }
                     }
                 } else {
                     consumeLineBreak()
@@ -244,7 +266,7 @@ class Parser {
         return parseOperator(scope)
     }
 
-    private fun parseOperator(scope: Scope, precedence: Int = OperatorNode.PrecedenceList.lastIndex): Node {
+    private tailrec fun parseOperator(scope: Scope, precedence: Int = OperatorNode.PrecedenceList.lastIndex): Node {
         if (precedence < 0) {
             return parseTerm(scope)
         }

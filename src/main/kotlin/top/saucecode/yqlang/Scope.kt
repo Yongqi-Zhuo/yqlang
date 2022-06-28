@@ -1,7 +1,5 @@
 package top.saucecode.yqlang
 
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 import top.saucecode.yqlang.Node.IdentifierNode
 import top.saucecode.yqlang.NodeValue.NodeValue
 import top.saucecode.yqlang.NodeValue.NullValue
@@ -72,6 +70,9 @@ class Frame(val parent: Frame?, val name: String) {
         }
         return Memory.paramsAndCaptureBase + offset
     }
+    fun getParentLocalLayout(name: String): Int {
+        return parent!!.getLocalMemoryLayout(name)
+    }
     companion object {
         fun isReserved(name: String): Boolean {
             return name == "this" || name.startsWith("$")
@@ -131,7 +132,7 @@ class Scope(val parent: Scope?, frame: Frame?) {
             currentFrameScope = this
         }
     }
-    private fun getMangledName(name: String): String? {
+    fun getMangledName(name: String): String? {
         if (Frame.isReserved(name)) return name
         return locals[name] ?: if (parent != null) {
             parent.getMangledName(name)
@@ -155,7 +156,7 @@ class Scope(val parent: Scope?, frame: Frame?) {
         if (Frame.isReserved(name)) {
             return NameType.LOCAL
         }
-        val mangled = getMangledName(name)!!
+        val mangled = getMangledName(name) ?: throw CompileException("Name $name is not defined")
         return currentFrame.acquireName(mangled)!!
     }
     // returns mangled name
@@ -181,9 +182,6 @@ class Scope(val parent: Scope?, frame: Frame?) {
     }
     fun getGlobalLayout(name: String): Int {
         return currentFrame.getGlobalMemoryLayout(getMangledName(name)!!)
-    }
-    fun getLocalLayoutInParentFrame(name: String): Int {
-        return currentFrame.parent!!.getLocalMemoryLayout(getMangledName(name)!!)
     }
 
     fun exportSymbolTable(): SymbolTable {

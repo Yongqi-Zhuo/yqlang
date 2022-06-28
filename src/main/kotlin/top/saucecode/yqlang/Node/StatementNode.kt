@@ -152,6 +152,7 @@ class StmtForNode(scope: Scope, private val iterator: Node, private val collecti
         buffer.withLoopContext(start, end) {
             body.generateCode(buffer)
         }
+        buffer.add(Op.JUMP, start)
         buffer.putLabel(end)
         buffer.add(Op.POP_ITERATOR)
     }

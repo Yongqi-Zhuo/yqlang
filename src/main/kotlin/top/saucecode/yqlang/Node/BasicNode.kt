@@ -2,7 +2,6 @@ package top.saucecode.yqlang.Node
 
 import top.saucecode.yqlang.*
 import top.saucecode.yqlang.NodeValue.*
-import top.saucecode.yqlang.Runtime.ByteCode
 import top.saucecode.yqlang.Runtime.ImmediateCode
 import top.saucecode.yqlang.Runtime.Op
 import top.saucecode.yqlang.Runtime.YqlangRuntimeException
@@ -50,6 +49,9 @@ class IdentifierNode(scope: Scope, val name: String) : Node(scope) {
         } else {
             scope.declareLocalName(name)
         }
+    }
+    fun getMangledName(): String? {
+        return scope.getMangledName(name)
     }
 
     override fun toString(): String {
@@ -252,7 +254,7 @@ class ClosureNode(scope: Scope, private val name: String, private val params: Li
 
         val captures = scope.currentFrame.captures
         captures.forEach {
-            buffer.add(Op.LOAD_LOCAL_PUSH, scope.getLocalLayoutInParentFrame(it))
+            buffer.add(Op.LOAD_LOCAL_PUSH, scope.currentFrame.getParentLocalLayout(it))
         }
         buffer.add(Op.CONS_PUSH, captures.size)
         buffer.add(Op.CREATE_CLOSURE, entry)

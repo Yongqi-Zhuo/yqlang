@@ -88,6 +88,13 @@ class NullAccessView(parent: AccessView?, memory: Memory) : AccessView(parent, m
         throw IndexOutOfRangeRuntimeException(accessor, "failed to subscript a nonexistent child of $parent")
 }
 
+class NonCollectionAccessView(private val self: Pointer, parent: AccessView?, memory: Memory) : AccessView(parent, memory) {
+    override fun exec() = memory.copy(self)
+    override fun assign(src: Pointer) = parent!!.assign(src)
+    override fun subscript(accessor: SubscriptValue): AccessView =
+        throw IndexOutOfRangeRuntimeException("failed to subscript a non-collection $self")
+}
+
 class ListAccessView(private val list: ListValue, parent: AccessView?, memory: Memory) :
     AccessView(parent, memory) {
     private var accessState: AccessState = AccessState.NONE
@@ -143,8 +150,7 @@ class ListAccessView(private val list: ListValue, parent: AccessView?, memory: M
                         range = null
                         this.index = index
                         val child = memory[list[index]]
-                        create(child.asCollection()
-                            ?: throw TypeMismatchRuntimeException(listOf(CollectionValue::class.java), child), this, memory)
+                        child.asCollection()?.let { create(it, this, memory) } ?: NonCollectionAccessView(list[index], this, memory)
                     } else {
                         NullAccessView(this, memory)
                     }
@@ -245,8 +251,7 @@ class ObjectAccessView(private val obj: ObjectValue, parent: AccessView?, memory
                     NullAccessView(this, memory)
                 } else {
                     val child = memory[attr]
-                    create(child.asCollection()
-                        ?: throw TypeMismatchRuntimeException(listOf(CollectionValue::class.java), child), this, memory)
+                    child.asCollection()?.let { create(it, this, memory) } ?: NonCollectionAccessView(attr, this, memory)
                 }
             }
             is IntegerSubscriptValue -> {

@@ -101,8 +101,8 @@ data class ReferenceValue(private val address: CollectionPoolPointer) : NodeValu
     val value: CollectionValue
         get() = memory!!.getFromPool(address)
     override fun toBoolean(): Boolean = value.isNotEmpty()
-    override val debugStr: String = value.debugStr
-    override val printStr: String = value.printStr
+    override val debugStr: String get() = value.debugStr
+    override val printStr: String get() = value.printStr
     override operator fun contains(that: NodeValue): Boolean = that in value
     override fun exchangeablePlus(that: NodeValue, inverse: Boolean): NodeValue = value.exchangeablePlus(that, inverse)
     override operator fun times(that: NodeValue): NodeValue = value.times(that)

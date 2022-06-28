@@ -56,9 +56,9 @@ enum class BinaryOperatorCode(val type: TokenType) {
     IN(TokenType.IN);
     val value: Int get() = values().indexOf(this)
     companion object {
-        fun fromToken(type: TokenType) = values().firstOrNull { it.type == type }
+        fun fromToken(type: TokenType): BinaryOperatorCode = values().firstOrNull { it.type == type }
             ?: throw CompileException("Unknown binary operator $type")
-        fun fromValue(value: Int) = values()[value]
+        fun fromValue(value: Int): BinaryOperatorCode = values()[value]
     }
 }
 
@@ -105,14 +105,13 @@ class LogicBinaryOperatorNode(scope: Scope, components: List<Node>, ops: List<To
     }
 }
 
-enum class UnaryOperatorCode(val type: TokenType) {
-    MINUS(TokenType.MINUS),
-    NOT(TokenType.NOT);
-    val value: Int = values().indexOf(this)
+enum class UnaryOperatorCode(val value: Int) {
+    MINUS(0),
+    NOT(1);
     companion object {
-        fun fromToken(type: TokenType) = values().firstOrNull { it.type == type }
-            ?: throw CompileException("Unknown unary operator $type")
-        fun fromValue(value: Int) = values()[value]
+        val opMap = listOf(TokenType.MINUS, TokenType.NOT)
+        fun fromToken(type: TokenType): UnaryOperatorCode = fromValue(opMap.indexOf(type))
+        fun fromValue(value: Int): UnaryOperatorCode = values()[value]
     }
 }
 
