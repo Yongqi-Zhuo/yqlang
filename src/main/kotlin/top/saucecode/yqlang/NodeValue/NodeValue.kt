@@ -61,7 +61,7 @@ sealed class NodeValue : Comparable<NodeValue> {
 
 class AccessingUnsolidifiedValueException(subject: Any) : InterpretationRuntimeException("Accessing unsolidified value: $subject")
 @Serializable
-sealed class CollectionValue {
+sealed class CollectionValue : Iterable<Pointer> {
     @Transient protected var memory: Memory? = null
         private set
     protected var address: CollectionPoolPointer? = null
@@ -89,7 +89,7 @@ sealed class CollectionValue {
 }
 
 @Serializable
-data class ReferenceValue(private val address: CollectionPoolPointer) : NodeValue() {
+data class ReferenceValue(private val address: CollectionPoolPointer) : NodeValue(), Iterable<Pointer> {
     @Transient private var memory: Memory? = null
     constructor(address: Pointer, memory: Memory) : this(address) {
         bindMemory(memory)
@@ -115,4 +115,5 @@ data class ReferenceValue(private val address: CollectionPoolPointer) : NodeValu
     fun asStringValue() = value as? StringValue
     fun asListValue() = value as? ListValue
     fun asObjectValue() = value as? ObjectValue
+    override fun iterator(): Iterator<Pointer> = value.iterator()
 }

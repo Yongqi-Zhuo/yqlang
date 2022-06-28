@@ -4,7 +4,6 @@ import top.saucecode.yqlang.*
 import top.saucecode.yqlang.NodeValue.*
 import top.saucecode.yqlang.Runtime.ByteCode
 import top.saucecode.yqlang.Runtime.ImmediateCode
-import top.saucecode.yqlang.Runtime.Memory
 import top.saucecode.yqlang.Runtime.Op
 
 class TypeMismatchRuntimeException(expected: List<Class<*>>, got: Any) :
@@ -17,7 +16,7 @@ class IdentifierNode(scope: Scope, val name: String) : Node(scope) {
     constructor(scope: Scope, token: Token) : this(scope, token.value)
 
     override fun generateCode(buffer: CodegenContext) {
-        val nameType = scope.currentFrame.acquireName(name)!!
+        val nameType = scope.queryName(name)
         if (nameType != NameType.GLOBAL) {
             if (!isLvalue) {
                 val index = if (name.startsWith("$")) {
@@ -203,7 +202,7 @@ class SubscriptNode(scope: Scope, private val begin: Node, private val extended:
     override fun generateCode(buffer: CodegenContext) {
         val subscriptType = (if (extended) 1 else 0) + (if (end != null) 1 else 0)
         begin.generateCode(buffer)
-        if (end != null) end.generateCode(buffer)
+        end?.generateCode(buffer)
         buffer.add(ByteCode(Op.SUBSCRIPT_PUSH.code, subscriptType))
     }
 
@@ -242,7 +241,7 @@ class ClosureNode(scope: Scope, private val name: String, private val params: Li
         // all set. call the function
         body.generateCode(buffer)
         // pop frame and return
-        buffer.add(ByteCode(Op.RETURN.code, -1))
+        buffer.add(ByteCode(Op.RETURN.code))
         buffer.putLabel(end)
 
         val captures = scope.currentFrame.captures
@@ -260,7 +259,17 @@ class ClosureNode(scope: Scope, private val name: String, private val params: Li
 
 class NamedCallNode(scope: Scope, private val func: String, private val caller: Node, private val args: ListNode) : Node(scope) {
     override fun generateCode(buffer: CodegenContext) {
-        TODO("not implemented")
+        caller.generateCode(buffer) // not desired! TODO: pass by reference caller
+        val funcType = scope.queryName(func)
+        if (funcType != NameType.GLOBAL) {
+            buffer.add(ByteCode(Op.LOAD_LOCAL_PUSH.code, scope.getLocalLayout(func)))
+        } else {
+            buffer.add(ByteCode(Op.COPY_PUSH.code, scope.getGlobalLayout(func)))
+        }
+        args.generateCode(buffer)
+        val ret = buffer.requestLabel()
+        buffer.add(ByteCode(Op.CALL.code, ret))
+        buffer.putLabel(ret)
     }
 
     override fun toString(): String {
@@ -268,10 +277,15 @@ class NamedCallNode(scope: Scope, private val func: String, private val caller: 
     }
 }
 
-// TODO: make sure the func produces a BoundClosureValue(caller: Pointer, label: Int)
+// Dynamic calls do not have caller! Only calls such as obj.func(args) have caller, which rules out this case.
 class DynamicCallNode(scope: Scope, private val func: Node, private val args: ListNode) : Node(scope) {
     override fun generateCode(buffer: CodegenContext) {
-        TODO("not implemented")
+        buffer.add(ByteCode(Op.PUSH_IMM.code, ImmediateCode.NULL.code))
+        func.generateCode(buffer)
+        args.generateCode(buffer)
+        val ret = buffer.requestLabel()
+        buffer.add(ByteCode(Op.CALL.code, ret))
+        buffer.putLabel(ret)
     }
 
     override fun toString(): String {

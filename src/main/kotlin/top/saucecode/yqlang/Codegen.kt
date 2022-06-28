@@ -26,4 +26,12 @@ class CodegenContext {
     fun reserveStatics(values: List<NodeValue>) {
         memory.addStatics(values)
     }
+    val loopContexts = mutableListOf<Pair<Int, Int>>()
+    fun withLoopContext(labelContinue: Int, labelBreak: Int, block: () -> Unit) {
+        loopContexts.add(labelContinue to labelBreak)
+        block()
+        loopContexts.removeLast()
+    }
+    val continueLabel: Int? get() = loopContexts.lastOrNull()?.first
+    val breakLabel: Int? get() = loopContexts.lastOrNull()?.second
 }

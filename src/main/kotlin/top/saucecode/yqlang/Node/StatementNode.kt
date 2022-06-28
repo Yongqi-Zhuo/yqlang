@@ -9,12 +9,24 @@ import top.saucecode.yqlang.Runtime.ImmediateCode
 import top.saucecode.yqlang.Runtime.Op
 import top.saucecode.yqlang.Scope
 import top.saucecode.yqlang.Token
+import kotlin.math.exp
+
+class StmtExprNode(scope: Scope, val expr: Node) : Node(scope) {
+    override fun generateCode(buffer: CodegenContext) {
+        expr.generateCode(buffer)
+        buffer.add(ByteCode(Op.POP_SAVE_TO_REG.code))
+    }
+
+    override fun toString(): String {
+        return "expr($expr)"
+    }
+}
 
 class StmtAssignNode(scope: Scope, private val lvalue: Node, private val expr: Node) : Node(scope) {
     override fun generateCode(buffer: CodegenContext) {
         expr.generateCode(buffer)
         lvalue.generateCode(buffer)
-        buffer.add(ByteCode(Op.PUSH_IMM.code, ImmediateCode.NULL.code))
+        buffer.add(ByteCode(Op.CLEAR_REG.code))
     }
 
     override fun toString(): String {
@@ -28,7 +40,7 @@ enum class ActionCode(val code: Int) {
     SAY(0), NUDGE(1), PICSAVE(2), PICSEND(3);
     companion object {
         fun fromCode(code: Int): ActionCode {
-            return values().first { it.code == code }
+            return values().firstOrNull { it.code == code } ?: throw UnimplementedActionException("$code")
         }
     }
 }
@@ -39,7 +51,7 @@ class StmtActionNode(scope: Scope, private val action: String, private val expr:
         expr.generateCode(buffer)
         val actionCode = ActionCode.valueOf(action.uppercase()).code
         buffer.add(ByteCode(Op.ACTION.code, actionCode))
-        buffer.add(ByteCode(Op.PUSH_IMM.code, ImmediateCode.NULL.code))
+        buffer.add(ByteCode(Op.CLEAR_REG.code))
     }
 
     override fun toString(): String {
@@ -51,11 +63,15 @@ class StmtIfNode(
     scope: Scope, private val condition: Node, private val ifBody: Node, private val elseBody: Node? = null
 ) : Node(scope) {
     override fun generateCode(buffer: CodegenContext) {
-        return if (condition.generateCode().toBoolean()) {
-            ifBody.generateCode()
-        } else {
-            elseBody?.generateCode() ?: NullValue
-        }
+        val mid = buffer.requestLabel()
+        val end = buffer.requestLabel()
+        condition.generateCode(buffer)
+        buffer.add(ByteCode(Op.JUMP_ZERO.code, mid))
+        ifBody.generateCode(buffer)
+        buffer.add(ByteCode(Op.JUMP.code, end))
+        buffer.putLabel(mid)
+        elseBody?.generateCode(buffer)
+        buffer.putLabel(end)
     }
 
     override fun toString(): String {
@@ -66,10 +82,10 @@ class StmtIfNode(
 
 class StmtInitNode(scope: Scope, private val stmt: Node) : Node(scope) {
     override fun generateCode(buffer: CodegenContext) {
-        if (context.firstRun) {
-            stmt.generateCode()
-        }
-        return NullValue
+        val jump = buffer.requestLabel()
+        buffer.add(ByteCode(Op.JUMP_NOT_FIRST_RUN.code, jump))
+        stmt.generateCode(buffer)
+        buffer.putLabel(jump)
     }
 
     override fun toString(): String {
@@ -77,11 +93,10 @@ class StmtInitNode(scope: Scope, private val stmt: Node) : Node(scope) {
     }
 }
 
-class ReturnException(val value: NodeValue) : Exception()
-
 class StmtReturnNode(scope: Scope, private val expr: Node) : Node(scope) {
     override fun generateCode(buffer: CodegenContext) {
-        throw ReturnException(expr.generateCode())
+        expr.generateCode(buffer)
+        buffer.add(ByteCode(Op.POP_RETURN.code))
     }
 
     override fun toString(): String {
@@ -91,16 +106,16 @@ class StmtReturnNode(scope: Scope, private val expr: Node) : Node(scope) {
 
 class StmtWhileNode(scope: Scope, private val condition: Node, private val body: Node) : Node(scope) {
     override fun generateCode(buffer: CodegenContext) {
-        while (condition.generateCode().toBoolean() && !Thread.currentThread().isInterrupted) {
-            try {
-                body.generateCode()
-            } catch (continueEx: ContinueException) {
-                continue
-            } catch (breakEx: BreakException) {
-                break
-            }
+        val start = buffer.requestLabel()
+        val end = buffer.requestLabel()
+        buffer.putLabel(start)
+        condition.generateCode(buffer)
+        buffer.add(ByteCode(Op.JUMP_ZERO.code, end))
+        buffer.withLoopContext(start, end) {
+            body.generateCode(buffer)
         }
-        return NullValue
+        buffer.add(ByteCode(Op.JUMP.code, start))
+        buffer.putLabel(end)
     }
 
     override fun toString(): String {
@@ -108,11 +123,9 @@ class StmtWhileNode(scope: Scope, private val condition: Node, private val body:
     }
 }
 
-class ContinueException : Exception()
-
 class StmtContinueNode(scope: Scope) : Node(scope) {
     override fun generateCode(buffer: CodegenContext) {
-        throw ContinueException()
+        buffer.add(ByteCode(Op.JUMP.code, buffer.continueLabel!!))
     }
 
     override fun toString(): String {
@@ -120,11 +133,9 @@ class StmtContinueNode(scope: Scope) : Node(scope) {
     }
 }
 
-class BreakException : Exception()
-
 class StmtBreakNode(scope: Scope) : Node(scope) {
     override fun generateCode(buffer: CodegenContext) {
-        throw BreakException()
+        buffer.add(ByteCode(Op.JUMP.code, buffer.breakLabel!!))
     }
 
     override fun toString(): String {
@@ -134,44 +145,27 @@ class StmtBreakNode(scope: Scope) : Node(scope) {
 
 class StmtForNode(scope: Scope, private val iterator: Node, private val collection: Node, private val body: Node) : Node(scope) {
     override fun generateCode(buffer: CodegenContext) {
-        val collection = collection.generateCode()
-        var res: NodeValue = NullValue
-        if (collection is Iterable<*>) {
-            for (item in collection) {
-                if (Thread.currentThread().isInterrupted) break
-                (iterator as ConvertibleToAssignablePattern).toPattern(context).assign(context,
-                    context.memory.allocate(item as NodeValue))
-                try {
-                    res = body.generateCode()
-                } catch (continueEx: ContinueException) {
-                    continue
-                } catch (breakEx: BreakException) {
-                    break
-                }
-            }
-        } else {
-            throw InterpretationRuntimeException("$collection is not iterable")
+        collection.generateCode(buffer)
+        // now the top of stack is the collection
+        buffer.add(ByteCode(Op.PUSH_ITERATOR.code))
+        val start = buffer.requestLabel()
+        val end = buffer.requestLabel()
+        buffer.putLabel(start)
+        buffer.add(ByteCode(Op.JUMP_IF_ITER_DONE.code, end))
+        buffer.add(ByteCode(Op.ITER_NEXT_PUSH.code))
+        iterator.generateCode(buffer)
+        buffer.withLoopContext(start, end) {
+            body.generateCode(buffer)
         }
-        return res
+        buffer.putLabel(end)
+        buffer.add(ByteCode(Op.POP_ITERATOR.code))
     }
 }
 
-class StmtListNode(scope: Scope, private val stmts: List<Node>, private val newScope: Boolean) : Node(scope) {
+class StmtListNode(scope: Scope, private val stmts: List<Node>) : Node(scope) {
     override fun generateCode(buffer: CodegenContext) {
-        var res: NodeValue = NullValue
-        try {
-            if (newScope) {
-                context.referenceEnvironment.pushScope()
-            }
-            for (node in stmts) {
-                res = node.generateCode()
-            }
-        } finally {
-            if (newScope) {
-                context.referenceEnvironment.popScope()
-            }
-        }
-        return res
+        buffer.add(ByteCode(Op.CLEAR_REG.code))
+        stmts.forEach { it.generateCode(buffer) }
     }
 
     override fun toString(): String {

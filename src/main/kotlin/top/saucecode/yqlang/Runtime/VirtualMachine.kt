@@ -5,6 +5,7 @@ import top.saucecode.yqlang.Node.ActionCode
 import top.saucecode.yqlang.Node.TypeMismatchRuntimeException
 import top.saucecode.yqlang.NodeValue.*
 import top.saucecode.yqlang.YqlangException
+import java.util.*
 
 enum class Op(val code: Int) {
     // operand: offset from bp.
@@ -72,9 +73,57 @@ enum class Op(val code: Int) {
     // get the nth argument and copy it to stack.
     GET_NTH_ARG(15),
 
-    // operand: return value. -1 if none.
+    // operand: none. the top of stack is viewed as return value.
     // pop current frame and jump to the return address.
-    RETURN(16),
+    POP_RETURN(16),
+
+    // operand: return address label.
+    // calls the closure, assuming currently on stack: caller, closure, args.
+    CALL(17),
+
+    // operand: none.
+    // no op.
+    NOP(18),
+
+    // operand: a label.
+    // jump to the label if the top of stack is zero.
+    JUMP_ZERO(19),
+
+    // operand: a label.
+    // jump to the label if the program is not first run.
+    JUMP_NOT_FIRST_RUN(20),
+
+    // operand: none.
+    // pop.
+    POP(21),
+
+    // operand: none.
+    // return null.
+    RETURN(22),
+
+    // operand: none.
+    // pop the stack and save to register.
+    POP_SAVE_TO_REG(23),
+
+    // operand: none.
+    // clear the register.
+    CLEAR_REG(24),
+
+    // operand: none.
+    // get the iterator of the top of stack.
+    PUSH_ITERATOR(25),
+
+    // operator: a label.
+    // jump if current iterator is exhausted.
+    JUMP_IF_ITER_DONE(26),
+
+    // operand: none.
+    // pop current iterator.
+    POP_ITERATOR(27),
+
+    // operand: none.
+    // get the next element of the current iterator.
+    ITER_NEXT_PUSH(28),
 
 }
 
@@ -94,10 +143,17 @@ class InterruptedException : YqlangRuntimeException("Interrupted")
 
 // TODO: implement +=, -=,...
 class VirtualMachine(val executionContext: ExecutionContext) {
-    val memory: Memory = executionContext.memory
+    val memory: Memory = executionContext.memory // separate memory from ExecContext. memory includes text.
     val text: List<ByteCode> = listOf()
     val labels = mutableListOf<Int>()
     var pc = 0
+    var register: Pointer? = null
+    val iteratorStack: Stack<Iterator<Pointer>> = Stack()
+    fun jump(label: Int) {
+        // to avoid recursion, check thread status
+        if (Thread.currentThread().isInterrupted) throw InterruptedException()
+        pc = labels[label] - 1
+    }
     fun execute() {
         while (true) {
             val byteCode = text[pc]
@@ -173,17 +229,12 @@ class VirtualMachine(val executionContext: ExecutionContext) {
                         ActionCode.PICSEND -> target.asString()?.value?.let { executionContext.picSend(it) } ?: throw TypeMismatchRuntimeException(listOf(StringValue::class.java), target)
                     }
                 }
-                Op.JUMP.code -> {
-                    pc = labels[byteCode.operand]
-                    continue
-                }
+                Op.JUMP.code -> jump(byteCode.operand)
                 Op.CREATE_CLOSURE.code -> {
                     val closure = ClosureValue(memory.pop(), byteCode.operand)
                     memory.push(memory.allocate(closure))
                 }
                 Op.PREPARE_FRAME.code -> {
-                    // to avoid recursion, check thread status
-                    if (Thread.currentThread().isInterrupted) throw InterruptedException()
                     // now on stack: lastBp, retAddr, caller, args, captures. Now expand captures
                     val captures = memory[memory.pop()].asList()?.value ?: throw YqlangRuntimeException("Failed to pass captures. This should not happen.")
                     captures.forEach { memory.push(it) } // pass by reference!
@@ -195,16 +246,36 @@ class VirtualMachine(val executionContext: ExecutionContext) {
                     memory[memory.args].asList()?.value?.getOrNull(byteCode.operand)?.let { memory.copyTo(it, nth) } ?: throw YqlangRuntimeException("Failed to get argument.")
                     memory.push(nth)
                 }
-                Op.RETURN.code -> {
-                    var retVal = byteCode.operand // pass by reference?
-                    if (retVal == -1) {
-                        retVal = memory.pop() // just pass the last result
-                    }
+                Op.POP_RETURN.code -> {
+                    val retVal = memory.pop() // just pass the last result
                     val label = memory.popFrame()
                     memory.push(retVal)
-                    pc = labels[label]
-                    continue
+                    jump(label)
                 }
+                Op.CALL.code -> {
+                    val args = memory.pop()
+                    val uncheckedClosure = memory[memory.pop()]
+                    val closure = uncheckedClosure as? ClosureValue ?: throw TypeMismatchRuntimeException(listOf(ClosureValue::class.java), uncheckedClosure)
+                    val caller = memory.pop()
+                    val retAddr = byteCode.operand
+                    memory.pushFrame(retAddr, caller, args, closure.captureList)
+                    jump(closure.entry)
+                }
+                Op.NOP.code -> { } // do nothing
+                Op.JUMP_ZERO.code -> if (!memory[memory.pop()].toBoolean()) jump(byteCode.operand)
+                Op.JUMP_NOT_FIRST_RUN.code -> if (!executionContext.firstRun) jump(byteCode.operand)
+                Op.POP.code -> memory.pop()
+                Op.RETURN.code -> {
+                    val label = memory.popFrame()
+                    (register ?: memory.allocate(NullValue)).let { memory.push(it) }
+                    jump(label)
+                }
+                Op.POP_SAVE_TO_REG.code -> register = memory.pop()
+                Op.CLEAR_REG.code -> register = null
+                Op.PUSH_ITERATOR.code -> iteratorStack.push((memory[memory.pop()] as Iterable<Pointer>).iterator())
+                Op.JUMP_IF_ITER_DONE.code -> if (!iteratorStack.peek().hasNext()) jump(byteCode.operand)
+                Op.POP_ITERATOR.code -> iteratorStack.pop()
+                Op.ITER_NEXT_PUSH.code -> memory.push(iteratorStack.peek().next())
                 else -> throw YqlangRuntimeException("Invalid byte code $byteCode")
             }
             pc++

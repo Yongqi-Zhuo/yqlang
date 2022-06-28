@@ -66,7 +66,7 @@ class Parser {
         while (peek().type != TokenType.EOF && peek().type != TokenType.BRACE_CLOSE) {
             stmts.add(parseStmt(new))
         }
-        return StmtListNode(new, stmts, newScope)
+        return StmtListNode(new, stmts)
     }
 
     // calls consumeLineBreak() in the end of this function
@@ -169,7 +169,7 @@ class Parser {
                     consumeLineBreak()
                     // capture them
                     trace.map { it.scope.acquireExistingName(it.name) }
-                    expr!!
+                    StmtExprNode(scope, expr!!)
                 }
             }
         }

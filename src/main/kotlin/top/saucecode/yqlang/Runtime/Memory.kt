@@ -24,18 +24,14 @@ typealias CollectionPoolPointer = Int
 class Memory {
     @Transient private val stack: MutableList<Pointer> = mutableListOf()
     @Transient private var bp: Int = 0
-    fun pushFrame(retAddr: Int, caller: Pointer?, args: List<Pointer>) {
+    fun pushFrame(retAddr: Int, caller: Pointer, args: Pointer, captures: Pointer) {
         stack.add(bp)
         bp = stack.lastIndex // lastBp = 0(bp)
         stack.add(retAddr) // retAddr = 1(bp)
-        if (caller != null) {
-            stack.add(caller) // caller = 2(bp)
-        } else {
-            stack.add(allocate(NullValue)) // caller = 2(bp)
-        }
-        val argsList = ListValue(args.toMutableList(), this)
-        stack.add(allocate(argsList.reference)) // args = 3(bp)
+        stack.add(caller) // caller = 2(bp)
         // components of args can be accessed indirectly
+        stack.add(args) // args = 3(bp)
+        stack.add(captures) // captures = 4(bp) // expanding captures is callee job
     }
     companion object {
         val callerOffset = 2

@@ -151,6 +151,13 @@ class Scope(val parent: Scope?, frame: Frame?) {
         val mangled = getMangledName(name) ?: throw CompileException("Name $name is not defined")
         currentFrame.acquireName(mangled) ?: throw CompileException("Name $name cannot be captured. This should not happen.")
     }
+    fun queryName(name: String): NameType {
+        if (Frame.isReserved(name)) {
+            return NameType.LOCAL
+        }
+        val mangled = getMangledName(name)!!
+        return currentFrame.acquireName(mangled)!!
+    }
     // returns mangled name
     fun declareScopeName(name: String): String {
         if (name.startsWith("$")) {

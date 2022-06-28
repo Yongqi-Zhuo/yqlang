@@ -44,6 +44,9 @@ data class StringValue(var value: String) : CollectionValue() {
             else -> super.times(that) // throws exception
         }
     }
+    override fun iterator(): Iterator<Pointer> {
+        return value.map { memory!!.allocate(StringValue(it.toString(), memory!!).reference) }.iterator()
+    }
 }
 
 // fun String.toNodeValue() = StringValue(this)
@@ -102,6 +105,9 @@ data class ListValue(val value: MutableList<Pointer>) : CollectionValue() {
             else -> super.times(that) // throws
         }
     }
+    override fun iterator(): Iterator<Pointer> {
+        return value.iterator()
+    }
 }
 
 // fun List<NodeValue>.toNodeValue() = ListValue(if (this is MutableList) this else this.toMutableList())
@@ -133,6 +139,13 @@ data class ObjectValue(private val attributes: MutableMap<String, Pointer> = mut
             if (memory!![ptr] == that) return true
         }
         return false
+    }
+    override fun iterator(): Iterator<Pointer> {
+        return attributes.map {
+            memory!!.allocate(ListValue(mutableListOf(
+                memory!!.allocate(StringValue(it.key, memory!!).reference), it.value
+            ), memory!!).reference)
+        }.iterator()
     }
 }
 
