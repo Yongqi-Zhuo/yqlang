@@ -3,6 +3,7 @@ import top.saucecode.yqlang.ConsoleContext
 import top.saucecode.yqlang.Parser
 import top.saucecode.yqlang.Runtime.VirtualMachine
 import top.saucecode.yqlang.Tokenizer
+import kotlin.system.measureTimeMillis
 
 //import top.saucecode.yqlang.REPL
 
@@ -29,7 +30,9 @@ fun main() {
     println("Executing...")
     val memory = res.preloadedMemory
     val context = ConsoleContext()
-    VirtualMachine(context, memory).execute()
+    val time = measureTimeMillis {
+        VirtualMachine(context, memory).execute()
+    }
 
 //    val interpreter = RestrictedInterpreter(input)
 //    val st = SymbolTable.createRoot(mapOf("text" to StringValue("this is a brand-new world the world of parsing")))
@@ -53,5 +56,5 @@ fun main() {
 //        println(Scope.deserialize(line))
 //    }
 
-    println("\nDone!")
+    println("\nDone! Execution time: ${time}ms")
 }

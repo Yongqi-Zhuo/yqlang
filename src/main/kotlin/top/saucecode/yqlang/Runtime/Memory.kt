@@ -24,47 +24,10 @@ typealias CollectionPoolPointer = Int
 class Memory {
     var text: List<ByteCode>? = null
     var labels: List<Int>? = null
-    @Transient private val stack: MutableList<Pointer> = mutableListOf()
-    @Transient private var bp: Int = 0
-    fun pushFrame(retAddr: Int, caller: Pointer, args: Pointer, captures: Pointer) {
-        stack.add(bp)
-        bp = stack.lastIndex // lastBp = 0(bp)
-        stack.add(retAddr) // retAddr = 1(bp)
-        stack.add(caller) // caller = 2(bp)
-        // components of args can be accessed indirectly
-        stack.add(args) // args = 3(bp)
-        stack.add(captures) // captures = 4(bp) // expanding captures is callee job
-    }
     companion object {
         const val callerOffset = 2
         const val argsOffset = 3
         const val paramsAndCaptureBase = 3 + 1
-    }
-    val argsPointer: Pointer get() = stack[bp + argsOffset]
-    val caller: NodeValue get() = get(stack[bp + callerOffset])
-    val args: ListValue get() = get(stack[bp + argsOffset]).asList()!!
-    fun arg(index: Int): NodeValue = get(args[index])
-    fun argOrNull(index: Int): NodeValue? {
-        val a = args
-        return if (index < a.size) get(a[index]) else null
-    }
-    // returns retAddr
-    fun popFrame(): Int {
-        while (stack.lastIndex > bp + 1) {
-            stack.removeLast() // remove args, caller
-        }
-        val pc = stack.removeLast() // remove pc
-        bp = stack.removeLast() // remove bp
-        return pc
-    }
-    fun push(ptr: Int) {
-        stack.add(ptr)
-    }
-    fun pop(): Int {
-        return stack.removeLast()
-    }
-    fun getLocal(index: Int): Pointer {
-        return stack[bp + index]
     }
 
     private val heap: MutableList<NodeValue> = mutableListOf()

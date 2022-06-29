@@ -202,95 +202,135 @@ open class YqlangRuntimeException(message: String) : YqlangException(message)
 class PatternMatchingConstantUnmatchedException : YqlangRuntimeException("Pattern matching failed: constant unmatched")
 class InterruptedException : YqlangRuntimeException("Interrupted")
 
-// TODO: implement +=, -=,...
-class VirtualMachine(val executionContext: ExecutionContext, val memory: Memory) {
-    val text: List<ByteCode> = memory.text!!
-    val labels = memory.labels!!
-    var pc = 0
-    var register: Pointer? = null
-    val iteratorStack: Stack<Iterator<NodeValue>> = Stack()
-    val accessStack: Stack<AccessView> = Stack()
-    fun jump(label: Int) {
+class VirtualMachine(private val executionContext: ExecutionContext, val memory: Memory) {
+    private val text: List<ByteCode> = memory.text!!
+    private val labels = memory.labels!!
+    private var pc = 0
+    private var register: Pointer? = null
+    private val stack: MutableList<Pointer> = mutableListOf()
+    private var bp: Int = 0
+    private val iteratorStack: Stack<Iterator<NodeValue>> = Stack()
+    private val accessStack: Stack<AccessView> = Stack()
+    private fun jump(label: Int) {
         // to avoid recursion, check thread status
         if (Thread.currentThread().isInterrupted) throw InterruptedException()
         pc = labels[label] - 1
     }
+    private fun pushFrame(retAddr: Int, caller: Pointer, args: Pointer, captures: Pointer) {
+        stack.add(bp)
+        bp = stack.lastIndex // lastBp = 0(bp)
+        stack.add(retAddr) // retAddr = 1(bp)
+        stack.add(caller) // caller = 2(bp)
+        // components of args can be accessed indirectly
+        stack.add(args) // args = 3(bp)
+        stack.add(captures) // captures = 4(bp) // expanding captures is callee job
+    }
+    val argsPointer: Pointer get() = stack[bp + Memory.argsOffset]
+    val caller: NodeValue get() = memory[stack[bp + Memory.callerOffset]]
+    val args: ListValue get() = memory[stack[bp + Memory.argsOffset]].asList()!!
+    fun arg(index: Int): NodeValue = memory[args[index]]
+    fun argOrNull(index: Int): NodeValue? {
+        val a = args
+        return if (index < a.size) memory[a[index]] else null
+    }
+    // returns retAddr
+    private fun popFrame(): Int {
+        while (stack.lastIndex > bp + 1) {
+            stack.removeLast() // remove args, caller
+        }
+        val pc = stack.removeLast() // remove pc
+        bp = stack.removeLast() // remove bp
+        return pc
+    }
+    private fun push(ptr: Int) {
+        stack.add(ptr)
+    }
+    private fun pop(): Int {
+        return stack.removeLast()
+    }
+    private fun getLocal(index: Int): Pointer {
+        return stack[bp + index]
+    }
     private inline fun performOp(op: NodeValue.(NodeValue) -> NodeValue) {
-        val op2 = memory.pop()
-        val op1 = memory.pop()
-        memory.push(memory.allocate(memory[op1].op(memory[op2])))
+        val op2 = pop()
+        val op1 = pop()
+        push(memory.allocate(memory[op1].op(memory[op2])))
     }
     private inline fun performOpAssign(op: NodeValue.(NodeValue) -> NodeValue) {
         // TODO: after getting rid of NodeValue, do not assign twice.
-        val op2 = memory.pop()
-        val op1 = memory.pop()
+        val op2 = pop()
+        val op1 = pop()
         memory[op1] = memory[op1].op(memory[op2])
     }
-    fun execute() {
+//    fun executeClosure(closureLocation: Pointer, caller: Pointer, args: Pointer) {
+//        pushFrame(pc, caller, args)
+//    }
+    fun execute(entry: Int = 0) {
+        pc = entry
         while (pc < text.size) {
             val byteCode = text[pc]
 //            println(byteCode)
             when (Op.fromCode(byteCode.op)) {
-                LOAD_LOCAL_PUSH -> memory.push(memory.copy(memory.getLocal(byteCode.operand)))
-                LOAD_LOCAL_PUSH_REF -> memory.push(memory.getLocal(byteCode.operand))
-                LOAD_PUSH -> memory.push(memory.copy(byteCode.operand))
-                LOAD_PUSH_REF -> memory.push(byteCode.operand)
-                POP_SAVE_LOCAL -> memory.copyTo(memory.pop(), memory.getLocal(byteCode.operand))
-                POP_SAVE -> memory.copyTo(memory.pop(), byteCode.operand)
-                POP_ASSERT_EQ -> if (memory[memory.pop()] != memory[byteCode.operand]) throw PatternMatchingConstantUnmatchedException()
+                LOAD_LOCAL_PUSH -> push(memory.copy(getLocal(byteCode.operand)))
+                LOAD_LOCAL_PUSH_REF -> push(getLocal(byteCode.operand))
+                LOAD_PUSH -> push(memory.copy(byteCode.operand))
+                LOAD_PUSH_REF -> push(byteCode.operand)
+                POP_SAVE_LOCAL -> memory.copyTo(pop(), getLocal(byteCode.operand))
+                POP_SAVE -> memory.copyTo(pop(), byteCode.operand)
+                POP_ASSERT_EQ -> if (memory[pop()] != memory[byteCode.operand]) throw PatternMatchingConstantUnmatchedException()
                 CONS_PUSH -> {
                     val list = mutableListOf<Pointer>()
                     for (i in 0 until byteCode.operand) {
-                        list.add(memory.pop())
+                        list.add(pop())
                     }
                     list.reverse()
-                    memory.push(memory.allocate(ListValue(list, memory).reference))
+                    push(memory.allocate(ListValue(list, memory).reference))
                 }
                 EXTRACT_LIST -> {
-                    val uncheckedList = memory[memory.pop()]
+                    val uncheckedList = memory[pop()]
                     val list = uncheckedList.asList()?.value 
                         ?: throw TypeMismatchRuntimeException(listOf(ListValue::class), uncheckedList)
                     val expectedLength = byteCode.operand
                     for (i in list.size until expectedLength) {
-                        memory.push(memory.allocate(NullValue))
+                        push(memory.allocate(NullValue))
                     }
-                    list.take(expectedLength).reversed().forEach { memory.push(it) }
+                    list.take(expectedLength).reversed().forEach { push(it) }
                 }
                 SUBSCRIPT_PUSH -> {
                     val subscriptType = byteCode.operand
-                    val end = if (subscriptType == 2) memory[memory.pop()] else null
-                    val begin = memory[memory.pop()]
+                    val end = if (subscriptType == 2) memory[pop()] else null
+                    val begin = memory[pop()]
                     val extended = subscriptType > 0
                     val subscript = when (begin) {
                         is IntegerValue -> IntegerSubscriptValue(begin.value.toInt(), extended, end?.asInteger()?.toInt())
                         is ReferenceValue -> begin.asStringValue()?.value?.let { KeySubscriptValue(it) }
                         else -> null
                     } ?: throw TypeMismatchRuntimeException(listOf(IntegerValue::class, StringValue::class), begin)
-                    memory.push(memory.allocate(subscript))
+                    push(memory.allocate(subscript))
                 }
                 CONS_OBJ_PUSH -> {
                     val list = mutableListOf<Pair<String, Pointer>>()
                     repeat(byteCode.operand) {
-                        val value = memory.pop()
-                        val uncheckedKey = memory[memory.pop()]
+                        val value = pop()
+                        val uncheckedKey = memory[pop()]
                         val key = uncheckedKey.asString()?.value 
                             ?: throw TypeMismatchRuntimeException(listOf(StringValue::class), uncheckedKey)
                         list.add(key to value)
                     }
                     list.reverse()
                     val obj = ObjectValue(list.toMap(mutableMapOf()), memory)
-                    memory.push(memory.allocate(obj.reference))
+                    push(memory.allocate(obj.reference))
                 }
                 PUSH_IMM -> {
                     when (ImmediateCode.fromCode(byteCode.operand)) {
-                        ImmediateCode.NULL -> memory.push(memory.allocate(NullValue))
-                        ImmediateCode.FALSE -> memory.push(memory.allocate(BooleanValue(false)))
-                        ImmediateCode.TRUE -> memory.push(memory.allocate(BooleanValue(true)))
+                        ImmediateCode.NULL -> push(memory.allocate(NullValue))
+                        ImmediateCode.FALSE -> push(memory.allocate(BooleanValue(false)))
+                        ImmediateCode.TRUE -> push(memory.allocate(BooleanValue(true)))
                     }
                 }
                 POP_ASSERT_EQ_IMM -> {
                     val constCode = ImmediateCode.fromCode(byteCode.operand)
-                    val value = memory[memory.pop()]
+                    val value = memory[pop()]
                     when (constCode) {
                         ImmediateCode.NULL -> if (value != NullValue) throw PatternMatchingConstantUnmatchedException()
                         ImmediateCode.FALSE -> if (value != BooleanValue(false)) throw PatternMatchingConstantUnmatchedException()
@@ -299,7 +339,7 @@ class VirtualMachine(val executionContext: ExecutionContext, val memory: Memory)
                 }
                 ACTION -> {
                     val actionCode = byteCode.operand
-                    val target = memory[memory.pop()]
+                    val target = memory[pop()]
                     when (ActionCode.fromCode(actionCode)) {
                         ActionCode.SAY -> executionContext.say(target.printStr)
                         ActionCode.NUDGE -> target.asInteger()?.let { executionContext.nudge(it) } 
@@ -312,75 +352,75 @@ class VirtualMachine(val executionContext: ExecutionContext, val memory: Memory)
                 }
                 JUMP -> jump(byteCode.operand)
                 CREATE_CLOSURE -> {
-                    val closure = ClosureValue(memory.pop(), byteCode.operand)
-                    memory.push(memory.allocate(closure))
+                    val closure = ClosureValue(pop(), byteCode.operand)
+                    push(memory.allocate(closure))
                 }
                 PREPARE_FRAME -> {
                     // now on stack: lastBp, retAddr, caller, args, captures. Now expand captures
-                    val captures = memory[memory.pop()].asList()?.value
+                    val captures = memory[pop()].asList()?.value
                         ?: throw YqlangRuntimeException("Failed to pass captures. This should not happen.")
-                    captures.forEach { memory.push(it) } // pass by reference!
-                    repeat(byteCode.operand) { memory.push(memory.allocate(NullValue)) }
+                    captures.forEach { push(it) } // pass by reference!
+                    repeat(byteCode.operand) { push(memory.allocate(NullValue)) }
                 }
                 GET_NTH_ARG -> {
                     val nth = memory.allocate(NullValue)
                     val argId = byteCode.operand
-                    memory[memory.argsPointer].asList()?.value?.getOrNull(argId)?.let { memory.copyTo(it, nth) }
+                    memory[argsPointer].asList()?.value?.getOrNull(argId)?.let { memory.copyTo(it, nth) }
                         ?: throw YqlangRuntimeException("Failed to get $argId: out of range.")
-                    memory.push(nth)
+                    push(nth)
                 }
                 GET_NTH_ARG_REF -> {
                     val argId = byteCode.operand
-                    val nth = memory[memory.argsPointer].asList()?.value?.getOrNull(argId)
+                    val nth = memory[argsPointer].asList()?.value?.getOrNull(argId)
                         ?: throw YqlangRuntimeException("Failed to get $argId: out of range.")
-                    memory.push(nth)
+                    push(nth)
                 }
                 POP_RETURN -> {
-                    val retVal = memory.pop() // just pass the last result
-                    val label = memory.popFrame()
-                    memory.push(retVal)
+                    val retVal = pop() // just pass the last result
+                    val label = popFrame()
+                    push(retVal)
                     jump(label)
                 }
                 CALL -> {
                     // on stack: caller, closure, args.
-                    val args = memory.pop()
-                    val uncheckedClosure = memory[memory.pop()]
+                    val args = pop()
+                    val uncheckedClosure = memory[pop()]
                     val closure = uncheckedClosure as? ClosureValue 
                         ?: throw TypeMismatchRuntimeException(listOf(ClosureValue::class), uncheckedClosure)
-                    val caller = memory.pop()
+                    val caller = pop()
                     val retAddr = byteCode.operand
-                    memory.pushFrame(retAddr, caller, args, closure.captureList)
+                    pushFrame(retAddr, caller, args, closure.captureList)
                     jump(closure.entry)
                 }
                 NOP -> { } // do nothing
-                JUMP_ZERO -> if (!memory[memory.pop()].toBoolean()) jump(byteCode.operand)
+                JUMP_ZERO -> if (!memory[pop()].toBoolean()) jump(byteCode.operand)
                 JUMP_NOT_FIRST_RUN -> if (!executionContext.firstRun) jump(byteCode.operand)
-                POP -> memory.pop()
+                POP -> pop()
                 RETURN -> {
-                    val label = memory.popFrame()
-                    (register ?: memory.allocate(NullValue)).let { memory.push(it) }
+                    val label = popFrame()
+                    push(register ?: memory.allocate(NullValue))
                     register = null
                     jump(label)
                 }
-                POP_SAVE_TO_REG -> register = memory.pop()
+                POP_SAVE_TO_REG -> register = pop()
                 CLEAR_REG -> register = null
                 PUSH_ITERATOR ->
-                    @Suppress("UNCHECKED_CAST") iteratorStack.push((memory[memory.pop()] as Iterable<NodeValue>).iterator())
+                    @Suppress("UNCHECKED_CAST") iteratorStack.push((memory[pop()] as Iterable<NodeValue>).iterator())
                 JUMP_IF_ITER_DONE -> if (!iteratorStack.peek().hasNext()) jump(byteCode.operand)
                 POP_ITERATOR -> iteratorStack.pop()
-                ITER_NEXT_PUSH -> memory.push(memory.allocate(iteratorStack.peek().next()))
+                ITER_NEXT_PUSH -> push(memory.allocate(iteratorStack.peek().next()))
                 PUSH_ACCESS_VIEW -> {
-                    val uncheckedValue = memory[memory.pop()]
+                    val uncheckedValue = memory[pop()]
                     val value = (uncheckedValue as? ReferenceValue)?.value
                         ?: throw TypeMismatchRuntimeException(listOf(ReferenceValue::class), uncheckedValue)
                     val accessView = AccessView.create(value, null, memory)
                     accessStack.push(accessView)
                 }
-                EXTEND_ACCESS_VIEW -> accessStack.push(accessStack.pop().subscript(memory[memory.pop()] as? SubscriptValue
+                EXTEND_ACCESS_VIEW -> accessStack.push(accessStack.pop().subscript(memory[pop()] as? SubscriptValue
                     ?: throw YqlangRuntimeException("Failed to subscript access view. This should not happen.")))
-                ACCESS_GET -> memory.push(accessStack.pop().exec(false))
-                ACCESS_GET_REF -> memory.push(accessStack.pop().exec(true))
-                ACCESS_SET -> accessStack.pop().assign(memory.pop())
+                ACCESS_GET -> push(accessStack.pop().exec(false))
+                ACCESS_GET_REF -> push(accessStack.pop().exec(true))
+                ACCESS_SET -> accessStack.pop().assign(pop())
                 BINARY_OP -> {
                     when (BinaryOperatorCode.fromValue(byteCode.operand)) {
                         BinaryOperatorCode.ADD -> performOp(NodeValue::plus)
@@ -399,12 +439,12 @@ class VirtualMachine(val executionContext: ExecutionContext, val memory: Memory)
                         BinaryOperatorCode.IN -> performOp { that -> BooleanValue(this in that) }
                     }
                 }
-                TO_BOOL -> memory.push(memory.allocate(BooleanValue(memory[memory.pop()].toBoolean())))
-                JUMP_NOT_ZERO -> if (memory[memory.pop()].toBoolean()) jump(byteCode.operand)
+                TO_BOOL -> push(memory.allocate(BooleanValue(memory[pop()].toBoolean())))
+                JUMP_NOT_ZERO -> if (memory[pop()].toBoolean()) jump(byteCode.operand)
                 UNARY_OP -> {
                     when (UnaryOperatorCode.fromValue(byteCode.operand)) {
-                        UnaryOperatorCode.MINUS -> memory.push(memory.allocate(-memory[memory.pop()]))
-                        UnaryOperatorCode.NOT -> memory.push(memory.allocate(!memory[memory.pop()]))
+                        UnaryOperatorCode.MINUS -> push(memory.allocate(-memory[pop()]))
+                        UnaryOperatorCode.NOT -> push(memory.allocate(!memory[pop()]))
                     }
                 }
                 OP_ASSIGN -> {
@@ -417,10 +457,10 @@ class VirtualMachine(val executionContext: ExecutionContext, val memory: Memory)
                     }
                 }
                 INVOKE_BUILTIN -> {
-                    val result = Constants.builtinProceduresValues[byteCode.operand](executionContext, memory)
+                    val result = Constants.builtinProceduresValues[byteCode.operand](this)
                     register = null
-                    val label = memory.popFrame()
-                    memory.push(memory.allocate(result))
+                    val label = popFrame()
+                    push(memory.allocate(result))
                     jump(label)
                 }
                 EXIT -> break

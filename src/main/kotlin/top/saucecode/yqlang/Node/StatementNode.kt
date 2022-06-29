@@ -179,6 +179,7 @@ class StmtForNode(scope: Scope, private val iterator: ExprNode, private val coll
         buffer.putLabel(start)
         buffer.add(Op.JUMP_IF_ITER_DONE, end)
         buffer.add(Op.ITER_NEXT_PUSH)
+        // TODO: iterator must rebind! add such semantics
         iterator.generateCode(buffer)
         buffer.withLoopContext(start, end) {
             body.generateCode(buffer)
