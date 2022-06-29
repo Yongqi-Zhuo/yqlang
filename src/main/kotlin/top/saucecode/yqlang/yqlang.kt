@@ -118,7 +118,8 @@ class RestrictedContainer(source: String) {
     init {
         val tokens = Tokenizer(source).scan()
         val parser = Parser()
-        val res = parser.parse(tokens)
+        val ast = parser.parse(tokens)
+        val res = CodeGenerator().generate(ast)
         memory = res.preloadedMemory
     }
 

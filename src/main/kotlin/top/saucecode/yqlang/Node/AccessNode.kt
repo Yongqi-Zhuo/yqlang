@@ -7,13 +7,19 @@ import top.saucecode.yqlang.Runtime.Op
 import top.saucecode.yqlang.Runtime.Pointer
 import top.saucecode.yqlang.Runtime.YqlangRuntimeException
 
-sealed class AccessNode(scope: Scope, val parent: Node) : Node(scope) {
+sealed class AccessNode(scope: Scope, val parent: ExprNode) : ExprNode(scope) {
     override fun generateCode(buffer: CodegenContext) {
         constructView(buffer)
-        if (!isLvalue) {
-            buffer.add(Op.ACCESS_GET)
-        } else {
-            buffer.add(Op.ACCESS_SET)
+        when (codeGenExprType) {
+            CodeGenExprType.PRODUCE_VALUE -> {
+                buffer.add(Op.ACCESS_GET)
+            }
+            CodeGenExprType.PRODUCE_REFERENCE -> {
+                buffer.add(Op.ACCESS_GET_REF)
+            }
+            CodeGenExprType.CONSUME -> {
+                buffer.add(Op.ACCESS_SET)
+            }
         }
     }
     open fun constructView(buffer: CodegenContext) {
@@ -24,38 +30,40 @@ sealed class AccessNode(scope: Scope, val parent: Node) : Node(scope) {
             parent.constructView(buffer)
         }
     }
-    override fun testPattern(allBinds: Boolean): Boolean {
-        super.testPattern(allBinds)
-        if (!allBinds) {
-//            if (parent !is AccessNode) {
-//                parent.actuallyRvalue() // seems not much effect here...
-//            } else {
-//                parent.testPattern(allBinds)
-//            }
-            if (parent is AccessNode) return parent.testPattern(allBinds)
-            return true
-        } else {
-            return false
-        }
+    override fun prepareProduce(isReference: Boolean) {
+        parent.declareProduce(true) // need to access itself, not its copy!
     }
-    override fun declarePattern(allBinds: Boolean) {
-        if (!testPattern(allBinds)) super.declarePattern(allBinds) // throws
-        if (parent is AccessNode) parent.declarePattern(allBinds)
+    override fun prepareConsume(allBinds: Boolean) {
+        if (allBinds) throw CompileException("Cannot bind a value to an access node.")
+        if (parent !is AccessNode) {
+            parent.declareProduce(true)
+        } else {
+            parent.declareConsume(false)
+        }
     }
 }
 
-class AttributeAccessNode(scope: Scope, parent: Node, val name: String) : AccessNode(scope, parent) {
+class AttributeAccessNode(scope: Scope, parent: ExprNode, val name: String) : AccessNode(scope, parent) {
     override fun constructView(buffer: CodegenContext) {
         super.constructView(buffer)
         StringNode(scope, name).generateCode(buffer)
         buffer.add(Op.EXTEND_ACCESS_VIEW)
     }
+    // no need to override prepare, because attribute access does not capture
 }
-class SubscriptAccessNode(scope: Scope, parent: Node, val subscript: SubscriptNode) : AccessNode(scope, parent) {
+class SubscriptAccessNode(scope: Scope, parent: ExprNode, private val subscript: SubscriptNode) : AccessNode(scope, parent) {
     override fun constructView(buffer: CodegenContext) {
         super.constructView(buffer)
         subscript.generateCode(buffer)
         buffer.add(Op.EXTEND_ACCESS_VIEW)
+    }
+    override fun prepareProduce(isReference: Boolean) {
+        super.prepareProduce(isReference)
+        subscript.declareProduce(false)
+    }
+    override fun prepareConsume(allBinds: Boolean) {
+        super.prepareConsume(allBinds)
+        subscript.declareProduce(false)
     }
 }
 
@@ -66,7 +74,7 @@ sealed class AccessView(protected val parent: AccessView?, protected val memory:
     enum class AccessState {
         NONE, SLICE, INDEX
     }
-    abstract fun exec(): Pointer
+    abstract fun exec(isReference: Boolean): Pointer
     abstract fun assign(src: Pointer)
     abstract fun subscript(accessor: SubscriptValue): AccessView
 
@@ -81,15 +89,24 @@ sealed class AccessView(protected val parent: AccessView?, protected val memory:
     }
 }
 
-class NullAccessView(parent: AccessView?, memory: Memory) : AccessView(parent, memory) {
-    override fun exec() = memory.allocate(NullValue)
+class NullAccessView(private val nullType: NullType, parent: AccessView?, memory: Memory) : AccessView(parent, memory) {
+    enum class NullType {
+        NULL, EMPTY_LIST, EMPTY_STRING
+    }
+    override fun exec(isReference: Boolean): Pointer {
+        return when (nullType) {
+            NullType.NULL -> memory.allocate(NullValue)
+            NullType.EMPTY_LIST -> memory.allocate(ListValue(mutableListOf(), memory).reference)
+            NullType.EMPTY_STRING -> memory.allocate(StringValue("", memory).reference)
+        }
+    }
     override fun assign(src: Pointer) = throw YqlangRuntimeException("Cannot assign to null")
     override fun subscript(accessor: SubscriptValue): AccessView =
         throw IndexOutOfRangeRuntimeException(accessor, "failed to subscript a nonexistent child of $parent")
 }
 
 class NonCollectionAccessView(private val self: Pointer, parent: AccessView?, memory: Memory) : AccessView(parent, memory) {
-    override fun exec() = memory.copy(self)
+    override fun exec(isReference: Boolean) = if (isReference) self else memory.copy(self)
     override fun assign(src: Pointer) = parent!!.assign(src)
     override fun subscript(accessor: SubscriptValue): AccessView =
         throw IndexOutOfRangeRuntimeException("failed to subscript a non-collection $self")
@@ -100,11 +117,16 @@ class ListAccessView(private val list: ListValue, parent: AccessView?, memory: M
     private var accessState: AccessState = AccessState.NONE
     private var range: IntRange? = null
     private var index: Int? = null
-    override fun exec(): Pointer {
+    override fun exec(isReference: Boolean): Pointer {
         return when (accessState) {
-            AccessState.NONE -> memory.allocate(list.reference)
-            AccessState.SLICE -> memory.allocate(ListValue(list.value.slice(range!!).toMutableList(), memory).reference)
-            AccessState.INDEX -> memory.copy(list[index!!])
+            AccessState.NONE -> memory.allocate(list.reference) // no need to copy because it is a reference
+            AccessState.SLICE -> {
+                // creates a new list anyway
+                memory.allocate(ListValue(list.value.slice(range!!).mapTo(mutableListOf()) {
+                    memory.copy(it) // copy the elements by value!
+                }, memory).reference)
+            }
+            AccessState.INDEX -> list[index!!].let { if (isReference) it else memory.copy(it) }
         }
     }
 
@@ -116,12 +138,12 @@ class ListAccessView(private val list: ListValue, parent: AccessView?, memory: M
                 val srcList = memory[src]
                 val newList = srcList.asList()
                 if (newList != null) {
-                    newList.value.reversed().forEach { list.value.add(range!!.first, memory.copy(it)) }
+                    newList.value.reversed().forEach { list.value.add(range!!.first, memory.copy(it)) } // copy by value
                 } else {
-                    list.value.add(range!!.first, memory.copy(src))
+                    list.value.add(range!!.first, src) // src is passed by value, don't copy twice
                 }
             }
-            AccessState.INDEX -> memory.copyTo(list[index!!], src)
+            AccessState.INDEX -> list[index!!] = src // same reason
         }
     }
 
@@ -141,7 +163,7 @@ class ListAccessView(private val list: ListValue, parent: AccessView?, memory: M
                         range = slice
                         this
                     } else {
-                        NullAccessView(this, memory)
+                        NullAccessView(NullAccessView.NullType.EMPTY_LIST, this, memory)
                     }
                 } else {
                     val index = range!!.safeSubscript(accessor.begin)
@@ -152,7 +174,7 @@ class ListAccessView(private val list: ListValue, parent: AccessView?, memory: M
                         val child = memory[list[index]]
                         child.asCollection()?.let { create(it, this, memory) } ?: NonCollectionAccessView(list[index], this, memory)
                     } else {
-                        NullAccessView(this, memory)
+                        NullAccessView(NullAccessView.NullType.NULL, this, memory)
                     }
                 }
             }
@@ -165,7 +187,7 @@ class StringAccessView(private val string: StringValue, parent: AccessView?, mem
     private var accessState: AccessState = AccessState.NONE
     private var range: IntRange? = null
     private var index: Int? = null
-    override fun exec(): Pointer {
+    override fun exec(isReference: Boolean): Pointer {
         return when (accessState) {
             AccessState.NONE -> memory.allocate(string.reference)
             AccessState.SLICE -> memory.allocate(StringValue(string.value.substring(range!!), memory).reference)
@@ -207,7 +229,7 @@ class StringAccessView(private val string: StringValue, parent: AccessView?, mem
                         range = slice
                         this
                     } else {
-                        NullAccessView(this, memory)
+                        NullAccessView(NullAccessView.NullType.EMPTY_STRING, this, memory)
                     }
                 } else {
                     val index = range!!.safeSubscript(accessor.begin)
@@ -217,7 +239,7 @@ class StringAccessView(private val string: StringValue, parent: AccessView?, mem
                         range = null
                         this
                     } else {
-                        NullAccessView(this, memory)
+                        NullAccessView(NullAccessView.NullType.NULL, this, memory)
                     }
                 }
             }
@@ -229,13 +251,13 @@ class ObjectAccessView(private val obj: ObjectValue, parent: AccessView?, memory
     AccessView(parent, memory) {
     private var accessed: Boolean = false
     private var key: String? = null
-    override fun exec(): Pointer = if (accessed) {
-        obj[key!!]?.let { memory.copy(it) } ?: memory.allocate(NullValue)
+    override fun exec(isReference: Boolean): Pointer = if (accessed) {
+        obj[key!!]?.let { if (isReference) it else memory.copy(it) } ?: memory.allocate(NullValue)
     } else memory.allocate(obj.reference)
 
     override fun assign(src: Pointer) {
         if (accessed) {
-            obj[key!!] = memory[src]
+            obj[key!!] = src
         } else {
             parent!!.assign(src)
         }
@@ -248,14 +270,14 @@ class ObjectAccessView(private val obj: ObjectValue, parent: AccessView?, memory
                 key = accessor.key
                 val attr = obj[accessor.key]
                 if (attr == null) {
-                    NullAccessView(this, memory)
+                    NullAccessView(NullAccessView.NullType.NULL, this, memory)
                 } else {
                     val child = memory[attr]
                     child.asCollection()?.let { create(it, this, memory) } ?: NonCollectionAccessView(attr, this, memory)
                 }
             }
             is IntegerSubscriptValue -> {
-                NullAccessView(this, memory)
+                throw IndexOutOfRangeRuntimeException(accessor, "cannot access an indexed attribute of an object")
             }
         }
     }

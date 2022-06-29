@@ -1,7 +1,6 @@
 package top.saucecode.yqlang
 
 import top.saucecode.yqlang.Node.*
-import top.saucecode.yqlang.Runtime.ByteCode
 import top.saucecode.yqlang.Runtime.Memory
 
 open class ParserException(message: String) : Exception(message)
@@ -40,18 +39,9 @@ class Parser {
     private fun isAtEnd() = current >= tokens.size
     private fun peek() = tokens[current]
 
-    private fun parseIdentifier(scope: Scope): IdentifierNode {
-        val idNode = IdentifierNode(scope, consume(TokenType.IDENTIFIER))
-        if (scope.captureNames) {
-            scope.acquireExistingName(idNode.name)
-        }
-        scope.tracedIdentifiers.lastOrNull()?.add(idNode)
-        return idNode
-    }
-    private fun parseIdentifierName(scope: Scope): String {
-        return IdentifierNode(scope, consume(TokenType.IDENTIFIER)).name
-    }
-    private fun parseNumber(scope: Scope): Node {
+    private fun parseIdentifier(scope: Scope): IdentifierNode = IdentifierNode(scope, consume(TokenType.IDENTIFIER))
+    private fun parseIdentifierName(scope: Scope): String = IdentifierNode(scope, consume(TokenType.IDENTIFIER)).name
+    private fun parseNumber(scope: Scope): ExprNode {
         val numTok = consume(TokenType.NUMBER_LITERAL)
         return if ('.' in numTok.value) {
             FloatNode(scope, numTok)
@@ -75,12 +65,9 @@ class Parser {
         val token = peek()
         return when (token.type) {
             TokenType.ACTION -> {
-                scope.captureNames {
-                    parseStmtAction(scope)
-                }
+                parseStmtAction(scope)
             }
             TokenType.IF -> {
-                // use captureNames inside
                 parseStmtIf(scope)
             }
             TokenType.INIT -> {
@@ -97,36 +84,27 @@ class Parser {
             }
             TokenType.FUNC -> {
                 consume(TokenType.FUNC)
-                var func: IdentifierNode? = null
-                scope.preserveAndTraceNames { func = parseIdentifier(scope) }
-                func!!.testPattern(true)
-                func!!.declarePattern(true)
-                val mangled = func!!.getMangledName()!!
+                val func = parseIdentifier(scope)
+                func.declareConsume(true)
                 consume(TokenType.PAREN_OPEN)
-                val newScope = Scope(scope, Frame(scope.currentFrame, mangled))
-                var params: ListNode? = null
-                newScope.preserveAndTraceNames { params = parseExprList(newScope) }
-                if (params!!.testPattern(true)) {
-                    params!!.declarePattern(true)
-                } else {
-                    throw CompileException("Parameters of closure ${func!!.name} must be bindable")
-                }
+                val newScope = Scope(scope, Frame(scope.currentFrame))
+                val params = parseExprList(newScope)
+                params.declareConsume(true)
                 consume(TokenType.PAREN_CLOSE)
                 consumeLineBreak()
-                val body = parseStmt(newScope)
-                StmtAssignNode(scope, func!!, ClosureNode(newScope, func!!.name, params!!, body))
+                val body = parseStmt(newScope) // func and params may be quoted by body, so must be first declared!
+                val closure = ClosureNode(newScope, params, body)
+                StmtAssignNode(scope, func, closure)
             }
             TokenType.RETURN -> {
                 consume(TokenType.RETURN)
-                val retNode = scope.captureNames {
-                    StmtReturnNode(scope, parseExpr(scope))
-                }
+                val retNode = StmtReturnNode(scope, parseExpr(scope))
                 consumeLineBreak()
                 retNode
             }
             TokenType.WHILE -> {
                 consume(TokenType.WHILE)
-                val condition = scope.captureNames { parseExpr(scope) }
+                val condition = parseExpr(scope)
                 consumeLineBreak()
                 val body = parseStmt(scope)
                 StmtWhileNode(scope, condition, body)
@@ -145,69 +123,34 @@ class Parser {
                 consume(TokenType.FOR)
                 val newScope = Scope(scope, null)
                 val iterator = parseTerm(newScope)
-                if (iterator.testPattern(true)) {
-                    iterator.declarePattern(true)
-                } else {
-                    throw CompileException("Iterator $iterator in for loop must be bindable")
-                }
+                iterator.declareConsume(true)
                 consume(TokenType.IN)
-                val collection = scope.captureNames { parseExpr(newScope) }
+                val collection = parseExpr(newScope)
                 consumeLineBreak()
                 val body = parseStmt(newScope)
                 StmtForNode(newScope, iterator, collection, body)
             }
             else -> {
-                var expr: Node? = null
-                val trace = scope.preserveAndTraceNames {
-                    expr = parseExpr(scope)
-                }
+                val expr = parseExpr(scope)
                 if (peek().type == TokenType.ASSIGN) {
-                    val assignToken = consume(TokenType.ASSIGN)
-                    val rvalue = scope.captureNames {
-                        parseExpr(scope)
-                    }
-                    consumeLineBreak()
-                    if (expr!!.testPattern(false)) {
-                        expr!!.declarePattern(false)
-                    } else {
-                        throw CompileException("${expr!!} is not assignable")
-                    }
-                    if (assignToken.value == "=") {
-                        StmtAssignNode(scope, expr!!, rvalue)
-                    } else {
-                        // TODO: really support +=
-                        assert(expr is IdentifierNode)
-                        trace.map { it.scope.acquireExistingName(it.name) }
-                        val another = IdentifierNode(scope, (expr as IdentifierNode).name)
-                        when (assignToken.value) {
-                            "+=" -> StmtAssignNode(scope, expr!!, BinaryOperatorNode(scope, listOf(another, rvalue), listOf(TokenType.PLUS)))
-                            "-=" -> StmtAssignNode(scope, expr!!, BinaryOperatorNode(scope, listOf(another, rvalue), listOf(TokenType.MINUS)))
-                            "*=" -> StmtAssignNode(scope, expr!!, BinaryOperatorNode(scope, listOf(another, rvalue), listOf(TokenType.MULT)))
-                            "/=" -> StmtAssignNode(scope, expr!!, BinaryOperatorNode(scope, listOf(another, rvalue), listOf(TokenType.DIV)))
-                            "%=" -> StmtAssignNode(scope, expr!!, BinaryOperatorNode(scope, listOf(another, rvalue), listOf(TokenType.MOD)))
-                            else -> throw UnexpectedTokenException(assignToken)
-                        }
-                    }
+                    parseStmtAssign(scope, expr)
                 } else {
                     consumeLineBreak()
-                    // capture them
-                    trace.map { it.scope.acquireExistingName(it.name) }
-                    StmtExprNode(scope, expr!!)
+                    StmtExprNode(scope, expr)
                 }
             }
         }
     }
 
-    private fun parseStmtAssign(scope: Scope, lvalue: Node): Node {
+    private fun parseStmtAssign(scope: Scope, lvalue: ExprNode): Node {
         val assignToken = consume(TokenType.ASSIGN)
-        val stmt = when (assignToken.value) {
+        val stmt = when (val assignOp = assignToken.value) {
             "=" -> StmtAssignNode(scope, lvalue, parseExpr(scope))
-            // TODO: rewrite opAssign
-            "+=" -> StmtAssignNode(scope, lvalue, BinaryOperatorNode(scope, listOf(lvalue, parseExpr(scope)), listOf(TokenType.PLUS)))
-            "-=" -> StmtAssignNode(scope, lvalue, BinaryOperatorNode(scope, listOf(lvalue, parseExpr(scope)), listOf(TokenType.MINUS)))
-            "*=" -> StmtAssignNode(scope, lvalue, BinaryOperatorNode(scope, listOf(lvalue, parseExpr(scope)), listOf(TokenType.MULT)))
-            "/=" -> StmtAssignNode(scope, lvalue, BinaryOperatorNode(scope, listOf(lvalue, parseExpr(scope)), listOf(TokenType.DIV)))
-            "%=" -> StmtAssignNode(scope, lvalue, BinaryOperatorNode(scope, listOf(lvalue, parseExpr(scope)), listOf(TokenType.MOD)))
+            "+=" -> StmtOpAssignNode(scope, lvalue, OpAssignCode.ADD_ASSIGN, parseExpr(scope))
+            "-=" -> StmtOpAssignNode(scope, lvalue, OpAssignCode.SUB_ASSIGN, parseExpr(scope))
+            "*=" -> StmtOpAssignNode(scope, lvalue, OpAssignCode.MUL_ASSIGN, parseExpr(scope))
+            "/=" -> StmtOpAssignNode(scope, lvalue, OpAssignCode.DIV_ASSIGN, parseExpr(scope))
+            "%=" -> StmtOpAssignNode(scope, lvalue, OpAssignCode.MOD_ASSIGN, parseExpr(scope))
             else -> throw UnexpectedTokenException(assignToken)
         }
         consumeLineBreak()
@@ -223,7 +166,7 @@ class Parser {
 
     private fun parseStmtIf(scope: Scope): Node {
         consume(TokenType.IF)
-        val condition = scope.captureNames { parseExpr(scope) }
+        val condition = parseExpr(scope)
         consumeLineBreak()
         val ifBody = parseStmt(scope)
         if (peek().type == TokenType.ELSE) {
@@ -259,14 +202,14 @@ class Parser {
         return false
     }
 
-    private fun parseExpr(scope: Scope): Node {
+    private fun parseExpr(scope: Scope): ExprNode {
         if ((peek().type == TokenType.BRACE_OPEN && !checkObjectLiteral()) || peek().type == TokenType.FUNC) {
             return parseLambda(scope)
         }
         return parseOperator(scope)
     }
 
-    private tailrec fun parseOperator(scope: Scope, precedence: Int = OperatorNode.PrecedenceList.lastIndex): Node {
+    private fun parseOperator(scope: Scope, precedence: Int = OperatorNode.PrecedenceList.lastIndex): ExprNode {
         if (precedence < 0) {
             return parseTerm(scope)
         }
@@ -321,59 +264,45 @@ class Parser {
         return false
     }
 
-    private var lambdaCounter = 0
-    private fun getLambdaName(): String {
-        return "@lambda${lambdaCounter++}"
-    }
-
-    private fun parseLambda(scope: Scope): Node {
+    private fun parseLambda(scope: Scope): ClosureNode {
         return when (peek().type) {
             TokenType.FUNC -> {
                 consume(TokenType.FUNC)
-                val funcName = getLambdaName()
-                val mangledFuncName = scope.declareScopeName(funcName)
-                consume(TokenType.PAREN_OPEN)
-                val newScope = Scope(scope, Frame(scope.currentFrame, mangledFuncName))
-                var params: ListNode? = null
-                newScope.preserveAndTraceNames { params = parseExprList(newScope) }
-                if (params!!.testPattern(true)) {
-                    params!!.declarePattern(true)
+                val newScope = Scope(scope, Frame(scope.currentFrame))
+                val params = if (peek().type == TokenType.PAREN_OPEN) {
+                    consume(TokenType.PAREN_OPEN)
+                    val ls = parseExprList(newScope)
+                    consume(TokenType.PAREN_CLOSE)
+                    ls
                 } else {
-                    throw CompileException("Parameters of closure $funcName must be bindable")
+                    ListNode(newScope, listOf())
                 }
-                consume(TokenType.PAREN_CLOSE)
+                params.declareConsume(true)
                 consumeLineBreak()
                 val body = parseStmt(newScope)
-                ClosureNode(newScope, funcName, params!!, body)
+                ClosureNode(newScope, params, body)
             }
             TokenType.BRACE_OPEN -> {
-                val funcName = getLambdaName()
-                val mangledFuncName = scope.declareScopeName(funcName)
-                val newScope = Scope(scope, Frame(scope.currentFrame, mangledFuncName))
+                val newScope = Scope(scope, Frame(scope.currentFrame))
                 consume(TokenType.BRACE_OPEN)
                 val params = if (checkLambdaParams()) {
                     // lambda with params
-                    var paramList: ListNode? = null
-                    newScope.preserveAndTraceNames { paramList = parseExprList(newScope) }
+                    val paramList = parseExprList(newScope)
                     consume(TokenType.ARROW)
-                    paramList!!
+                    paramList
                 } else ListNode(newScope, emptyList())
-                if (params.testPattern(true)) {
-                    params.declarePattern(true)
-                } else {
-                    throw CompileException("Parameters of closure $funcName must be bindable")
-                }
+                params.declareConsume(true)
                 consumeLineBreak()
                 val body = parseStmt(newScope)
                 consume(TokenType.BRACE_CLOSE)
                 consumeLineBreak()
-                ClosureNode(newScope, funcName, params, body)
+                ClosureNode(newScope, params, body)
             }
             else -> throw UnexpectedTokenException(peek(), TokenType.FUNC)
         }
     }
 
-    private fun parseTermHead(scope: Scope): Node {
+    private fun parseTermHead(scope: Scope): ExprNode {
         val token = peek()
         return when (token.type) {
             TokenType.IDENTIFIER -> parseIdentifier(scope)
@@ -420,7 +349,7 @@ class Parser {
     }
 
     private fun parseExprList(scope: Scope): ListNode {
-        val params = mutableListOf<Node>()
+        val params = mutableListOf<ExprNode>()
         val delimiters = listOf(TokenType.PAREN_CLOSE, TokenType.BRACKET_CLOSE, TokenType.ARROW)
         if (peek().type !in delimiters) {
             params.add(parseExpr(scope))
@@ -432,7 +361,7 @@ class Parser {
         return ListNode(scope, params)
     }
 
-    private fun parseTermTail(scope: Scope, termHead: Node): Node {
+    private fun parseTermTail(scope: Scope, termHead: ExprNode): ExprNode {
         val token = peek()
         return when (token.type) {
             TokenType.DOT -> { // attribute access
@@ -442,20 +371,18 @@ class Parser {
             }
             TokenType.BRACKET_OPEN -> { // subscript access
                 consume(TokenType.BRACKET_OPEN)
-                val subscript = scope.captureNames {
-                    val begin = if (peek().type == TokenType.COLON) {
-                        IntegerNode(scope, 0)
-                    } else parseExpr(scope)
-                    if (peek().type == TokenType.COLON) {
-                        consume(TokenType.COLON)
-                        if (peek().type == TokenType.BRACKET_CLOSE) {
-                            SubscriptNode(scope, begin, true, null)
-                        } else {
-                            SubscriptNode(scope, begin, true, parseExpr(scope))
-                        }
+                val begin = if (peek().type == TokenType.COLON) {
+                    IntegerNode(scope, 0)
+                } else parseExpr(scope)
+                val subscript = if (peek().type == TokenType.COLON) {
+                    consume(TokenType.COLON)
+                    if (peek().type == TokenType.BRACKET_CLOSE) {
+                        SubscriptNode(scope, begin, true, null)
                     } else {
-                        SubscriptNode(scope, begin, false)
+                        SubscriptNode(scope, begin, true, parseExpr(scope))
                     }
+                } else {
+                    SubscriptNode(scope, begin, false)
                 }
                 consume(TokenType.BRACKET_CLOSE)
                 SubscriptAccessNode(scope, termHead, subscript)
@@ -476,41 +403,23 @@ class Parser {
         }
     }
 
-    private fun parseTerm(scope: Scope): Node {
-        val tryToPreserve = !scope.captureNames
-        var receipt: List<IdentifierNode>? = null
-        var term = if (tryToPreserve) {
-            var theTerm: Node? = null
-            receipt = scope.preserveAndTraceNames {
-                theTerm = parseTermHead(scope)
-            }
-            theTerm!!
-        } else parseTermHead(scope)
-        var tail = false
+    private fun parseTerm(scope: Scope): ExprNode {
+        var term = parseTermHead(scope)
         while (peek().type == TokenType.DOT || peek().type == TokenType.BRACKET_OPEN || peek().type == TokenType.PAREN_OPEN) {
             term = parseTermTail(scope, term)
-            tail = true
         }
-        if (tail) receipt?.forEach { it.scope.acquireExistingName(it.name) }
         return term
     }
 
-    data class ParseResult(val symbolTable: SymbolTable, val preloadedMemory: Memory)
-
-    fun parse(tokens: List<Token>): ParseResult {
+    fun parse(tokens: List<Token>): Node {
         this.tokens = tokens
         this.current = 0
         // in case exception is thrown
 //        while (text.size > lastStatics) text.removeLast()
 //        val newStatics = text.subList(lastStatics, text.size)
 //        lastStatics = text.size
-        val scope = Scope(null, Frame(null, "root"))
+        val scope = Scope(null, Frame(null))
         val ast = parseStmtList(scope, false)
-        val buffer = CodegenContext()
-        buffer.reserveStatics(scope.currentFrame.reserveGlobals())
-        ast.generateCode(buffer)
-        buffer.memory.text = buffer.text
-        buffer.memory.labels = buffer.labels
-        return ParseResult(scope.exportSymbolTable(), buffer.memory)
+        return ast
     }
 }

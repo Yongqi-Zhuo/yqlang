@@ -1,22 +1,32 @@
 package top.saucecode.yqlang.Node
 
 import top.saucecode.yqlang.*
-import top.saucecode.yqlang.NodeValue.NodeValue
-import top.saucecode.yqlang.NodeValue.StringValue
-import top.saucecode.yqlang.Runtime.Memory
-import top.saucecode.yqlang.Runtime.Pointer
-import kotlin.math.min
 
 sealed class Node(val scope: Scope) {
-    // return value put on stack
     abstract fun generateCode(buffer: CodegenContext)
-    protected var isLvalue = false
-    open fun testPattern(allBinds: Boolean): Boolean {
-        isLvalue = true
-        return false
+}
+
+class ExpressionCannotBeAssignedException(expression: Node) : CompileException("Expression $expression cannot be assigned")
+
+sealed class ExprNode(scope: Scope) : Node(scope) {
+    enum class CodeGenExprType {
+        // CONSUME must not rebind! all binds happen at compile time.
+        PRODUCE_VALUE, CONSUME, PRODUCE_REFERENCE
     }
-    open fun actuallyRvalue() {
-        isLvalue = false
+    protected lateinit var codeGenExprType: CodeGenExprType
+    private var declared = false
+    fun declareProduce(isReference: Boolean) {
+        if (declared) return
+        declared = true
+        codeGenExprType = if (isReference) CodeGenExprType.PRODUCE_REFERENCE else CodeGenExprType.PRODUCE_VALUE
+        prepareProduce(isReference)
     }
-    open fun declarePattern(allBinds: Boolean): Unit = throw YqlangException("Cannot declare bind on non-bindable node")
+    fun declareConsume(allBinds: Boolean) {
+        if (declared) return
+        declared = true
+        codeGenExprType = CodeGenExprType.CONSUME
+        prepareConsume(allBinds)
+    }
+    abstract fun prepareProduce(isReference: Boolean)
+    abstract fun prepareConsume(allBinds: Boolean)
 }

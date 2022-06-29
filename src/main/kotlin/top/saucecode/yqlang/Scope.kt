@@ -1,6 +1,5 @@
 package top.saucecode.yqlang
 
-import top.saucecode.yqlang.Node.IdentifierNode
 import top.saucecode.yqlang.NodeValue.NodeValue
 import top.saucecode.yqlang.NodeValue.NullValue
 import top.saucecode.yqlang.Runtime.Memory
@@ -17,13 +16,11 @@ object UniqueID {
 enum class NameType {
     GLOBAL, CAPTURE, LOCAL
 }
-class Frame(val parent: Frame?, val name: String) {
-    val isRoot: Boolean get() = parent == null
-    val root: Frame get() = if (isRoot) this else parent!!.root
+class Frame(private val parent: Frame?) {
+    private val isRoot: Boolean get() = parent == null
+    private val root: Frame get() = if (isRoot) this else parent!!.root
     // captured values from parent frames
     val captures: MutableList<String> = mutableListOf() // empty for root
-    // variables that need to be forwarded to next frame
-    val forwards: MutableMap<String, MutableList<String>> = mutableMapOf() // empty for root, because root vars are global
     // args are treated as special locals to support pattern matching in function prototypes
     // val arguments: MutableList<String> = mutableListOf() // empty for root
     val locals: MutableList<String> = mutableListOf()
@@ -42,7 +39,6 @@ class Frame(val parent: Frame?, val name: String) {
                     when (res) {
                         NameType.GLOBAL -> return NameType.GLOBAL
                         else -> { // parent has captured this for us
-                            parent.forwards.getOrPut(this.name) { mutableListOf() }.add(name)
                             captures.add(name)
                         }
                     }
@@ -56,6 +52,7 @@ class Frame(val parent: Frame?, val name: String) {
     }
     fun getLocalMemoryLayout(name: String): Int {
         if (isReserved(name)) {
+            if (isRoot) throw CompileException("$name not available in global scope!")
             return when (name) {
                 "this" -> Memory.callerOffset
                 "$" -> Memory.argsOffset
@@ -91,38 +88,12 @@ class Frame(val parent: Frame?, val name: String) {
     }
 }
 
-class CompileException(message: String) : YqlangException(message)
+open class CompileException(message: String) : YqlangException(message)
 
-class Scope(val parent: Scope?, frame: Frame?) {
+class Scope(private val parent: Scope?, frame: Frame?) {
     val currentFrame: Frame
-    val currentFrameScope: Scope
-    val locals: MutableMap<String, String> = mutableMapOf()
-    private var captureNamesField: Boolean? = null
-    val captureNames: Boolean get() = captureNamesField ?: (parent?.captureNames ?: false)
-    var tracedIdentifiers: MutableList<MutableList<IdentifierNode>> = mutableListOf()
-    fun preserveAndTraceNames(block: () -> Unit): List<IdentifierNode> {
-        val list = mutableListOf<IdentifierNode>()
-        tracedIdentifiers.add(list)
-        val oldCaptureNames = captureNamesField
-        captureNamesField = false
-        try {
-            block()
-        } finally {
-            captureNamesField = oldCaptureNames
-            assert(tracedIdentifiers.remove(list))
-        }
-//        println("id trace: ${list.joinToString(", ") { it.name }}")
-        return list
-    }
-    fun<T> captureNames(block: () -> T): T {
-        val oldCaptureNames = captureNamesField
-        captureNamesField = true
-        return try {
-            block()
-        } finally {
-            captureNamesField = oldCaptureNames
-        }
-    }
+    private val currentFrameScope: Scope
+    private val locals: MutableMap<String, String> = mutableMapOf()
     init {
         if (frame == null) {
             currentFrame = parent!!.currentFrame

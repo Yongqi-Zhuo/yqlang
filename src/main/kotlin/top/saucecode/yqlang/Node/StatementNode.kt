@@ -6,26 +6,53 @@ import top.saucecode.yqlang.Runtime.YqlangRuntimeException
 import top.saucecode.yqlang.Scope
 import top.saucecode.yqlang.Token
 
-class StmtExprNode(scope: Scope, val expr: Node) : Node(scope) {
+class StmtExprNode(scope: Scope, private val expr: ExprNode) : Node(scope) {
     override fun generateCode(buffer: CodegenContext) {
         expr.generateCode(buffer)
         buffer.add(Op.POP_SAVE_TO_REG)
     }
-
-    override fun toString(): String {
-        return "expr($expr)"
+    init {
+        expr.declareProduce(false)
     }
+    override fun toString(): String = "expr($expr)"
 }
 
-class StmtAssignNode(scope: Scope, private val lvalue: Node, private val expr: Node) : Node(scope) {
+class StmtAssignNode(scope: Scope, private val lvalue: ExprNode, private val expr: ExprNode) : Node(scope) {
     override fun generateCode(buffer: CodegenContext) {
         expr.generateCode(buffer)
         lvalue.generateCode(buffer)
         buffer.add(Op.CLEAR_REG)
     }
-
+    init {
+        lvalue.declareConsume(false)
+        expr.declareProduce(false)
+    }
     override fun toString(): String {
         return "assign($lvalue, $expr)"
+    }
+}
+
+enum class OpAssignCode(val value: Int) {
+    ADD_ASSIGN(0), SUB_ASSIGN(1), MUL_ASSIGN(2), DIV_ASSIGN(3), MOD_ASSIGN(4);
+    companion object {
+        fun from(value: Int): OpAssignCode {
+            return values()[value]
+        }
+    }
+}
+class StmtOpAssignNode(scope: Scope, private val lvalue: ExprNode, private val opType: OpAssignCode, private val expr: ExprNode) : Node(scope) {
+    override fun generateCode(buffer: CodegenContext) {
+        lvalue.generateCode(buffer)
+        expr.generateCode(buffer)
+        buffer.add(Op.OP_ASSIGN, opType.value)
+    }
+    init {
+        lvalue.declareProduce(true)
+        expr.declareProduce(false)
+    }
+
+    override fun toString(): String {
+        return "opAssign($lvalue, ${opType.name}, $expr)"
     }
 }
 
@@ -39,23 +66,24 @@ enum class ActionCode(val code: Int) {
         }
     }
 }
-class StmtActionNode(scope: Scope, private val action: String, private val expr: Node) : Node(scope) {
-    constructor(scope: Scope, action: Token, expr: Node) : this(scope, action.value, expr)
-
+class StmtActionNode(scope: Scope, private val action: String, private val expr: ExprNode) : Node(scope) {
+    constructor(scope: Scope, action: Token, expr: ExprNode) : this(scope, action.value, expr)
     override fun generateCode(buffer: CodegenContext) {
         expr.generateCode(buffer)
         val actionCode = ActionCode.valueOf(action.uppercase()).code
         buffer.add(Op.ACTION, actionCode)
         buffer.add(Op.CLEAR_REG)
     }
-
+    init {
+        expr.declareProduce(false)
+    }
     override fun toString(): String {
         return "action($action($expr))"
     }
 }
 
 class StmtIfNode(
-    scope: Scope, private val condition: Node, private val ifBody: Node, private val elseBody: Node? = null
+    scope: Scope, private val condition: ExprNode, private val ifBody: Node, private val elseBody: Node? = null
 ) : Node(scope) {
     override fun generateCode(buffer: CodegenContext) {
         val mid = buffer.requestLabel()
@@ -68,7 +96,9 @@ class StmtIfNode(
         elseBody?.generateCode(buffer)
         buffer.putLabel(end)
     }
-
+    init {
+        condition.declareProduce(false)
+    }
     override fun toString(): String {
         val elseText = if (elseBody == null) "" else ", else($elseBody)"
         return "if($condition, body($ifBody)$elseText)"
@@ -82,24 +112,25 @@ class StmtInitNode(scope: Scope, private val stmt: Node) : Node(scope) {
         stmt.generateCode(buffer)
         buffer.putLabel(jump)
     }
-
     override fun toString(): String {
         return "init($stmt)"
     }
 }
 
-class StmtReturnNode(scope: Scope, private val expr: Node) : Node(scope) {
+class StmtReturnNode(scope: Scope, private val expr: ExprNode) : Node(scope) {
     override fun generateCode(buffer: CodegenContext) {
         expr.generateCode(buffer)
         buffer.add(Op.POP_RETURN)
     }
-
+    init {
+        expr.declareProduce(false)
+    }
     override fun toString(): String {
         return "return($expr)"
     }
 }
 
-class StmtWhileNode(scope: Scope, private val condition: Node, private val body: Node) : Node(scope) {
+class StmtWhileNode(scope: Scope, private val condition: ExprNode, private val body: Node) : Node(scope) {
     override fun generateCode(buffer: CodegenContext) {
         val start = buffer.requestLabel()
         val end = buffer.requestLabel()
@@ -112,7 +143,9 @@ class StmtWhileNode(scope: Scope, private val condition: Node, private val body:
         buffer.add(Op.JUMP, start)
         buffer.putLabel(end)
     }
-
+    init {
+        condition.declareProduce(false)
+    }
     override fun toString(): String {
         return "while($condition, $body)"
     }
@@ -122,7 +155,6 @@ class StmtContinueNode(scope: Scope) : Node(scope) {
     override fun generateCode(buffer: CodegenContext) {
         buffer.add(Op.JUMP, buffer.continueLabel!!)
     }
-
     override fun toString(): String {
         return "continue"
     }
@@ -132,13 +164,12 @@ class StmtBreakNode(scope: Scope) : Node(scope) {
     override fun generateCode(buffer: CodegenContext) {
         buffer.add(Op.JUMP, buffer.breakLabel!!)
     }
-
     override fun toString(): String {
         return "break"
     }
 }
 
-class StmtForNode(scope: Scope, private val iterator: Node, private val collection: Node, private val body: Node) : Node(scope) {
+class StmtForNode(scope: Scope, private val iterator: ExprNode, private val collection: ExprNode, private val body: Node) : Node(scope) {
     override fun generateCode(buffer: CodegenContext) {
         collection.generateCode(buffer)
         // now the top of stack is the collection
@@ -156,15 +187,19 @@ class StmtForNode(scope: Scope, private val iterator: Node, private val collecti
         buffer.putLabel(end)
         buffer.add(Op.POP_ITERATOR)
     }
+    init {
+        iterator.declareConsume(true)
+        collection.declareProduce(false)
+    }
+    override fun toString(): String = "for($iterator, $collection, $body)"
 }
 
 class StmtListNode(scope: Scope, private val stmts: List<Node>) : Node(scope) {
     override fun generateCode(buffer: CodegenContext) {
-        buffer.add(Op.CLEAR_REG)
+//        buffer.add(Op.CLEAR_REG)
         stmts.forEach { it.generateCode(buffer) }
     }
-
     override fun toString(): String {
-        return "stmts(${stmts.joinToString(", ")})"
+        return "{${stmts.joinToString(", ")}}"
     }
 }

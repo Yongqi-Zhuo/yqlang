@@ -30,6 +30,11 @@ sealed class NodeValue : Comparable<NodeValue> {
     operator fun plus(that: NodeValue): NodeValue {
         return exchangeablePlus(that, false)
     }
+    open fun addAssign(that: NodeValue): NodeValue = throw OperationRuntimeException("Invalid operation: $this += $that")
+    open fun subAssign(that: NodeValue): NodeValue = throw OperationRuntimeException("Invalid operation: $this -= $that")
+    open fun mulAssign(that: NodeValue): NodeValue = throw OperationRuntimeException("Invalid operation: $this *= $that")
+    open fun divAssign(that: NodeValue): NodeValue = throw OperationRuntimeException("Invalid operation: $this /= $that")
+    open fun modAssign(that: NodeValue): NodeValue = throw OperationRuntimeException("Invalid operation: $this %= $that")
 
     open operator fun minus(that: NodeValue): NodeValue = throw OperationRuntimeException("Invalid operation: $this - $that")
     open operator fun times(that: NodeValue): NodeValue = throw OperationRuntimeException("Invalid operation: $this * $that")
@@ -86,6 +91,8 @@ sealed class CollectionValue : Iterable<Pointer> {
         throw OperationRuntimeException("Invalid operation: ${if (!inverse) this else that} + ${if (!inverse) that else this}")
     }
     open operator fun times(that: NodeValue): NodeValue = throw OperationRuntimeException("Invalid operation: $this * $that")
+    open fun addAssign(that: NodeValue): NodeValue = throw OperationRuntimeException("Invalid operation: $this += $that")
+    open fun mulAssign(that: NodeValue): NodeValue = throw OperationRuntimeException("Invalid operation: $this *= $that")
     open operator fun compareTo(other: CollectionValue): Int = throw OperationRuntimeException("Invalid operation: $this <=> $other")
 }
 
@@ -106,6 +113,12 @@ data class ReferenceValue(private val address: CollectionPoolPointer) : NodeValu
     override operator fun contains(that: NodeValue): Boolean = that in value
     override fun exchangeablePlus(that: NodeValue, inverse: Boolean): NodeValue = value.exchangeablePlus(that, inverse)
     override operator fun times(that: NodeValue): NodeValue = value.times(that)
+    override fun addAssign(that: NodeValue): NodeValue {
+        return value.addAssign(that)
+    }
+    override fun mulAssign(that: NodeValue): NodeValue {
+        return value.mulAssign(that)
+    }
     override operator fun compareTo(other: NodeValue): Int {
         return if (other is ReferenceValue) {
             return value.compareTo(other.value)

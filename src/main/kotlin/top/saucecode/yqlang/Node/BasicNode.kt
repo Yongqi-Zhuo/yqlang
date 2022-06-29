@@ -5,237 +5,202 @@ import top.saucecode.yqlang.NodeValue.*
 import top.saucecode.yqlang.Runtime.ImmediateCode
 import top.saucecode.yqlang.Runtime.Op
 import top.saucecode.yqlang.Runtime.YqlangRuntimeException
+import kotlin.reflect.KClass
 
-class TypeMismatchRuntimeException(expected: List<Class<*>>, got: Any) :
+class TypeMismatchRuntimeException(expected: List<KClass<*>>, got: Any) :
     YqlangRuntimeException("Type mismatch, expected one of ${
-        expected.joinToString(", ") { it.simpleName }
+        expected.joinToString(", ") { it.simpleName ?: it.toString() }
     }, got ${got.javaClass.simpleName}")
 
-class IdentifierNode(scope: Scope, val name: String) : Node(scope) {
-
+class IdentifierNode(scope: Scope, val name: String) : ExprNode(scope) {
     constructor(scope: Scope, token: Token) : this(scope, token.value)
-
     override fun generateCode(buffer: CodegenContext) {
         val nameType = scope.queryName(name)
         if (nameType != NameType.GLOBAL) {
-            if (!isLvalue) {
-                val index = if (name.startsWith("$")) {
-                    name.substring(1).toIntOrNull()
-                } else null
-                if (index != null) {
-                    buffer.add(Op.GET_NTH_ARG, index)
-                } else {
-                    buffer.add(Op.LOAD_LOCAL_PUSH, scope.getLocalLayout(name))
+            val index = if (name.startsWith("$")) {
+                name.substring(1).toIntOrNull()
+            } else null
+            when (codeGenExprType) {
+                CodeGenExprType.PRODUCE_VALUE -> {
+                    if (index != null) {
+                        buffer.add(Op.GET_NTH_ARG, index)
+                    } else {
+                        buffer.add(Op.LOAD_LOCAL_PUSH, scope.getLocalLayout(name))
+                    }
                 }
-            } else {
-                if (Frame.isReserved(name)) throw CompileException("Cannot assign to reserved name $name")
-                buffer.add(Op.POP_SAVE_LOCAL, scope.getLocalLayout(name))
+                CodeGenExprType.PRODUCE_REFERENCE -> {
+                    if (index != null) {
+                        buffer.add(Op.GET_NTH_ARG_REF, index)
+                    } else {
+                        buffer.add(Op.LOAD_LOCAL_PUSH_REF, scope.getLocalLayout(name))
+                    }
+                }
+                CodeGenExprType.CONSUME -> {
+                    if (Frame.isReserved(name)) throw CompileException("Cannot assign to reserved name $name")
+                    buffer.add(Op.POP_SAVE_LOCAL, scope.getLocalLayout(name))
+                }
             }
         } else {
-            if (!isLvalue) {
-                buffer.add(Op.COPY_PUSH, scope.getGlobalLayout(name))
-            } else {
-                buffer.add(Op.POP_SAVE, scope.getGlobalLayout(name))
+            when (codeGenExprType) {
+                CodeGenExprType.PRODUCE_VALUE -> {
+                    buffer.add(Op.LOAD_PUSH, scope.getGlobalLayout(name))
+                }
+                CodeGenExprType.PRODUCE_REFERENCE -> {
+                    buffer.add(Op.LOAD_PUSH_REF, scope.getGlobalLayout(name))
+                }
+                CodeGenExprType.CONSUME -> {
+                    buffer.add(Op.POP_SAVE, scope.getGlobalLayout(name))
+                }
             }
         }
     }
-    override fun testPattern(allBinds: Boolean): Boolean {
-        super.testPattern(allBinds)
-        return true
+    override fun prepareProduce(isReference: Boolean) {
+        scope.acquireExistingName(name)
     }
-    override fun declarePattern(allBinds: Boolean) {
+    override fun prepareConsume(allBinds: Boolean) {
         if (!allBinds && scope.testName(name)) {
             scope.acquireExistingName(name)
         } else {
             scope.declareLocalName(name)
         }
     }
-    fun getMangledName(): String? {
-        return scope.getMangledName(name)
-    }
-
-    override fun toString(): String {
-        return "id($name)"
-    }
-
+    override fun toString(): String = "id($name)"
 }
 
-class IntegerNode(scope: Scope, private val value: Long) : Node(scope) {
+sealed class ConstantNode(scope: Scope) : ExprNode(scope) {
+    protected abstract fun staticValue(buffer: CodegenContext): Int
+    protected abstract fun produce(buffer: CodegenContext, staticValue: Int)
+    protected abstract fun consume(buffer: CodegenContext, staticValue: Int)
+    override fun generateCode(buffer: CodegenContext) {
+        val staticValue = staticValue(buffer)
+        when (codeGenExprType) {
+            CodeGenExprType.PRODUCE_VALUE, CodeGenExprType.PRODUCE_REFERENCE -> {
+                produce(buffer, staticValue) // we do not want to modify a constant, so just create a copy
+            }
+            CodeGenExprType.CONSUME -> {
+                consume(buffer, staticValue) // pattern matching
+            }
+        }
+    }
+    override fun prepareProduce(isReference: Boolean) {
+        // do nothing
+    }
+    override fun prepareConsume(allBinds: Boolean) {
+        // do nothing
+    }
+}
 
+sealed class NumericNode(scope: Scope) : ConstantNode(scope) {
+    override fun produce(buffer: CodegenContext, staticValue: Int) = buffer.add(Op.LOAD_PUSH, staticValue)
+    override fun consume(buffer: CodegenContext, staticValue: Int) = buffer.add(Op.POP_ASSERT_EQ, staticValue)
+}
+
+class IntegerNode(scope: Scope, private val value: Long) : NumericNode(scope) {
     constructor(scope: Scope, token: Token) : this(scope, token.value.toLong())
-
-    override fun generateCode(buffer: CodegenContext) {
-        val addr = buffer.addStaticValue(IntegerValue(value))
-        if (!isLvalue) {
-            buffer.add(Op.COPY_PUSH, addr)
-        } else {
-            buffer.add(Op.POP_ASSERT_EQ, addr)
-        }
-    }
-    override fun testPattern(allBinds: Boolean): Boolean {
-        super.testPattern(allBinds)
-        return true
-    }
-    override fun declarePattern(allBinds: Boolean) {
-        return
-    }
-
-    override fun toString(): String {
-        return "integer($value)"
-    }
+    override fun staticValue(buffer: CodegenContext): Int = buffer.addStaticValue(IntegerValue(value))
+    override fun toString(): String = "integer($value)"
 }
 
-class FloatNode(scope: Scope, private val value: Double) : Node(scope) {
-
+class FloatNode(scope: Scope, private val value: Double) : NumericNode(scope) {
     constructor(scope: Scope, token: Token) : this(scope, token.value.toDouble())
-
-    override fun generateCode(buffer: CodegenContext) {
-        val addr = buffer.addStaticValue(FloatValue(value))
-        if (!isLvalue) {
-            buffer.add(Op.COPY_PUSH, addr)
-        } else {
-            buffer.add(Op.POP_ASSERT_EQ, addr)
-        }
-    }
-    override fun testPattern(allBinds: Boolean): Boolean {
-        super.testPattern(allBinds)
-        return true
-    }
-    override fun declarePattern(allBinds: Boolean) {
-        return
-    }
-
-    override fun toString(): String {
-        return "float($value)"
-    }
+    override fun staticValue(buffer: CodegenContext): Int = buffer.addStaticValue(FloatValue(value))
+    override fun toString(): String = "float($value)"
 }
 
-class StringNode(scope: Scope, private val value: String) : Node(scope) {
-
+class StringNode(scope: Scope, private val value: String) : NumericNode(scope) {
     constructor(scope: Scope, token: Token) : this(scope, token.value)
-
-    override fun generateCode(buffer: CodegenContext) {
-        val addr = buffer.addStaticString(value)
-        if (!isLvalue) {
-            buffer.add(Op.COPY_PUSH, addr)
-        } else {
-            buffer.add(Op.POP_ASSERT_EQ, addr)
-        }
-    }
-    override fun testPattern(allBinds: Boolean): Boolean {
-        super.testPattern(allBinds)
-        return true
-    }
-    override fun declarePattern(allBinds: Boolean) {
-        return
-    }
-
-    override fun toString(): String {
-        return "str(\"$value\")"
-    }
+    override fun staticValue(buffer: CodegenContext): Int = buffer.addStaticString(value)
+    override fun toString(): String = "str(\"$value\")"
 }
 
-class BooleanNode(scope: Scope, private val value: Boolean) : Node(scope) {
+sealed class ImmediateNode(scope: Scope) : ConstantNode(scope) {
+    override fun produce(buffer: CodegenContext, staticValue: Int) = buffer.add(Op.PUSH_IMM, staticValue)
+    override fun consume(buffer: CodegenContext, staticValue: Int) = buffer.add(Op.POP_ASSERT_EQ_IMM, staticValue)
+}
+
+class BooleanNode(scope: Scope, private val value: Boolean) : ImmediateNode(scope) {
     constructor(scope: Scope, token: Token) : this(scope, token.value.toBooleanStrict())
-    override fun generateCode(buffer: CodegenContext) {
-        val constCode = if (value) ImmediateCode.TRUE else ImmediateCode.FALSE
-        if (!isLvalue) {
-            buffer.add(Op.PUSH_IMM, constCode.code)
-        } else {
-            buffer.add(Op.POP_ASSERT_EQ_IMM, constCode.code)
-        }
-    }
-    override fun testPattern(allBinds: Boolean): Boolean {
-        super.testPattern(allBinds)
-        return true
-    }
-    override fun declarePattern(allBinds: Boolean) {
-        return
-    }
-    override fun toString(): String {
-        return "$value"
-    }
+    override fun staticValue(buffer: CodegenContext): Int = if (value) ImmediateCode.TRUE.code else ImmediateCode.FALSE.code
+    override fun toString(): String = "boolean($value)"
 }
 
-class NullNode(scope: Scope) : Node(scope) {
+class NullNode(scope: Scope) : ImmediateNode(scope) {
     constructor(scope: Scope, token: Token) : this(scope)
-    override fun generateCode(buffer: CodegenContext) {
-        if (!isLvalue) {
-            buffer.add(Op.PUSH_IMM, ImmediateCode.NULL.code)
-        } else {
-            buffer.add(Op.POP_ASSERT_EQ_IMM, ImmediateCode.NULL.code)
-        }
-    }
-    override fun testPattern(allBinds: Boolean): Boolean {
-        super.testPattern(allBinds)
-        return true
-    }
-    override fun declarePattern(allBinds: Boolean) {
-        return
-    }
-    override fun toString(): String {
-        return "null"
-    }
+    override fun staticValue(buffer: CodegenContext): Int = ImmediateCode.NULL.code
+    override fun toString(): String = "null"
 }
 
-class ListNode(scope: Scope, val items: List<Node>) : Node(scope) {
+class ListNode(scope: Scope, private val items: List<ExprNode>) : ExprNode(scope) {
     override fun generateCode(buffer: CodegenContext) {
-        if (!isLvalue) {
-            items.forEach { it.generateCode(buffer) }
-            buffer.add(Op.CONS_PUSH, items.size)
-        } else {
-            buffer.add(Op.EXTRACT_LIST, items.size)
-            items.forEach { it.generateCode(buffer) }
+        when (codeGenExprType) {
+            CodeGenExprType.PRODUCE_VALUE, CodeGenExprType.PRODUCE_REFERENCE -> {
+                items.forEach { it.generateCode(buffer) }
+                buffer.add(Op.CONS_PUSH, items.size)
+            }
+            CodeGenExprType.CONSUME -> {
+                buffer.add(Op.EXTRACT_LIST, items.size)
+                items.forEach { it.generateCode(buffer) }
+            }
         }
     }
-    override fun testPattern(allBinds: Boolean): Boolean {
-        super.testPattern(allBinds)
-        return items.all { it.testPattern(allBinds) }
+    override fun prepareProduce(isReference: Boolean) {
+        items.forEach { it.declareProduce(false) } // inner needs not to be a reference
     }
+    override fun prepareConsume(allBinds: Boolean) {
+        items.forEach { it.declareConsume(allBinds) }
+    }
+    override fun toString(): String = "[${items.joinToString(", ")}]"
+}
 
-    override fun actuallyRvalue() {
-        super.actuallyRvalue()
-        items.forEach { it.actuallyRvalue() }
+sealed class ValueExprNode(scope: Scope) : ExprNode(scope) {
+    abstract fun prepareProduceValue()
+    fun declareProduce() {
+        declareProduce(false)
     }
-    override fun declarePattern(allBinds: Boolean) = items.forEach { it.declarePattern(allBinds) }
-
-    override fun toString(): String {
-        return "[${items.joinToString(", ")}]"
+    override fun prepareProduce(isReference: Boolean) {
+//        if (isReference) throw ExpressionCannotBeReferencedException(this)
+        // actually if it does not want to be a reference, it can be used directly, because ValueExprNode always produces a new value.
+        prepareProduceValue()
     }
+    override fun prepareConsume(allBinds: Boolean) = throw ExpressionCannotBeAssignedException(this)
 }
 
 // subscript type: 0 => not extended, 1 => extended but upper bound is null, 2 => extended and upper bound is not null
 // only 2 has 2nd element
-class SubscriptNode(scope: Scope, private val begin: Node, private val extended: Boolean, private val end: Node? = null) : Node(scope) {
+class SubscriptNode(scope: Scope, private val begin: ExprNode, private val extended: Boolean, private val end: ExprNode? = null) : ValueExprNode(scope) {
     override fun generateCode(buffer: CodegenContext) {
         val subscriptType = (if (extended) 1 else 0) + (if (end != null) 1 else 0)
         begin.generateCode(buffer)
         end?.generateCode(buffer)
         buffer.add(Op.SUBSCRIPT_PUSH, subscriptType)
     }
-
-    override fun toString(): String {
-        return if (end != null) "subscript($begin, $end)" else "subscript($begin)"
+    override fun prepareProduceValue() {
+        begin.declareProduce(false)
+        end?.declareProduce(false)
     }
+    override fun toString(): String = if (end != null) "subscript($begin, $end)" else "subscript($begin)"
 }
 
-class ObjectNode(scope: Scope, private val items: List<Pair<String, Node>>) : Node(scope) {
-    // maybe add pattern matching in the future?
+class ObjectNode(scope: Scope, private val items: List<Pair<String, ExprNode>>) : ValueExprNode(scope) {
     override fun generateCode(buffer: CodegenContext) {
         items.forEach { (key, value) ->
             val addr = buffer.addStaticString(key)
-            buffer.add(Op.COPY_PUSH, addr)
+            buffer.add(Op.LOAD_PUSH, addr)
             value.generateCode(buffer)
         }
         buffer.add(Op.CONS_OBJ_PUSH, items.size)
     }
-
-    override fun toString(): String {
-        return "{${items.joinToString(", ") { (key, value) -> "$key: $value" }}}"
+    override fun prepareProduceValue() {
+        items.forEach { (_, value) ->
+            value.declareProduce(false)
+        }
     }
+    // maybe add pattern matching in the future?
+    // override fun prepareConsume(allBinds: Boolean) = throw ExpressionCannotBeAssignedException(this)
+    override fun toString(): String = "{${items.joinToString(", ") { (key, value) -> "$key: $value" }}}"
 }
 
-class ClosureNode(scope: Scope, private val name: String, private val params: ListNode, private val body: Node) : Node(scope) {
+class ClosureNode(scope: Scope, private val params: ListNode, private val body: Node) : ValueExprNode(scope) {
     override fun generateCode(buffer: CodegenContext) {
         val entry = buffer.requestLabel()
         val end = buffer.requestLabel()
@@ -244,7 +209,7 @@ class ClosureNode(scope: Scope, private val name: String, private val params: Li
         buffer.putLabel(entry)
         buffer.add(Op.PREPARE_FRAME, scope.currentFrame.locals.size)
         // now assign the parameters
-        buffer.add(Op.LOAD_LOCAL_PUSH, scope.getLocalLayout("\$"))
+        buffer.add(Op.LOAD_LOCAL_PUSH_REF, scope.getLocalLayout("\$")) // since list is reference, ref is enough
         params.generateCode(buffer)
         // all set. call the function
         body.generateCode(buffer)
@@ -254,39 +219,41 @@ class ClosureNode(scope: Scope, private val name: String, private val params: Li
 
         val captures = scope.currentFrame.captures
         captures.forEach {
-            buffer.add(Op.LOAD_LOCAL_PUSH, scope.currentFrame.getParentLocalLayout(it))
+            // captures must be passed by reference
+            buffer.add(Op.LOAD_LOCAL_PUSH_REF, scope.currentFrame.getParentLocalLayout(it))
         }
         buffer.add(Op.CONS_PUSH, captures.size)
         buffer.add(Op.CREATE_CLOSURE, entry)
     }
-
-    override fun toString(): String {
-        return "decl($name, $params, $body)"
+    override fun prepareProduceValue() {
+        params.declareConsume(true)
     }
+    override fun toString(): String = "closure($params, $body)"
 }
 
-class NamedCallNode(scope: Scope, private val func: String, private val caller: Node, private val args: ListNode) : Node(scope) {
+class NamedCallNode(scope: Scope, private val func: String, private val caller: ExprNode, private val args: ListNode) : ValueExprNode(scope) {
     override fun generateCode(buffer: CodegenContext) {
-        caller.generateCode(buffer) // not desired! TODO: pass by reference caller
+        caller.generateCode(buffer)
         val funcType = scope.queryName(func)
         if (funcType != NameType.GLOBAL) {
             buffer.add(Op.LOAD_LOCAL_PUSH, scope.getLocalLayout(func))
         } else {
-            buffer.add(Op.COPY_PUSH, scope.getGlobalLayout(func))
+            buffer.add(Op.LOAD_PUSH, scope.getGlobalLayout(func))
         }
         args.generateCode(buffer)
         val ret = buffer.requestLabel()
         buffer.add(Op.CALL, ret)
         buffer.putLabel(ret)
     }
-
-    override fun toString(): String {
-        return "call($func, $caller, $args)"
+    override fun prepareProduceValue() {
+        caller.declareProduce(true) // caller passed by reference
+        args.declareProduce(false)
     }
+    override fun toString(): String = "call($func, $caller, $args)"
 }
 
 // Dynamic calls do not have caller! Only calls such as obj.func(args) have caller, which rules out this case.
-class DynamicCallNode(scope: Scope, private val func: Node, private val args: ListNode) : Node(scope) {
+class DynamicCallNode(scope: Scope, private val func: ExprNode, private val args: ListNode) : ValueExprNode(scope) {
     override fun generateCode(buffer: CodegenContext) {
         buffer.add(Op.PUSH_IMM, ImmediateCode.NULL.code)
         func.generateCode(buffer)
@@ -295,7 +262,10 @@ class DynamicCallNode(scope: Scope, private val func: Node, private val args: Li
         buffer.add(Op.CALL, ret)
         buffer.putLabel(ret)
     }
-
+    override fun prepareProduceValue() {
+        func.declareProduce(false)
+        args.declareProduce(false)
+    }
     override fun toString(): String {
         return "invoke($func, $args)"
     }

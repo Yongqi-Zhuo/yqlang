@@ -1,8 +1,20 @@
 package top.saucecode.yqlang
 
-import top.saucecode.yqlang.NodeValue.CollectionValue
+import top.saucecode.yqlang.Node.Node
 import top.saucecode.yqlang.NodeValue.NodeValue
 import top.saucecode.yqlang.Runtime.*
+
+data class CodegenResult(val symbolTable: SymbolTable, val preloadedMemory: Memory)
+class CodeGenerator() {
+    fun generate(ast: Node): CodegenResult {
+        val buffer = CodegenContext()
+        buffer.reserveStatics(ast.scope.currentFrame.reserveGlobals())
+        ast.generateCode(buffer)
+        buffer.memory.text = buffer.text
+        buffer.memory.labels = buffer.labels
+        return CodegenResult(ast.scope.exportSymbolTable(), buffer.memory)
+    }
+}
 
 class CodegenContext {
     val text = mutableListOf<ByteCode>()

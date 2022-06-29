@@ -1,17 +1,13 @@
 package top.saucecode.yqlang.Node
 
 import top.saucecode.yqlang.*
-import top.saucecode.yqlang.NodeValue.BooleanValue
-import top.saucecode.yqlang.NodeValue.NodeValue
-import top.saucecode.yqlang.NodeValue.NullValue
 import top.saucecode.yqlang.Runtime.ImmediateCode
 import top.saucecode.yqlang.Runtime.Op
 
-sealed class OperatorNode(scope: Scope) : Node(scope) {
+sealed class OperatorNode(scope: Scope) : ValueExprNode(scope) {
     enum class OperatorType {
         UNARY, BINARY
     }
-
     data class Precedence(val operators: List<TokenType>, val opType: OperatorType) {
         val isAndOr: Boolean get() = opType == OperatorType.BINARY
                 && operators.contains(TokenType.LOGIC_AND) || operators.contains(TokenType.LOGIC_OR)
@@ -62,7 +58,7 @@ enum class BinaryOperatorCode(val type: TokenType) {
     }
 }
 
-open class BinaryOperatorNode(scope: Scope, protected val components: List<Node>, protected val ops: List<TokenType>) : OperatorNode(scope) {
+open class BinaryOperatorNode(scope: Scope, protected val components: List<ExprNode>, protected val ops: List<TokenType>) : OperatorNode(scope) {
     override fun generateCode(buffer: CodegenContext) {
         if (components.isEmpty()) buffer.add(Op.PUSH_IMM, ImmediateCode.NULL.code)
         components[0].generateCode(buffer)
@@ -72,7 +68,9 @@ open class BinaryOperatorNode(scope: Scope, protected val components: List<Node>
             buffer.add(Op.BINARY_OP, op.value)
         }
     }
-
+    override fun prepareProduceValue() {
+        components.forEach { it.declareProduce(false) }
+    }
     override fun toString(): String {
         if (components.size == 1) return components[0].toString()
         var str = ""
@@ -81,7 +79,7 @@ open class BinaryOperatorNode(scope: Scope, protected val components: List<Node>
     }
 }
 
-class LogicBinaryOperatorNode(scope: Scope, components: List<Node>, ops: List<TokenType>, private val isAnd: Boolean) : BinaryOperatorNode(scope, components, ops) {
+class LogicBinaryOperatorNode(scope: Scope, components: List<ExprNode>, ops: List<TokenType>, private val isAnd: Boolean) : BinaryOperatorNode(scope, components, ops) {
     override fun generateCode(buffer: CodegenContext) {
         if (components.isEmpty()) buffer.add(Op.PUSH_IMM, ImmediateCode.NULL.code)
         else if (components.size == 1) {
@@ -115,13 +113,15 @@ enum class UnaryOperatorCode(val value: Int) {
     }
 }
 
-class UnaryOperatorNode(scope: Scope, private val component: Node, private val op: TokenType) : OperatorNode(scope) {
+class UnaryOperatorNode(scope: Scope, private val component: ExprNode, private val op: TokenType) : OperatorNode(scope) {
     override fun generateCode(buffer: CodegenContext) {
         component.generateCode(buffer)
         val op = UnaryOperatorCode.fromToken(op)
         buffer.add(Op.UNARY_OP, op.value)
     }
-
+    override fun prepareProduceValue() {
+        component.declareProduce(false)
+    }
     override fun toString(): String {
         return "Unary(${op.toHumanReadable()}$component)"
     }

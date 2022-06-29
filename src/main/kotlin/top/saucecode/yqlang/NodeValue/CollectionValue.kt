@@ -44,6 +44,20 @@ data class StringValue(var value: String) : CollectionValue() {
             else -> super.times(that) // throws exception
         }
     }
+    override fun addAssign(that: NodeValue): NodeValue {
+        value += that.printStr
+        return reference
+    }
+
+    override fun mulAssign(that: NodeValue): NodeValue {
+        return when (that) {
+            is ArithmeticValue -> {
+                value = value.repeat(that.coercedTo(IntegerValue::class).value.toInt())
+                reference
+            }
+            else -> super.times(that) // throws exception
+        }
+    }
     override fun iterator(): Iterator<Pointer> {
         return value.map { memory!!.allocate(StringValue(it.toString(), memory!!).reference) }.iterator()
     }
@@ -85,14 +99,16 @@ data class ListValue(val value: MutableList<Pointer>) : CollectionValue() {
     }
     override fun exchangeablePlus(that: NodeValue, inverse: Boolean): NodeValue {
         if (memory == null) throw AccessingUnsolidifiedValueException(this)
+        val thisListCopy = value.mapTo(mutableListOf()) { memory!!.copy(it) }
         return if (that is ReferenceValue && that.value is ListValue) {
-            ListValue(value.toMutableList().apply { addAll((that.value as ListValue).value) }, memory!!).reference
+            val thatListCopy = (that.value as ListValue).value.map { memory!!.copy(it) }
+            ListValue(thisListCopy.apply { addAll(thatListCopy) }, memory!!).reference
         } else {
             val ref = memory!!.allocate(that)
             if (!inverse) {
-                ListValue(value.toMutableList().apply { add(ref) }, memory!!).reference
+                ListValue(thisListCopy.apply { add(ref) }, memory!!).reference
             } else {
-                ListValue(mutableListOf(ref).apply { addAll(value) }, memory!!).reference
+                ListValue(thisListCopy.apply { add(0, ref) }, memory!!).reference
             }
         }
     }
@@ -100,7 +116,33 @@ data class ListValue(val value: MutableList<Pointer>) : CollectionValue() {
         return when (that) {
             is ArithmeticValue -> {
                 val cnt = that.coercedTo(IntegerValue::class).value.toInt()
-                ListValue(MutableList(cnt * value.size) { index -> value[index % value.size] }, memory!!).reference
+                val thisSize = value.size
+                ListValue(MutableList(cnt * thisSize) { index ->
+                    memory!!.copy(value[index % thisSize]) }, memory!!).reference
+            }
+            else -> super.times(that) // throws
+        }
+    }
+    override fun addAssign(that: NodeValue): NodeValue {
+        if (that is ReferenceValue && that.value is ListValue) {
+            val thatListCopy = (that.value as ListValue).value.map { memory!!.copy(it) }
+            value.addAll(thatListCopy)
+        } else {
+            value.add(memory!!.allocate(that))
+        }
+        return reference
+    }
+
+    override fun mulAssign(that: NodeValue): NodeValue {
+        return when (that) {
+            is ArithmeticValue -> {
+                val cnt = that.coercedTo(IntegerValue::class).value.toInt() - 1
+                val thisSize = value.size
+                val iterations = cnt * thisSize
+                repeat(iterations) {
+                    value.add(value[it % thisSize])
+                }
+                reference
             }
             else -> super.times(that) // throws
         }
@@ -123,15 +165,7 @@ data class ObjectValue(private val attributes: MutableMap<String, Pointer> = mut
         get() = debugStr
     override fun isNotEmpty(): Boolean = attributes.isNotEmpty()
     operator fun get(key: String): Pointer? = attributes[key]
-    operator fun set(key: String, value: NodeValue) {
-        val ptr = attributes[key]
-        if (ptr == null) {
-            attributes[key] = memory!!.allocate(value)
-        } else {
-            memory!![ptr] = value
-        }
-    }
-    fun directSet(key: String, value: Pointer) {
+    operator fun set(key: String, value: Pointer) {
         attributes[key] = value
     }
     override fun contains(that: NodeValue): Boolean {

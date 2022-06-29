@@ -18,6 +18,15 @@ sealed class ArithmeticValue : NodeValue() {
             else -> that.exchangeablePlus(this, !inverse)
         }
     }
+    override fun addAssign(that: NodeValue): NodeValue {
+        return when (that) {
+            is ArithmeticValue -> {
+                val level = getHigherLevel(this, that)
+                coercedTo(level).plusImpl(that.coercedTo(level))
+            }
+            else -> super.addAssign(that) // throws
+        }
+    }
     // the argument has the same type as the caller
     protected abstract fun minusImpl(that: ArithmeticValue): ArithmeticValue
     override operator fun minus(that: NodeValue): NodeValue {
@@ -28,6 +37,7 @@ sealed class ArithmeticValue : NodeValue() {
             super.minus(that) // throws exception
         }
     }
+    override fun subAssign(that: NodeValue): NodeValue = this.minus(that)
     // the argument has the same type as the caller
     protected abstract fun timesImpl(that: ArithmeticValue): ArithmeticValue
     override operator fun times(that: NodeValue): NodeValue {
@@ -38,6 +48,14 @@ sealed class ArithmeticValue : NodeValue() {
             that.times(this) // for lists and strings
         }
     }
+    override fun mulAssign(that: NodeValue): NodeValue {
+        return if (that is ArithmeticValue) {
+            val level = getHigherLevel(this, that)
+            coercedTo(level).timesImpl(that.coercedTo(level))
+        } else {
+            super.mulAssign(that) // throws
+        }
+    }
     // the argument has the same type as the caller
     protected abstract fun divImpl(that: ArithmeticValue): ArithmeticValue
     override operator fun div(that: NodeValue): NodeValue {
@@ -45,9 +63,10 @@ sealed class ArithmeticValue : NodeValue() {
             val level = getHigherLevel(this, that)
             coercedTo(level).divImpl(that.coercedTo(level))
         } else {
-            that.div(this) // for lists and strings
+            super.div(that) // throws
         }
     }
+    override fun divAssign(that: NodeValue): NodeValue = this.div(that)
     // the argument has the same type as the caller
     protected abstract fun remImpl(that: ArithmeticValue): ArithmeticValue
     override operator fun rem(that: NodeValue): NodeValue {
@@ -55,9 +74,10 @@ sealed class ArithmeticValue : NodeValue() {
             val level = getHigherLevel(this, that)
             coercedTo(level).remImpl(that.coercedTo(level))
         } else {
-            that.rem(this) // for lists and strings
+            super.rem(that)
         }
     }
+    override fun modAssign(that: NodeValue): NodeValue = this.rem(that)
     @Suppress("UNCHECKED_CAST")
     fun<T: ArithmeticValue> coercedTo(level: KClass<T>): T {
         return when (level) {
@@ -221,6 +241,15 @@ data class KeySubscriptValue(val key: String) : SubscriptValue() {
         get() = debugStr
     override fun toString(): String = debugStr
     override fun toBoolean(): Boolean = true
+}
+
+@Serializable
+data class ClosureValue(val captureList: Pointer, val entry: Int) : NodeValue() {
+    override fun toBoolean(): Boolean = true
+    override val debugStr: String
+        get() = "closure($captureList, $entry)"
+    override val printStr: String
+        get() = debugStr
 }
 
 @Serializable

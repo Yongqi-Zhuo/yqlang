@@ -1,3 +1,4 @@
+import top.saucecode.yqlang.CodeGenerator
 import top.saucecode.yqlang.ConsoleContext
 import top.saucecode.yqlang.Parser
 import top.saucecode.yqlang.Runtime.VirtualMachine
@@ -20,7 +21,10 @@ fun main() {
 //    println(tokens.joinToString(", "))
     val parser = Parser()
     println("Parsing...")
-    val res = parser.parse(tokens)
+    val ast = parser.parse(tokens)
+//    println(ast)
+    println("Generating...")
+    val res = CodeGenerator().generate(ast)
 //    println(res.preloadedMemory.assemblyText())
     println("Executing...")
     val memory = res.preloadedMemory
