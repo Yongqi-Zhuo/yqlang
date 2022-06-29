@@ -43,13 +43,13 @@ class IdentifierNode(scope: Scope, val name: String) : ExprNode(scope) {
         } else {
             when (codeGenExprType) {
                 CodeGenExprType.PRODUCE_VALUE -> {
-                    buffer.add(Op.LOAD_PUSH, scope.getGlobalLayout(name))
+                    buffer.add(Op.LOAD_PUSH, scope.getGlobalLayout(name)!!)
                 }
                 CodeGenExprType.PRODUCE_REFERENCE -> {
-                    buffer.add(Op.LOAD_PUSH_REF, scope.getGlobalLayout(name))
+                    buffer.add(Op.LOAD_PUSH_REF, scope.getGlobalLayout(name)!!)
                 }
                 CodeGenExprType.CONSUME -> {
-                    buffer.add(Op.POP_SAVE, scope.getGlobalLayout(name))
+                    buffer.add(Op.POP_SAVE, scope.getGlobalLayout(name)!!)
                 }
             }
         }
@@ -238,7 +238,8 @@ class NamedCallNode(scope: Scope, private val func: String, private val caller: 
         if (funcType != NameType.GLOBAL) {
             buffer.add(Op.LOAD_LOCAL_PUSH, scope.getLocalLayout(func))
         } else {
-            buffer.add(Op.LOAD_PUSH, scope.getGlobalLayout(func))
+            val globalLayout = scope.getGlobalLayout(func) ?: buffer.includeLibrary(func)
+            buffer.add(Op.LOAD_PUSH, globalLayout)
         }
         args.generateCode(buffer)
         val ret = buffer.requestLabel()

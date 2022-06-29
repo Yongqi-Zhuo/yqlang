@@ -58,15 +58,16 @@ data class StringValue(var value: String) : CollectionValue() {
             else -> super.times(that) // throws exception
         }
     }
-    override fun iterator(): Iterator<Pointer> {
-        return value.map { memory!!.allocate(StringValue(it.toString(), memory!!).reference) }.iterator()
+    override fun iterator(): Iterator<NodeValue> {
+        return value.map { StringValue(it.toString(), memory!!).reference }.iterator()
     }
 }
 
-// fun String.toNodeValue() = StringValue(this)
+fun String.toStringValue(memory: Memory) = StringValue(this, memory)
+fun String.toStringValueReference(memory: Memory) = StringValue(this, memory).reference
 
 @Serializable
-data class ListValue(val value: MutableList<Pointer>) : CollectionValue() {
+class ListValue(val value: MutableList<Pointer>) : CollectionValue() {
     constructor(value: MutableList<Pointer>, memory: Memory): this(value) {
         solidify(memory)
     }
@@ -79,11 +80,22 @@ data class ListValue(val value: MutableList<Pointer>) : CollectionValue() {
     operator fun set(index: Int, value: Pointer) {
         this.value[index] = value
     }
+    val size: Int get() = value.size
     override fun contains(that: NodeValue): Boolean {
         for (ptr in value) {
             if (memory!![ptr] == that) return true
         }
         return false
+    }
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is ListValue) return false
+        if (value.size != other.value.size) return false
+        if (value.zip(other.value).any { memory!![it.first] != memory!![it.second] }) return false
+        return true
+    }
+    override fun hashCode(): Int {
+        return value.map { memory!![it] }.hashCode()
     }
     override fun compareTo(other: CollectionValue): Int {
         if (other is ListValue) {
@@ -147,15 +159,18 @@ data class ListValue(val value: MutableList<Pointer>) : CollectionValue() {
             else -> super.times(that) // throws
         }
     }
-    override fun iterator(): Iterator<Pointer> {
-        return value.iterator()
+    override fun iterator(): Iterator<NodeValue> {
+        return value.map { memory!![it] }.iterator()
     }
 }
 
-// fun List<NodeValue>.toNodeValue() = ListValue(if (this is MutableList) this else this.toMutableList())
+fun List<NodeValue>.toListValue(memory: Memory) = ListValue(this.mapTo(mutableListOf()) { memory.allocate(it) }, memory)
+fun List<NodeValue>.toListValueReference(memory: Memory) = this.toListValue(memory).reference
+fun Iterable<String>.toStringListReference(memory: Memory) = this.map { it.toStringValueReference(memory) }.toListValueReference(memory)
+fun Iterable<Int>.toIntegerListReference(memory: Memory) = this.map { it.toIntegerValue() }.toListValueReference(memory)
 
 @Serializable
-data class ObjectValue(private val attributes: MutableMap<String, Pointer> = mutableMapOf()) : CollectionValue() {
+class ObjectValue(private val attributes: MutableMap<String, Pointer> = mutableMapOf()) : CollectionValue() {
     constructor(value: MutableMap<String, Pointer>, memory: Memory): this(value) {
         solidify(memory)
     }
@@ -168,17 +183,30 @@ data class ObjectValue(private val attributes: MutableMap<String, Pointer> = mut
     operator fun set(key: String, value: Pointer) {
         attributes[key] = value
     }
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is ObjectValue) return false
+        if (attributes.size != other.attributes.size) return false
+        if (attributes.keys != other.attributes.keys) return false
+        for ((key, value) in attributes) {
+            if (memory!![value] != memory!![other.attributes[key]!!]) return false
+        }
+        return true
+    }
+    override fun hashCode(): Int {
+        return attributes.map { it.key to memory!![it.value] }.hashCode()
+    }
     override fun contains(that: NodeValue): Boolean {
         for (ptr in attributes.values) {
             if (memory!![ptr] == that) return true
         }
         return false
     }
-    override fun iterator(): Iterator<Pointer> {
+    override fun iterator(): Iterator<NodeValue> {
         return attributes.map {
-            memory!!.allocate(ListValue(mutableListOf(
+            ListValue(mutableListOf(
                 memory!!.allocate(StringValue(it.key, memory!!).reference), it.value
-            ), memory!!).reference)
+            ), memory!!).reference
         }.iterator()
     }
 }

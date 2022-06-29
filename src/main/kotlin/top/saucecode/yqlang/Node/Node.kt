@@ -27,6 +27,6 @@ sealed class ExprNode(scope: Scope) : Node(scope) {
         codeGenExprType = CodeGenExprType.CONSUME
         prepareConsume(allBinds)
     }
-    abstract fun prepareProduce(isReference: Boolean)
-    abstract fun prepareConsume(allBinds: Boolean)
+    protected abstract fun prepareProduce(isReference: Boolean)
+    protected abstract fun prepareConsume(allBinds: Boolean)
 }

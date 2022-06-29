@@ -25,7 +25,7 @@ fun main() {
 //    println(ast)
     println("Generating...")
     val res = CodeGenerator().generate(ast)
-//    println(res.preloadedMemory.assemblyText())
+    println(res.preloadedMemory.assemblyText(res.symbolTable))
     println("Executing...")
     val memory = res.preloadedMemory
     val context = ConsoleContext()

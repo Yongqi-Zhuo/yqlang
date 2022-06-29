@@ -19,8 +19,12 @@ sealed class NodeValue : Comparable<NodeValue> {
     fun asRegEx() = (this as? RegExValue)
     fun asCollection() = (this as? ReferenceValue)?.value
     fun asString() = (this as? ReferenceValue)?.asStringValue()
+    fun isStringReference() = this is ReferenceValue && this.value is StringValue
     fun asList() = (this as? ReferenceValue)?.asListValue()
+    fun isListReference() = this is ReferenceValue && this.value is ListValue
     fun asObject() = (this as? ReferenceValue)?.asObjectValue()
+    fun isObjectReference() = this is ReferenceValue && this.value is ObjectValue
+    fun asClosure() = this as? ClosureValue
     abstract val debugStr: String
     abstract val printStr: String
     override fun toString() = debugStr
@@ -43,7 +47,7 @@ sealed class NodeValue : Comparable<NodeValue> {
     open operator fun unaryMinus(): NodeValue = throw OperationRuntimeException("Invalid operation: -$this")
 
     operator fun not(): NodeValue {
-        return toBoolean().not().toNodeValue()
+        return toBoolean().not().toBooleanValue()
     }
 
     open operator fun contains(that: NodeValue): Boolean = throw OperationRuntimeException("Invalid operation: $that in $this")
@@ -67,7 +71,7 @@ sealed class NodeValue : Comparable<NodeValue> {
 
 class AccessingUnsolidifiedValueException(subject: Any) : YqlangRuntimeException("Accessing unsolidified value: $subject")
 @Serializable
-sealed class CollectionValue : Iterable<Pointer> {
+sealed class CollectionValue : Iterable<NodeValue> {
     @Transient protected var memory: Memory? = null
         private set
     protected var address: CollectionPoolPointer? = null
@@ -97,7 +101,7 @@ sealed class CollectionValue : Iterable<Pointer> {
 }
 
 @Serializable
-data class ReferenceValue(private val address: CollectionPoolPointer) : NodeValue(), Iterable<Pointer> {
+data class ReferenceValue(private val address: CollectionPoolPointer) : NodeValue(), Iterable<NodeValue> {
     @Transient private var memory: Memory? = null
     constructor(address: Pointer, memory: Memory) : this(address) {
         bindMemory(memory)
@@ -119,6 +123,14 @@ data class ReferenceValue(private val address: CollectionPoolPointer) : NodeValu
     override fun mulAssign(that: NodeValue): NodeValue {
         return value.mulAssign(that)
     }
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is ReferenceValue) return false
+        return this.value == other.value
+    }
+    override fun hashCode(): Int {
+        return value.hashCode()
+    }
     override operator fun compareTo(other: NodeValue): Int {
         return if (other is ReferenceValue) {
             return value.compareTo(other.value)
@@ -129,5 +141,5 @@ data class ReferenceValue(private val address: CollectionPoolPointer) : NodeValu
     fun asStringValue() = value as? StringValue
     fun asListValue() = value as? ListValue
     fun asObjectValue() = value as? ObjectValue
-    override fun iterator(): Iterator<Pointer> = value.iterator()
+    override fun iterator(): Iterator<NodeValue> = value.iterator()
 }

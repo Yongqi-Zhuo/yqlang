@@ -132,8 +132,8 @@ data class IntegerValue(val value: Long) : ArithmeticValue() {
     }
 }
 
-fun Int.toNodeValue(): NodeValue = IntegerValue(this.toLong())
-fun Long.toNodeValue(): NodeValue = IntegerValue(this)
+fun Int.toIntegerValue(): NodeValue = IntegerValue(this.toLong())
+fun Long.toIntegerValue(): NodeValue = IntegerValue(this)
 
 @Serializable
 data class FloatValue(val value: Double) : ArithmeticValue() {
@@ -210,7 +210,7 @@ data class BooleanValue(val value: Boolean) : ArithmeticValue() {
     }
 }
 
-fun Boolean.toNodeValue() = BooleanValue(this)
+fun Boolean.toBooleanValue() = BooleanValue(this)
 
 @Serializable
 sealed class SubscriptValue : NodeValue()

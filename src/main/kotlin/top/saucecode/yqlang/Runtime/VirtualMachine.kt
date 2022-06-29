@@ -7,6 +7,7 @@ import top.saucecode.yqlang.Runtime.Op.*
 import top.saucecode.yqlang.YqlangException
 import java.util.*
 import kotlinx.serialization.Serializable
+import top.saucecode.yqlang.Constants
 
 enum class Op(val code: Int) {
     // operand: offset from bp.
@@ -166,9 +167,13 @@ enum class Op(val code: Int) {
     // perform an op-assign operation.
     OP_ASSIGN(41),
 
+    // operand: builtin id.
+    // invoke the builtin procedure.
+    INVOKE_BUILTIN(42),
+
     // operand: none
     // exit the program.
-    EXIT(42);
+    EXIT(43);
     companion object {
         val printLength: Int = values().map { it.toString().length }.maxOf { it } + 1
         fun fromCode(code: Int): Op {
@@ -203,7 +208,7 @@ class VirtualMachine(val executionContext: ExecutionContext, val memory: Memory)
     val labels = memory.labels!!
     var pc = 0
     var register: Pointer? = null
-    val iteratorStack: Stack<Iterator<Pointer>> = Stack()
+    val iteratorStack: Stack<Iterator<NodeValue>> = Stack()
     val accessStack: Stack<AccessView> = Stack()
     fun jump(label: Int) {
         // to avoid recursion, check thread status
@@ -312,7 +317,7 @@ class VirtualMachine(val executionContext: ExecutionContext, val memory: Memory)
                 }
                 PREPARE_FRAME -> {
                     // now on stack: lastBp, retAddr, caller, args, captures. Now expand captures
-                    val captures = memory[memory.pop()].asList()?.value 
+                    val captures = memory[memory.pop()].asList()?.value
                         ?: throw YqlangRuntimeException("Failed to pass captures. This should not happen.")
                     captures.forEach { memory.push(it) } // pass by reference!
                     repeat(byteCode.operand) { memory.push(memory.allocate(NullValue)) }
@@ -320,13 +325,13 @@ class VirtualMachine(val executionContext: ExecutionContext, val memory: Memory)
                 GET_NTH_ARG -> {
                     val nth = memory.allocate(NullValue)
                     val argId = byteCode.operand
-                    memory[memory.args].asList()?.value?.getOrNull(argId)?.let { memory.copyTo(it, nth) }
+                    memory[memory.argsPointer].asList()?.value?.getOrNull(argId)?.let { memory.copyTo(it, nth) }
                         ?: throw YqlangRuntimeException("Failed to get $argId: out of range.")
                     memory.push(nth)
                 }
                 GET_NTH_ARG_REF -> {
                     val argId = byteCode.operand
-                    val nth = memory[memory.args].asList()?.value?.getOrNull(argId)
+                    val nth = memory[memory.argsPointer].asList()?.value?.getOrNull(argId)
                         ?: throw YqlangRuntimeException("Failed to get $argId: out of range.")
                     memory.push(nth)
                 }
@@ -360,10 +365,10 @@ class VirtualMachine(val executionContext: ExecutionContext, val memory: Memory)
                 POP_SAVE_TO_REG -> register = memory.pop()
                 CLEAR_REG -> register = null
                 PUSH_ITERATOR ->
-                    @Suppress("UNCHECKED_CAST") iteratorStack.push((memory[memory.pop()] as Iterable<Pointer>).iterator())
+                    @Suppress("UNCHECKED_CAST") iteratorStack.push((memory[memory.pop()] as Iterable<NodeValue>).iterator())
                 JUMP_IF_ITER_DONE -> if (!iteratorStack.peek().hasNext()) jump(byteCode.operand)
                 POP_ITERATOR -> iteratorStack.pop()
-                ITER_NEXT_PUSH -> memory.push(iteratorStack.peek().next())
+                ITER_NEXT_PUSH -> memory.push(memory.allocate(iteratorStack.peek().next()))
                 PUSH_ACCESS_VIEW -> {
                     val uncheckedValue = memory[memory.pop()]
                     val value = (uncheckedValue as? ReferenceValue)?.value
@@ -410,6 +415,13 @@ class VirtualMachine(val executionContext: ExecutionContext, val memory: Memory)
                         OpAssignCode.DIV_ASSIGN -> performOpAssign(NodeValue::divAssign)
                         OpAssignCode.MOD_ASSIGN -> performOpAssign(NodeValue::modAssign)
                     }
+                }
+                INVOKE_BUILTIN -> {
+                    val result = Constants.builtinProceduresValues[byteCode.operand](executionContext, memory)
+                    register = null
+                    val label = memory.popFrame()
+                    memory.push(memory.allocate(result))
+                    jump(label)
                 }
                 EXIT -> break
             }

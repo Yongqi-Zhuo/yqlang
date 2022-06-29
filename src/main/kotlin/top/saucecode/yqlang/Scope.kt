@@ -14,7 +14,7 @@ object UniqueID {
 }
 
 enum class NameType {
-    GLOBAL, CAPTURE, LOCAL
+    GLOBAL, CAPTURE, LOCAL, BUILTIN
 }
 class Frame(private val parent: Frame?) {
     private val isRoot: Boolean get() = parent == null
@@ -75,7 +75,7 @@ class Frame(private val parent: Frame?) {
             return name == "this" || name.startsWith("$")
         }
         fun isBuiltin(name: String): Boolean {
-            return name in Constants.builtinProcedures.keys
+            return name in Constants.builtinProceduresNames
         }
     }
     fun reserveGlobals(): List<NodeValue> {
@@ -83,8 +83,10 @@ class Frame(private val parent: Frame?) {
         // return Constants.builtinProcedures.values() + root.locals.map { NullValue }
         return root.locals.map { NullValue }
     }
-    fun getGlobalMemoryLayout(name: String): Int {
-        return StaticPointer(root.locals.indexOf(name))
+    fun getGlobalMemoryLayout(name: String): Int? {
+        val index = root.locals.indexOf(name)
+        if (index < 0) return null
+        return StaticPointer(index)
     }
 }
 
@@ -151,7 +153,7 @@ class Scope(private val parent: Scope?, frame: Frame?) {
     fun getLocalLayout(name: String): Int {
         return currentFrame.getLocalMemoryLayout(getMangledName(name)!!)
     }
-    fun getGlobalLayout(name: String): Int {
+    fun getGlobalLayout(name: String): Int? {
         return currentFrame.getGlobalMemoryLayout(getMangledName(name)!!)
     }
 

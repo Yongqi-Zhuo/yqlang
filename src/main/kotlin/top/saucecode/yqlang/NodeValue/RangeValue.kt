@@ -17,81 +17,83 @@ sealed class RangeValue<T : NodeValue>(
 ) : NodeValue(), Iterable<T> {
     override fun toBoolean() = true
     override fun toString() = "range($begin, $end)"
+    abstract override operator fun contains(that: NodeValue): Boolean
     abstract fun random(): T
     abstract val size: Long
 }
 
-//@Serializable(with = IntegerRangeValue.Serializer::class)
-//class IntegerRangeValue(begin: IntegerValue, end: IntegerValue, inclusive: Boolean) :
-//    RangeValue<IntegerValue>(begin, end, inclusive) {
-//    override val debugStr: String
-//        get() = if (inclusive) {
-//            "[$begin, $end]"
-//        } else {
-//            "[$begin, $end)"
-//        }
-//    override val printStr: String
-//        get() = debugStr
-//    override fun iterator(): Iterator<IntegerValue> {
-//        return object : Iterator<IntegerValue> {
-//            var current = begin
-//            override fun hasNext(): Boolean {
-//                return if (inclusive) current <= end else current < end
-//            }
-//
-//            override fun next(): IntegerValue {
-//                val result = current
-//                current = IntegerValue(current.value + 1)
-//                return result
-//            }
-//        }
-//    }
-//
-//    operator fun contains(value: IntegerValue): Boolean {
-//        return if (inclusive) {
-//            value.value in (begin.value..end.value)
-//        } else {
-//            value.value in (begin.value until end.value)
-//        }
-//    }
-//
-//    override fun random(): IntegerValue {
-//        return if (inclusive) {
-//            IntegerValue((begin.value..end.value).random())
-//        } else {
-//            IntegerValue((begin.value until end.value).random())
-//        }
-//    }
-//
-//    override val size: Long = if (inclusive) {
-//        end.value - begin.value + 1
-//    } else {
-//        end.value - begin.value
-//    }
-//
-//    class Serializer : KSerializer<IntegerRangeValue> {
-//        override val descriptor: SerialDescriptor =
-//            buildClassSerialDescriptor("top.saucecode.yqlang.NodeValue.IntegerRangeValue") {
-//                element<IntegerValue>("begin")
-//                element<IntegerValue>("end")
-//                element<Boolean>("inclusive")
-//            }
-//
-//        override fun deserialize(decoder: Decoder): IntegerRangeValue = decoder.decodeStructure(descriptor) {
-//            IntegerRangeValue(
-//                begin = decodeSerializableElement(descriptor, 0, IntegerValue.serializer()),
-//                end = decodeSerializableElement(descriptor, 1, IntegerValue.serializer()),
-//                inclusive = decodeBooleanElement(descriptor, 2)
-//            )
-//        }
-//
-//        override fun serialize(encoder: Encoder, value: IntegerRangeValue) = encoder.encodeStructure(descriptor) {
-//            encodeSerializableElement(descriptor, 0, IntegerValue.serializer(), value.begin)
-//            encodeSerializableElement(descriptor, 1, IntegerValue.serializer(), value.end)
-//            encodeBooleanElement(descriptor, 2, value.inclusive)
-//        }
-//    }
-//}
+@Serializable(with = IntegerRangeValue.Serializer::class)
+class IntegerRangeValue(begin: IntegerValue, end: IntegerValue, inclusive: Boolean) :
+    RangeValue<IntegerValue>(begin, end, inclusive) {
+    override val debugStr: String
+        get() = if (inclusive) {
+            "[$begin, $end]"
+        } else {
+            "[$begin, $end)"
+        }
+    override val printStr: String
+        get() = debugStr
+    override fun iterator(): Iterator<IntegerValue> {
+        return object : Iterator<IntegerValue> {
+            var current = begin
+            override fun hasNext(): Boolean {
+                return if (inclusive) current <= end else current < end
+            }
+
+            override fun next(): IntegerValue {
+                val result = current
+                current = IntegerValue(current.value + 1)
+                return result
+            }
+        }
+    }
+
+    override operator fun contains(that: NodeValue): Boolean {
+        if (that !is IntegerValue) return false
+        return if (inclusive) {
+            that.value in (begin.value..end.value)
+        } else {
+            that.value in (begin.value until end.value)
+        }
+    }
+
+    override fun random(): IntegerValue {
+        return if (inclusive) {
+            IntegerValue((begin.value..end.value).random())
+        } else {
+            IntegerValue((begin.value until end.value).random())
+        }
+    }
+
+    override val size: Long = if (inclusive) {
+        end.value - begin.value + 1
+    } else {
+        end.value - begin.value
+    }
+
+    class Serializer : KSerializer<IntegerRangeValue> {
+        override val descriptor: SerialDescriptor =
+            buildClassSerialDescriptor("top.saucecode.yqlang.NodeValue.IntegerRangeValue") {
+                element<IntegerValue>("begin")
+                element<IntegerValue>("end")
+                element<Boolean>("inclusive")
+            }
+
+        override fun deserialize(decoder: Decoder): IntegerRangeValue = decoder.decodeStructure(descriptor) {
+            IntegerRangeValue(
+                begin = decodeSerializableElement(descriptor, 0, IntegerValue.serializer()),
+                end = decodeSerializableElement(descriptor, 1, IntegerValue.serializer()),
+                inclusive = decodeBooleanElement(descriptor, 2)
+            )
+        }
+
+        override fun serialize(encoder: Encoder, value: IntegerRangeValue) = encoder.encodeStructure(descriptor) {
+            encodeSerializableElement(descriptor, 0, IntegerValue.serializer(), value.begin)
+            encodeSerializableElement(descriptor, 1, IntegerValue.serializer(), value.end)
+            encodeBooleanElement(descriptor, 2, value.inclusive)
+        }
+    }
+}
 //
 //@Serializable(with = CharRangeValue.Serializer::class)
 //class CharRangeValue(begin: StringValue, end: StringValue, inclusive: Boolean) :

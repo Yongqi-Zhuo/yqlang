@@ -2,10 +2,13 @@ package top.saucecode.yqlang.Runtime
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
+import org.w3c.dom.Node
 import top.saucecode.yqlang.NodeValue.*
+import top.saucecode.yqlang.SymbolTable
 
 // Points to location on heap, static
 typealias Pointer = Int
+fun Pointer.load(memory: Memory): NodeValue = memory[this]
 const val REGION_SHIFT = 28
 const val REGION_MASK = 0xFFFFFFF
 const val REGION_ID_HEAP = 0
@@ -33,13 +36,18 @@ class Memory {
         stack.add(captures) // captures = 4(bp) // expanding captures is callee job
     }
     companion object {
-        val callerOffset = 2
-        val argsOffset = 3
-        val paramsAndCaptureBase = 3 + 1
+        const val callerOffset = 2
+        const val argsOffset = 3
+        const val paramsAndCaptureBase = 3 + 1
     }
-    val caller: Pointer get() = stack[bp + 2]
-    val args: Pointer get() = stack[bp + 3]
-    val captures: Pointer get() = stack[bp + 4]
+    val argsPointer: Pointer get() = stack[bp + argsOffset]
+    val caller: NodeValue get() = get(stack[bp + callerOffset])
+    val args: ListValue get() = get(stack[bp + argsOffset]).asList()!!
+    fun arg(index: Int): NodeValue = get(args[index])
+    fun argOrNull(index: Int): NodeValue? {
+        val a = args
+        return if (index < a.size) get(a[index]) else null
+    }
     // returns retAddr
     fun popFrame(): Int {
         while (stack.lastIndex > bp + 1) {
@@ -61,15 +69,6 @@ class Memory {
 
     private val heap: MutableList<NodeValue> = mutableListOf()
     private val collectionPool: MutableList<CollectionValue> = mutableListOf()
-    // TODO: implement builtins by external calls
-//    @Transient private val builtins: MutableList<NodeValue> = mutableListOf()
-//    private fun addBuiltins(builtins: List<NodeValue>) {
-//        this.builtins.addAll(builtins)
-//    }
-//    init {
-//        addBuiltins(Constants.builtinSymbols.toList().map { it.second })
-//        addBuiltins(Constants.builtinProcedures.toList().map { it.second })
-//    }
     private val statics: MutableList<NodeValue> = mutableListOf()
     fun addStatics(statics: List<NodeValue>) {
         this.statics.addAll(statics)
@@ -120,13 +119,26 @@ class Memory {
         set(dst, get(src))
     }
 
-    fun assemblyText(): String {
+    fun assemblyText(symbolTable: SymbolTable): String {
+        var buffer = "text:\n"
         val lineToLabel = MutableList(text!!.size + 1) { mutableListOf<Int>() }
         labels!!.forEachIndexed { index, label ->
             lineToLabel[label].add(index)
         }
-        val captions = lineToLabel.map { l -> if (l.size > 0) l.joinToString("\n") { "Label$it:" } + "\n" else "" }
-        return text!!.mapIndexed { line, byteCode -> captions[line] + "$line\t$byteCode" }.joinToString("\n")
+        val captions = lineToLabel.map { l -> if (l.size > 0) l.joinToString("\n") { "label$it:" } + "\n" else "" }
+        text!!.mapIndexed { line, byteCode ->
+            buffer += captions[line] + "$line\t$byteCode\n"
+        }
+        if (captions.last().isNotEmpty()) {
+            buffer += captions.last()
+        }
+        buffer += "static:\n"
+        statics.forEachIndexed { index, value ->
+            val staticPointer = StaticPointer(index)
+            val caption = symbolTable.filter { it.value == staticPointer }.map { it.key }.firstOrNull()?.let { "\t$it" } ?: ""
+            buffer += "${staticPointer.toString(16)}\t$value${caption}\n"
+        }
+        return buffer
     }
 
 }

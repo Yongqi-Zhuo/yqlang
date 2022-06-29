@@ -144,7 +144,7 @@ class Parser {
 
     private fun parseStmtAssign(scope: Scope, lvalue: ExprNode): Node {
         val assignToken = consume(TokenType.ASSIGN)
-        val stmt = when (val assignOp = assignToken.value) {
+        val stmt = when (assignToken.value) {
             "=" -> StmtAssignNode(scope, lvalue, parseExpr(scope))
             "+=" -> StmtOpAssignNode(scope, lvalue, OpAssignCode.ADD_ASSIGN, parseExpr(scope))
             "-=" -> StmtOpAssignNode(scope, lvalue, OpAssignCode.SUB_ASSIGN, parseExpr(scope))
