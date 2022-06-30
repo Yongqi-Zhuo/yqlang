@@ -244,8 +244,8 @@ data class ClosureValue(val captureList: CollectionPoolPointer, val entry: Int) 
     override fun toBoolean(): Boolean = true
     override fun debugStr(level: Int): String = "closure($captureList, $entry)"
     override fun printStr(level: Int): String = debugStr(0)
-    override fun gcPointeeCollection(): CollectionPoolPointer = captureList
-    override fun gcRepointedTo(newPointee: CollectionPoolPointer): ClosureValue {
+    override fun pointeeCollection(): CollectionPoolPointer = captureList
+    override fun repointedTo(newPointee: CollectionPoolPointer): ClosureValue {
         return ClosureValue(newPointee, entry)
     }
 }

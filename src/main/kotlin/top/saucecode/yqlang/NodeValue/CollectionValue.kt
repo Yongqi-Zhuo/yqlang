@@ -13,7 +13,7 @@ data class StringValue(var value: String) : CollectionValue() {
     override fun debugStr(level: Int): String= "\"$value\""
     override fun printStr(level: Int): String = value
     override fun toString(): String = debugStr(0)
-    override fun gcTransformPointeePrimitives(transform: (Pointer) -> Pointer) {
+    override fun transformPointeePrimitives(transform: (Pointer) -> Pointer) {
         return
     }
     override fun isNotEmpty(): Boolean = value.isNotEmpty()
@@ -78,7 +78,7 @@ class ListValue(val value: MutableList<Pointer>) : CollectionValue() {
     }
     override fun printStr(level: Int): String = debugStr(level)
     override fun toString(): String = debugStr(0)
-    override fun gcTransformPointeePrimitives(transform: (Pointer) -> Pointer) {
+    override fun transformPointeePrimitives(transform: (Pointer) -> Pointer) {
         value.indices.forEach { i ->
             value[i] = transform(value[i])
         }
@@ -187,7 +187,7 @@ class ObjectValue(private val attributes: MutableMap<String, Pointer> = mutableM
     }
     override fun printStr(level: Int): String = debugStr(level)
     override fun toString(): String = debugStr(0)
-    override fun gcTransformPointeePrimitives(transform: (Pointer) -> Pointer) {
+    override fun transformPointeePrimitives(transform: (Pointer) -> Pointer) {
         attributes.keys.forEach { key ->
             attributes[key] = transform(attributes[key]!!)
         }

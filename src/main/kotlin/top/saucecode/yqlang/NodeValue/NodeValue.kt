@@ -70,8 +70,8 @@ sealed class NodeValue : Comparable<NodeValue> {
 }
 
 interface PrimitivePointingObject {
-    fun gcPointeeCollection(): CollectionPoolPointer
-    fun gcRepointedTo(newPointee: CollectionPoolPointer): NodeValue
+    fun pointeeCollection(): CollectionPoolPointer
+    fun repointedTo(newPointee: CollectionPoolPointer): NodeValue
 }
 
 interface MemoryDependent {
@@ -96,11 +96,11 @@ sealed class CollectionValue : Iterable<NodeValue>, MemoryDependent {
         address = memory.putToPool(this)
         reference = ReferenceValue(address!!, memory)
     }
-    fun gcMoveThisToNewLocation(newAddress: CollectionPoolPointer) {
+    fun moveThisToNewLocation(newAddress: CollectionPoolPointer) {
         address = newAddress
         reference = ReferenceValue(address!!, memory)
     }
-    abstract fun gcTransformPointeePrimitives(transform: (Pointer) -> Pointer)
+    abstract fun transformPointeePrimitives(transform: (Pointer) -> Pointer)
     abstract fun isNotEmpty(): Boolean
     abstract fun debugStr(level: Int): String
     abstract fun printStr(level: Int): String
@@ -158,8 +158,8 @@ data class ReferenceValue(val address: CollectionPoolPointer) : NodeValue(), Pri
     fun asListValue() = value as? ListValue
     fun asObjectValue() = value as? ObjectValue
     override fun iterator(): Iterator<NodeValue> = value.iterator()
-    override fun gcPointeeCollection(): CollectionPoolPointer = address
-    override fun gcRepointedTo(newPointee: CollectionPoolPointer): ReferenceValue {
+    override fun pointeeCollection(): CollectionPoolPointer = address
+    override fun repointedTo(newPointee: CollectionPoolPointer): ReferenceValue {
         return ReferenceValue(newPointee, memory)
     }
 }
