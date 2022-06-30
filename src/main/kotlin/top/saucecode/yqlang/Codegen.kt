@@ -33,8 +33,18 @@ class CodegenContext(val memory: Memory = Memory()) {
     fun putLabel(label: Int) {
         labels[label] = text.size
     }
-    fun addStaticValue(value: NodeValue): Pointer = memory.addStaticValue(value)
-    fun addStaticString(value: String): Pointer = memory.addStaticString(value)
+    private val addedValues = mutableMapOf<NodeValue, Pointer>()
+    fun addStaticValue(value: NodeValue): Pointer {
+        return addedValues.getOrPut(value) {
+            memory.addStaticValue(value)
+        }
+    }
+    private val addedStrings = mutableMapOf<String, Pointer>()
+    fun addStaticString(value: String): Pointer {
+        return addedStrings.getOrPut(value) {
+            memory.addStaticString(value)
+        }
+    }
     fun reserveStatics(values: List<NodeValue>) {
         memory.addStatics(values)
     }

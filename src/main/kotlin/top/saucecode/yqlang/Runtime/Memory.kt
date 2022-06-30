@@ -1,10 +1,9 @@
 package top.saucecode.yqlang.Runtime
 
 import kotlinx.serialization.Serializable
-import top.saucecode.yqlang.NodeValue.CollectionValue
-import top.saucecode.yqlang.NodeValue.NodeValue
-import top.saucecode.yqlang.NodeValue.StringValue
+import top.saucecode.yqlang.NodeValue.*
 import top.saucecode.yqlang.SymbolTable
+import java.util.LinkedList
 
 // Points to location on heap, static
 typealias Pointer = Int
@@ -24,12 +23,6 @@ typealias CollectionPoolPointer = Int
 class Memory {
     var text: List<ByteCode>? = null
     var labels: List<Int>? = null
-    companion object {
-        const val callerOffset = 2
-        const val argsOffset = 3
-        const val paramsAndCaptureBase = 3 + 1
-    }
-
     private val heap: MutableList<NodeValue> = mutableListOf()
     private val collectionPool: MutableList<CollectionValue> = mutableListOf()
     private val statics: MutableList<NodeValue> = mutableListOf()
@@ -95,6 +88,10 @@ class Memory {
         if (captions.last().isNotEmpty()) {
             buffer += captions.last()
         }
+        buffer += "collectionPool:\n"
+        collectionPool.forEachIndexed { index, value ->
+            buffer += "${index.toString(16).padEnd(5)}\t$value\n"
+        }
         buffer += "static:\n"
         statics.forEachIndexed { index, value ->
             val staticPointer = StaticPointer(index)
@@ -102,6 +99,76 @@ class Memory {
             buffer += "${staticPointer.toString(16)}\t$value${caption}\n"
         }
         return buffer
+    }
+
+    val heapSize: Int get() = heap.size
+    fun gc() {
+        val heapMap = mutableMapOf<Pointer, Pointer>() // old -> new
+        val collectionMap = mutableMapOf<CollectionPoolPointer, CollectionPoolPointer>() // old -> new
+        val newHeap = mutableListOf<NodeValue>()
+        val newCollectionPool = mutableListOf<CollectionValue>()
+        val heapGCQueue = LinkedList<Pointer>()
+        val collectionGCQueue = LinkedList<CollectionPoolPointer>()
+        // bfs in bipartite graph
+        fun processPrimitive(pointer: Pointer, newLocation: Pointer) {
+            val primitive = get(pointer)
+            val pointee = if (primitive is PrimitiveGCObject) primitive.gcPointeeCollection() else return
+            if (pointee < 0) return
+            val potentialNewPointeeLocation = collectionMap[pointee]
+            if (potentialNewPointeeLocation != null) {
+                // change myself
+                newHeap[newLocation] = (primitive as PrimitiveGCObject).gcRepointedTo(potentialNewPointeeLocation)
+                return
+            }
+            // now move it to new pool
+            val collection = getFromPool(pointee)
+            newCollectionPool.add(collection)
+            val actualNewPointeeLocation = newCollectionPool.lastIndex
+            collectionMap[pointee] = actualNewPointeeLocation
+            collection.gcMoveThisToNewLocation(actualNewPointeeLocation)
+            collectionGCQueue.add(pointee)
+        }
+        fun processCollection(pointer: CollectionPoolPointer, newLocation: CollectionPoolPointer) {
+            val collection = getFromPool(pointer)
+            collection.gcTransformPointeePrimitives { pointee ->
+                if (pointee.region() != REGION_ID_HEAP) return@gcTransformPointeePrimitives pointee
+                val potentialNewPointeeLocation = heapMap[pointee]
+                if (potentialNewPointeeLocation != null) {
+                    // change myself
+                    return@gcTransformPointeePrimitives potentialNewPointeeLocation
+                }
+                // now move it to new heap
+                newHeap.add(get(pointee))
+                val actualNewPointeeLocation = newHeap.lastIndex
+                heapMap[pointee] = actualNewPointeeLocation
+                heapGCQueue.add(pointee)
+                return@gcTransformPointeePrimitives actualNewPointeeLocation
+            }
+        }
+        statics.indices.forEach {
+            val ptr = StaticPointer(it)
+            heapGCQueue.add(ptr)
+            heapMap[ptr] = ptr
+        }
+        var age = 0
+        while (age < 2) {
+            age += 1
+            while (heapGCQueue.isNotEmpty()) {
+                val ptr = heapGCQueue.pop()
+                processPrimitive(ptr, heapMap[ptr]!!)
+                age = 0
+            }
+            age += 1
+            while (collectionGCQueue.isNotEmpty()) {
+                val ptr = collectionGCQueue.pop()
+                processCollection(ptr, collectionMap[ptr]!!)
+                age = 0
+            }
+        }
+        heap.clear()
+        heap.addAll(newHeap)
+        collectionPool.clear()
+        collectionPool.addAll(newCollectionPool)
     }
 
 }

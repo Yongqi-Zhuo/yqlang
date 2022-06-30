@@ -33,6 +33,11 @@ fun main() {
     val time = measureTimeMillis {
         VirtualMachine(context, memory).execute()
     }
+    println("Executed in $time ms. Heap size: ${memory.heapSize}. Now GC.")
+    val gcTime = measureTimeMillis {
+        memory.gc()
+    }
+    println("GCed in $gcTime ms. Heap size: ${memory.heapSize}.")
 
 //    val interpreter = RestrictedInterpreter(input)
 //    val st = SymbolTable.createRoot(mapOf("text" to StringValue("this is a brand-new world the world of parsing")))
@@ -55,6 +60,4 @@ fun main() {
 //        val line = readLine() ?: break
 //        println(Scope.deserialize(line))
 //    }
-
-    println("\nDone! Execution time: ${time}ms")
 }

@@ -2,10 +2,7 @@ package top.saucecode.yqlang
 
 import top.saucecode.yqlang.NodeValue.NodeValue
 import top.saucecode.yqlang.NodeValue.NullValue
-import top.saucecode.yqlang.Runtime.BuiltinProcedures
-import top.saucecode.yqlang.Runtime.Memory
-import top.saucecode.yqlang.Runtime.Pointer
-import top.saucecode.yqlang.Runtime.StaticPointer
+import top.saucecode.yqlang.Runtime.*
 
 object UniqueID {
     private var id = 0
@@ -55,8 +52,8 @@ class Frame(private val parent: Frame?) {
         if (isReserved(name)) {
             if (isRoot) throw CompileException("$name not available in global scope!")
             return when (name) {
-                "this" -> Memory.callerOffset
-                "$" -> Memory.argsOffset
+                "this" -> VirtualMachine.callerOffset
+                "$" -> VirtualMachine.argsOffset
                 else -> throw CompileException("Do not use getLocalMemoryLayout($name), handle it yourself!")
             }
         }
@@ -66,7 +63,7 @@ class Frame(private val parent: Frame?) {
             assert(offset != -1)
             offset += captures.size
         }
-        return Memory.paramsAndCaptureBase + offset
+        return VirtualMachine.paramsAndCaptureBase + offset
     }
     fun getParentLocalLayout(name: String): Int {
         return parent!!.getLocalMemoryLayout(name)

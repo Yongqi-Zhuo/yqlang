@@ -69,14 +69,18 @@ sealed class NodeValue : Comparable<NodeValue> {
 
 }
 
+interface PrimitiveGCObject {
+    fun gcPointeeCollection(): CollectionPoolPointer
+    fun gcRepointedTo(newPointee: CollectionPoolPointer): NodeValue
+}
+
 class AccessingUnsolidifiedValueException(subject: Any) : YqlangRuntimeException("Accessing unsolidified value: $subject")
 @Serializable
 sealed class CollectionValue : Iterable<NodeValue> {
     @Transient protected var memory: Memory? = null
         private set
-    protected var address: CollectionPoolPointer? = null
-        private set
-    protected var referenceField: ReferenceValue? = null
+    private var address: CollectionPoolPointer? = null
+    private var referenceField: ReferenceValue? = null
     val reference: ReferenceValue
         get() = referenceField!!
     fun bindMemory(memory: Memory) {
@@ -87,6 +91,11 @@ sealed class CollectionValue : Iterable<NodeValue> {
         address = memory.putToPool(this)
         referenceField = ReferenceValue(address!!, memory)
     }
+    fun gcMoveThisToNewLocation(newAddress: CollectionPoolPointer) {
+        address = newAddress
+        referenceField = ReferenceValue(address!!, memory!!)
+    }
+    abstract fun gcTransformPointeePrimitives(transform: (Pointer) -> Pointer)
     abstract fun isNotEmpty(): Boolean
     abstract val debugStr: String
     abstract val printStr: String
@@ -101,9 +110,9 @@ sealed class CollectionValue : Iterable<NodeValue> {
 }
 
 @Serializable
-data class ReferenceValue(private val address: CollectionPoolPointer) : NodeValue(), Iterable<NodeValue> {
+data class ReferenceValue(val address: CollectionPoolPointer) : NodeValue(), PrimitiveGCObject, Iterable<NodeValue> {
     @Transient private var memory: Memory? = null
-    constructor(address: Pointer, memory: Memory) : this(address) {
+    constructor(address: CollectionPoolPointer, memory: Memory) : this(address) {
         bindMemory(memory)
     }
     fun bindMemory(memory: Memory) {
@@ -142,4 +151,8 @@ data class ReferenceValue(private val address: CollectionPoolPointer) : NodeValu
     fun asListValue() = value as? ListValue
     fun asObjectValue() = value as? ObjectValue
     override fun iterator(): Iterator<NodeValue> = value.iterator()
+    override fun gcPointeeCollection(): CollectionPoolPointer = address
+    override fun gcRepointedTo(newPointee: CollectionPoolPointer): ReferenceValue {
+        return ReferenceValue(newPointee, memory!!)
+    }
 }

@@ -12,7 +12,7 @@ class StmtExprNode(scope: Scope, private val expr: ExprNode) : Node(scope) {
         buffer.add(Op.POP_SAVE_TO_REG)
     }
     init {
-        expr.declareProduce(false)
+        expr.declareProduce(true)
     }
     override fun toString(): String = "expr($expr)"
 }
@@ -75,7 +75,7 @@ class StmtActionNode(scope: Scope, private val action: String, private val expr:
         buffer.add(Op.CLEAR_REG)
     }
     init {
-        expr.declareProduce(false)
+        expr.declareProduce(true)
     }
     override fun toString(): String {
         return "action($action($expr))"
@@ -97,7 +97,7 @@ class StmtIfNode(
         buffer.putLabel(end)
     }
     init {
-        condition.declareProduce(false)
+        condition.declareProduce(true)
     }
     override fun toString(): String {
         val elseText = if (elseBody == null) "" else ", else($elseBody)"
@@ -144,7 +144,7 @@ class StmtWhileNode(scope: Scope, private val condition: ExprNode, private val b
         buffer.putLabel(end)
     }
     init {
-        condition.declareProduce(false)
+        condition.declareProduce(true)
     }
     override fun toString(): String {
         return "while($condition, $body)"

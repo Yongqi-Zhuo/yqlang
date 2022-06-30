@@ -170,9 +170,17 @@ enum class Op(val code: Int) {
     // invoke the builtin procedure.
     INVOKE_BUILTIN(42),
 
+    // operand: offset from bp.
+    // rebinds the local name to the value on the top of stack.
+    POP_REBIND_LOCAL(43),
+
+    // operand: a pointer.
+    // rebinds the name to the value on the top of stack.
+    POP_REBIND(44),
+
     // operand: none
     // exit the program.
-    EXIT(43);
+    EXIT(45);
     companion object {
         val printLength: Int = values().map { it.toString().length }.maxOf { it } + 1
         fun fromCode(code: Int): Op {
@@ -206,7 +214,7 @@ class VirtualMachine(val executionContext: ExecutionContext, val memory: Memory)
     private val labels = memory.labels!!
     private var pc = 0
     private var register: Pointer? = null
-    private val stack: MutableList<Pointer> = mutableListOf()
+    private val stack: MutableList<Pointer> = mutableListOf(-1, -1, -1, -1)
     private var bp: Int = 0
     private val iteratorStack: Stack<Iterator<NodeValue>> = Stack()
     private val accessStack: Stack<AccessView> = Stack()
@@ -224,9 +232,14 @@ class VirtualMachine(val executionContext: ExecutionContext, val memory: Memory)
         stack.add(args) // args = 3(bp)
         stack.add(captures) // captures = 4(bp) // expanding captures is callee job
     }
-    val argsPointer: Pointer get() = stack[bp + Memory.argsOffset]
-    val caller: NodeValue get() = memory[stack[bp + Memory.callerOffset]]
-    val args: ListValue get() = memory[stack[bp + Memory.argsOffset]].asList()!!
+    companion object {
+        const val callerOffset = 2
+        const val argsOffset = 3
+        const val paramsAndCaptureBase = 3 + 1
+    }
+    val argsPointer: Pointer get() = stack[bp + argsOffset]
+    val caller: NodeValue get() = memory[stack[bp + callerOffset]]
+    val args: ListValue get() = memory[stack[bp + argsOffset]].asList()!!
     fun argPointer(index: Int): Pointer = args[index]
     fun arg(index: Int): NodeValue = memory[args[index]]
     fun argOrNull(index: Int): NodeValue? {
@@ -250,6 +263,9 @@ class VirtualMachine(val executionContext: ExecutionContext, val memory: Memory)
     }
     private fun getLocal(index: Int): Pointer {
         return stack[bp + index]
+    }
+    private fun setLocal(index: Int, ptr: Pointer) {
+        stack[bp + index] = ptr
     }
     private inline fun performOp(op: NodeValue.(NodeValue) -> NodeValue) {
         val op2 = pop()
@@ -361,14 +377,13 @@ class VirtualMachine(val executionContext: ExecutionContext, val memory: Memory)
                 }
                 JUMP -> jump(byteCode.operand)
                 CREATE_CLOSURE -> {
-                    val closure = ClosureValue(pop(), byteCode.operand)
+                    val closure = ClosureValue((memory[pop()] as ReferenceValue).address, byteCode.operand)
                     push(memory.allocate(closure))
                 }
                 PREPARE_FRAME -> {
                     // now on stack: lastBp, retAddr, caller, args, captures. Now expand captures
-                    val captures = memory[pop()].asList()?.value
-                        ?: throw YqlangRuntimeException("Failed to pass captures. This should not happen.")
-                    captures.forEach { push(it) } // pass by reference!
+                    val captures = memory.getFromPool(pop()) as ListValue
+                    captures.value.forEach { push(it) } // pass by reference!
                     repeat(byteCode.operand) { push(memory.allocate(NullValue)) }
                 }
                 GET_NTH_ARG -> {
@@ -472,6 +487,8 @@ class VirtualMachine(val executionContext: ExecutionContext, val memory: Memory)
                     push(memory.allocate(result))
                     jump(label)
                 }
+                POP_REBIND_LOCAL -> setLocal(byteCode.operand, pop())
+                POP_REBIND -> {} // TODO: rebind global
                 EXIT -> break
             }
             pc++

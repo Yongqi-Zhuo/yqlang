@@ -13,6 +13,9 @@ data class StringValue(var value: String) : CollectionValue() {
         get() = "\"$value\""
     override val printStr: String
         get() = value
+    override fun gcTransformPointeePrimitives(transform: (Pointer) -> Pointer) {
+        return
+    }
     override fun isNotEmpty(): Boolean = value.isNotEmpty()
     override operator fun contains(that: NodeValue): Boolean = value.contains(that.printStr)
     override fun compareTo(other: CollectionValue): Int {
@@ -74,6 +77,11 @@ class ListValue(val value: MutableList<Pointer>) : CollectionValue() {
         get() = "[${value.joinToString(", ") { memory?.get(it)?.debugStr ?: it.toString() }}]"
     override val printStr: String
         get() = debugStr
+    override fun gcTransformPointeePrimitives(transform: (Pointer) -> Pointer) {
+        value.indices.forEach { i ->
+            value[i] = transform(value[i])
+        }
+    }
     override fun isNotEmpty(): Boolean = value.isNotEmpty()
     operator fun get(index: Int): Pointer = value[index]
     operator fun set(index: Int, value: Pointer) {
@@ -177,6 +185,11 @@ class ObjectValue(private val attributes: MutableMap<String, Pointer> = mutableM
         get() = "{${attributes.map { "\"${it.key}\": ${memory?.get(it.value)?.debugStr ?: it.value}" }.joinToString(", ")}}"
     override val printStr: String
         get() = debugStr
+    override fun gcTransformPointeePrimitives(transform: (Pointer) -> Pointer) {
+        attributes.keys.forEach { key ->
+            attributes[key] = transform(attributes[key]!!)
+        }
+    }
     override fun isNotEmpty(): Boolean = attributes.isNotEmpty()
     operator fun get(key: String): Pointer? = attributes[key]
     operator fun set(key: String, value: Pointer) {
