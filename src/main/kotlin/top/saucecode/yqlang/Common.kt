@@ -1,8 +1,7 @@
 package top.saucecode.yqlang
 
 import kotlinx.serialization.Serializable
-import top.saucecode.yqlang.NodeValue.*
-import top.saucecode.yqlang.Runtime.*
+import top.saucecode.yqlang.Runtime.YqlangRuntimeException
 import java.util.regex.Pattern
 
 @Serializable
@@ -100,54 +99,6 @@ class NoSuchMethodException(what: Any, method: Any) : YqlangRuntimeException("$w
 class Constants {
     companion object {
         val whiteSpace: Pattern = Pattern.compile("\\s+")
-        fun builtinId(func: String): Int = builtinProceduresNames.indexOf(func)
-        val builtinProcedures = mapOf<String, (VirtualMachine) -> NodeValue>(
-            // functions
-            "time" to VirtualMachine::time,
-            "range" to VirtualMachine::range,
-            "rangeInclusive" to VirtualMachine::rangeInclusive,
-//            "number" to Number,
-//            "num" to Number,
-//            "integer" to Integer,
-//            "float" to Float,
-//            "string" to String,
-//            "str" to String,
-//            "object" to Object,
-//            "abs" to Abs,
-//            "ord" to Ord,
-//            "chr" to Chr,
-//            "char" to Chr,
-//            "pow" to Pow,
-//            "boolean" to Boolean,
-//            "bool" to Boolean,
-//            "getNickname" to GetNickname,
-//            "re" to Re,
-//            "sleep" to Sleep,
-            // methods
-            "split" to VirtualMachine::split,
-            "join" to VirtualMachine::join,
-            "find" to VirtualMachine::find,
-            "findAll" to VirtualMachine::findAll,
-            "contains" to VirtualMachine::contains,
-            "length" to VirtualMachine::length,
-            "random" to VirtualMachine::random,
-//            "rand" to Random,
-//            "enumerated" to Enumerated,
-//            "sum" to Sum,
-//            "filter" to Filter,
-//            "reduce" to Reduce,
-//            "map" to Map,
-//            "max" to Max,
-//            "min" to Min,
-//            "reversed" to Reversed,
-//            "sorted" to Sorted,
-//            "match" to Match,
-//            "matchAll" to MatchAll,
-//            "matchEntire" to MatchEntire,
-//            "replace" to Replace,
-        )
-        val builtinProceduresNames = builtinProcedures.toList().map { it.first }
-        val builtinProceduresValues = builtinProcedures.toList().map { it.second }
         val builtinProceduresHelps = mapOf(
             "split" to """
                 |Split a string into a list of substrings. If the argument is omitted, the string is split on whitespace. Regular expressions are supported.
@@ -257,6 +208,11 @@ class Constants {
                 |Get the power of a number.
                 |Usage: pow(num, exponent)
                 |Example: pow(2, 3) // 8
+                |""".trimMargin(),
+            "sqrt" to """
+                |Get the square root of a number.
+                |Usage: sqrt(num)
+                |Example: sqrt(4) // 2
                 |""".trimMargin(),
             "sum" to """
                 |Get the sum of a list.

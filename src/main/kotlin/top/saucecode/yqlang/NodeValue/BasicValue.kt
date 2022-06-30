@@ -1,7 +1,6 @@
 package top.saucecode.yqlang.NodeValue
 
 import kotlinx.serialization.Serializable
-import top.saucecode.yqlang.Runtime.Memory
 import top.saucecode.yqlang.Runtime.Pointer
 import kotlin.reflect.KClass
 
@@ -78,6 +77,7 @@ sealed class ArithmeticValue : NodeValue() {
         }
     }
     override fun modAssign(that: NodeValue): NodeValue = this.rem(that)
+    abstract fun abs(): ArithmeticValue
     @Suppress("UNCHECKED_CAST")
     fun<T: ArithmeticValue> coercedTo(level: KClass<T>): T {
         return when (level) {
@@ -130,6 +130,8 @@ data class IntegerValue(val value: Long) : ArithmeticValue() {
     override operator fun unaryMinus(): ArithmeticValue {
         return IntegerValue(-value)
     }
+
+    override fun abs(): ArithmeticValue = IntegerValue(kotlin.math.abs(value))
 }
 
 fun Int.toIntegerValue(): NodeValue = IntegerValue(this.toLong())
@@ -176,9 +178,11 @@ data class FloatValue(val value: Double) : ArithmeticValue() {
     override operator fun unaryMinus(): ArithmeticValue {
         return FloatValue(-value)
     }
+
+    override fun abs(): ArithmeticValue = FloatValue(kotlin.math.abs(value))
 }
 
-fun Double.toNodeValue(): NodeValue = FloatValue(this)
+fun Double.toFloatValue(): NodeValue = FloatValue(this)
 
 @Serializable
 data class BooleanValue(val value: Boolean) : ArithmeticValue() {
@@ -208,6 +212,8 @@ data class BooleanValue(val value: Boolean) : ArithmeticValue() {
     override operator fun unaryMinus(): ArithmeticValue {
         return IntegerValue(-toLong())
     }
+
+    override fun abs(): ArithmeticValue = this.coercedTo(IntegerValue::class)
 }
 
 fun Boolean.toBooleanValue() = BooleanValue(this)

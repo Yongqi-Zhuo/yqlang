@@ -63,7 +63,6 @@ data class StringValue(var value: String) : CollectionValue() {
     }
 }
 
-fun String.toStringValue(memory: Memory) = StringValue(this, memory)
 fun String.toStringValueReference(memory: Memory) = StringValue(this, memory).reference
 
 @Serializable

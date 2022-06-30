@@ -1,7 +1,6 @@
 package top.saucecode.yqlang
 
 import top.saucecode.yqlang.Node.*
-import top.saucecode.yqlang.Runtime.Memory
 
 open class ParserException(message: String) : Exception(message)
 class UnexpectedTokenException(val token: Token, private val expected: TokenType? = null) :
@@ -10,11 +9,6 @@ class UnexpectedTokenException(val token: Token, private val expected: TokenType
 class Parser {
     private var tokens: List<Token> = listOf()
     private var current = 0
-
-    // compiled code, TODO: generate linear intermediate form
-    // TODO: move ast to memory first
-//    val text: MutableList<NodeValue> = mutableListOf()
-//    var lastStatics = 0
 
     private fun consume(type: TokenType): Token {
         if (isAtEnd()) {

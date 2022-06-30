@@ -1,13 +1,12 @@
 package top.saucecode.yqlang.Runtime
 
+import kotlinx.serialization.Serializable
 import top.saucecode.yqlang.ExecutionContext
 import top.saucecode.yqlang.Node.*
 import top.saucecode.yqlang.NodeValue.*
 import top.saucecode.yqlang.Runtime.Op.*
 import top.saucecode.yqlang.YqlangException
 import java.util.*
-import kotlinx.serialization.Serializable
-import top.saucecode.yqlang.Constants
 
 enum class Op(val code: Int) {
     // operand: offset from bp.
@@ -202,7 +201,7 @@ open class YqlangRuntimeException(message: String) : YqlangException(message)
 class PatternMatchingConstantUnmatchedException : YqlangRuntimeException("Pattern matching failed: constant unmatched")
 class InterruptedException : YqlangRuntimeException("Interrupted")
 
-class VirtualMachine(private val executionContext: ExecutionContext, val memory: Memory) {
+class VirtualMachine(val executionContext: ExecutionContext, val memory: Memory) {
     private val text: List<ByteCode> = memory.text!!
     private val labels = memory.labels!!
     private var pc = 0
@@ -214,7 +213,7 @@ class VirtualMachine(private val executionContext: ExecutionContext, val memory:
     private fun jump(label: Int) {
         // to avoid recursion, check thread status
         if (Thread.currentThread().isInterrupted) throw InterruptedException()
-        pc = labels[label] - 1
+        pc = (if (label < 0) -1 else labels[label]) - 1
     }
     private fun pushFrame(retAddr: Int, caller: Pointer, args: Pointer, captures: Pointer) {
         stack.add(bp)
@@ -228,6 +227,7 @@ class VirtualMachine(private val executionContext: ExecutionContext, val memory:
     val argsPointer: Pointer get() = stack[bp + Memory.argsOffset]
     val caller: NodeValue get() = memory[stack[bp + Memory.callerOffset]]
     val args: ListValue get() = memory[stack[bp + Memory.argsOffset]].asList()!!
+    fun argPointer(index: Int): Pointer = args[index]
     fun arg(index: Int): NodeValue = memory[args[index]]
     fun argOrNull(index: Int): NodeValue? {
         val a = args
@@ -262,12 +262,21 @@ class VirtualMachine(private val executionContext: ExecutionContext, val memory:
         val op1 = pop()
         memory[op1] = memory[op1].op(memory[op2])
     }
-//    fun executeClosure(closureLocation: Pointer, caller: Pointer, args: Pointer) {
-//        pushFrame(pc, caller, args)
-//    }
-    fun execute(entry: Int = 0) {
-        pc = entry
-        while (pc < text.size) {
+    fun executeClosure(closureLocation: Pointer, caller: Pointer, args: Pointer): Pointer {
+        val savedPc = pc
+        val uncheckedClosure = memory[closureLocation]
+        val closure = uncheckedClosure as? ClosureValue
+            ?: throw TypeMismatchRuntimeException(listOf(ClosureValue::class), uncheckedClosure)
+        pushFrame(-1, caller, args, closure.captureList)
+        execute(closure.entry)
+        pc = savedPc
+        return pop()
+    }
+    fun execute(entryLabel: Int? = null) {
+        if (entryLabel != null) {
+            pc = labels[entryLabel]
+        }
+        while (pc in text.indices) {
             val byteCode = text[pc]
 //            println(byteCode)
             when (Op.fromCode(byteCode.op)) {
@@ -457,7 +466,7 @@ class VirtualMachine(private val executionContext: ExecutionContext, val memory:
                     }
                 }
                 INVOKE_BUILTIN -> {
-                    val result = Constants.builtinProceduresValues[byteCode.operand](this)
+                    val result = BuiltinProcedures.values[byteCode.operand](this)
                     register = null
                     val label = popFrame()
                     push(memory.allocate(result))

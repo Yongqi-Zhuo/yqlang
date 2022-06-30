@@ -2,19 +2,20 @@ package top.saucecode.yqlang
 
 import top.saucecode.yqlang.NodeValue.NodeValue
 import top.saucecode.yqlang.NodeValue.NullValue
+import top.saucecode.yqlang.Runtime.BuiltinProcedures
 import top.saucecode.yqlang.Runtime.Memory
 import top.saucecode.yqlang.Runtime.Pointer
 import top.saucecode.yqlang.Runtime.StaticPointer
 
 object UniqueID {
-    var id = 0
+    private var id = 0
     fun get(): Int {
         return id++
     }
 }
 
 enum class NameType {
-    GLOBAL, CAPTURE, LOCAL, BUILTIN
+    GLOBAL, CAPTURE, LOCAL
 }
 class Frame(private val parent: Frame?) {
     private val isRoot: Boolean get() = parent == null
@@ -75,12 +76,10 @@ class Frame(private val parent: Frame?) {
             return name == "this" || name.startsWith("$")
         }
         fun isBuiltin(name: String): Boolean {
-            return name in Constants.builtinProceduresNames
+            return name in BuiltinProcedures.names
         }
     }
     fun reserveGlobals(): List<NodeValue> {
-        // TODO: add builtins to globals
-        // return Constants.builtinProcedures.values() + root.locals.map { NullValue }
         return root.locals.map { NullValue }
     }
     fun getGlobalMemoryLayout(name: String): Int? {
@@ -105,7 +104,7 @@ class Scope(private val parent: Scope?, frame: Frame?) {
             currentFrameScope = this
         }
     }
-    fun getMangledName(name: String): String? {
+    private fun getMangledName(name: String): String? {
         if (Frame.isReserved(name)) return name
         return locals[name] ?: if (parent != null) {
             parent.getMangledName(name)
@@ -151,10 +150,10 @@ class Scope(private val parent: Scope?, frame: Frame?) {
     }
     // get stack layout
     fun getLocalLayout(name: String): Int {
-        return currentFrame.getLocalMemoryLayout(getMangledName(name)!!)
+        return currentFrame.getLocalMemoryLayout(getMangledName(name) ?: throw CompileException("Name $name is not defined"))
     }
     fun getGlobalLayout(name: String): Int? {
-        return currentFrame.getGlobalMemoryLayout(getMangledName(name)!!)
+        return currentFrame.getGlobalMemoryLayout(getMangledName(name) ?: throw CompileException("Name $name is not defined"))
     }
 
     fun exportSymbolTable(): SymbolTable {

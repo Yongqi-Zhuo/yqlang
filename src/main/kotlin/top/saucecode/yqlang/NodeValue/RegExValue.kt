@@ -30,21 +30,21 @@ class RegExValue(private val pattern: String, private val rawFlags: String) : No
     @Transient private val flags: Set<Flag> = rawFlags.mapNotNull { Flag.fromChar(it) }.toSet()
     @Transient private val regex: Regex = Regex(pattern, flags.mapNotNull { it.value }.toSet())
 
-//    fun match(context: ExecutionContext, input: StringValue): List<NodeValue> {
-//        if (Flag.GLOBAL !in flags) {
-//            val matches = regex.find(input.value) ?: return emptyList()
-//            return matches.groupValues.map { it.toNodeValue() }
-//        } else {
-//            val matches = regex.findAll(input.value)
-//            return matches.toList().map { it.value.toNodeValue() }
-//        }
-//    }
-//
-//    fun matchAll(input: StringValue): List<List<NodeValue>> {
-//        val matches = regex.findAll(input.value)
-//        return matches.toList().map { each -> each.groupValues.map { group -> group.toNodeValue() } }
-//    }
-//
+    fun match(input: String): List<String> {
+        if (Flag.GLOBAL !in flags) {
+            val matches = regex.find(input) ?: return emptyList()
+            return matches.groupValues
+        } else {
+            val matches = regex.findAll(input)
+            return matches.toList().map { it.value }
+        }
+    }
+
+    fun matchAll(input: String): List<List<String>> {
+        val matches = regex.findAll(input)
+        return matches.toList().map { each -> each.groupValues }
+    }
+
     fun find(input: String): NodeValue {
         val matches = regex.find(input) ?: return IntegerValue(-1)
         return matches.range.first.toIntegerValue()
@@ -58,17 +58,17 @@ class RegExValue(private val pattern: String, private val rawFlags: String) : No
     fun contains(input: String): NodeValue {
         return regex.containsMatchIn(input).toBooleanValue()
     }
-//
-//    fun replace(input: StringValue, replacement: StringValue): NodeValue {
-//        return input.value.replace(regex, replacement.value).toNodeValue()
-//    }
+
+    fun replace(input: String, replacement: String): String {
+        return input.replace(regex, replacement)
+    }
 
     fun split(input: String): List<String> {
         return input.split(regex)
     }
-//
-//    fun matchEntire(input: StringValue): NodeValue {
-//        val matches = regex.matchEntire(input.value)
-//        return (matches != null).toNodeValue()
-//    }
+
+    fun matchEntire(input: String): NodeValue {
+        val matches = regex.matchEntire(input)
+        return (matches != null).toBooleanValue()
+    }
 }

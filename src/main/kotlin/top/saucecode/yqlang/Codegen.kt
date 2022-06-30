@@ -20,7 +20,7 @@ class CodeGenerator {
     }
 }
 
-class CodegenContext {
+class CodegenContext(val memory: Memory = Memory()) {
     val text = mutableListOf<ByteCode>()
     fun add(opcode: Op, operand: Int = 0) {
         this.text.add(ByteCode(opcode.code, operand))
@@ -33,13 +33,12 @@ class CodegenContext {
     fun putLabel(label: Int) {
         labels[label] = text.size
     }
-    val memory = Memory()
     fun addStaticValue(value: NodeValue): Pointer = memory.addStaticValue(value)
     fun addStaticString(value: String): Pointer = memory.addStaticString(value)
     fun reserveStatics(values: List<NodeValue>) {
         memory.addStatics(values)
     }
-    val loopContexts = mutableListOf<Pair<Int, Int>>()
+    private val loopContexts = mutableListOf<Pair<Int, Int>>()
     fun withLoopContext(labelContinue: Int, labelBreak: Int, block: () -> Unit) {
         loopContexts.add(labelContinue to labelBreak)
         block()
@@ -49,6 +48,10 @@ class CodegenContext {
     val breakLabel: Int? get() = loopContexts.lastOrNull()?.second
     private val linkages = mutableListOf<Pair<String, Int>>()
     fun includeLibrary(name: String): Pointer {
+        val existing = linkages.firstOrNull { it.first == name }
+        if (existing != null) {
+            return existing.second
+        }
         val ptr = memory.addStaticValue(NullValue)
         linkages.add(name to ptr)
         return ptr
@@ -58,7 +61,7 @@ class CodegenContext {
             val entry = requestLabel()
             putLabel(entry)
             // no need to assign the parameters or expand captures, just invoke the builtin
-            add(Op.INVOKE_BUILTIN, Constants.builtinId(name))
+            add(Op.INVOKE_BUILTIN, BuiltinProcedures.id(name))
             // no need to return, vm does it all
             // No captures. No dynamic closure creation.
             memory[ptr] = ClosureValue(-1, entry)

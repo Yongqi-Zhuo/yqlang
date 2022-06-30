@@ -1,9 +1,9 @@
 package top.saucecode.yqlang.Runtime
 
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.Transient
-import org.w3c.dom.Node
-import top.saucecode.yqlang.NodeValue.*
+import top.saucecode.yqlang.NodeValue.CollectionValue
+import top.saucecode.yqlang.NodeValue.NodeValue
+import top.saucecode.yqlang.NodeValue.StringValue
 import top.saucecode.yqlang.SymbolTable
 
 // Points to location on heap, static
@@ -90,7 +90,7 @@ class Memory {
         }
         val captions = lineToLabel.map { l -> if (l.size > 0) l.joinToString("\n") { "label$it:" } + "\n" else "" }
         text!!.mapIndexed { line, byteCode ->
-            buffer += captions[line] + "$line\t$byteCode\n"
+            buffer += captions[line] + "${line.toString().padEnd(5)}\t$byteCode\n"
         }
         if (captions.last().isNotEmpty()) {
             buffer += captions.last()

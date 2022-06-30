@@ -3,8 +3,6 @@ package top.saucecode.yqlang
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 import top.saucecode.yqlang.NodeValue.NodeValue
 import top.saucecode.yqlang.Runtime.Memory
 import top.saucecode.yqlang.Runtime.VirtualMachine
@@ -12,7 +10,6 @@ import java.util.concurrent.CancellationException
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.TimeUnit
-import kotlin.system.measureTimeMillis
 
 open class YqlangException(message: String) : Exception(message)
 
