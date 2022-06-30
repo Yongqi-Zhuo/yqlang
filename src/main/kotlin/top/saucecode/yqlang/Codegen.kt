@@ -8,15 +8,17 @@ import top.saucecode.yqlang.Runtime.*
 
 data class CodegenResult(val symbolTable: SymbolTable, val preloadedMemory: Memory)
 class CodeGenerator {
-    fun generate(ast: Node): CodegenResult {
+    fun generate(ast: Node): Memory {
         val buffer = CodegenContext()
         buffer.reserveStatics(ast.scope.currentFrame.reserveGlobals())
         ast.generateCode(buffer)
         buffer.add(Op.EXIT)
         buffer.linkLibrary()
-        buffer.memory.text = buffer.text
-        buffer.memory.labels = buffer.labels
-        return CodegenResult(ast.scope.exportSymbolTable(), buffer.memory)
+        val memory = buffer.memory
+        memory.text = buffer.text
+        memory.labels = buffer.labels
+        memory.symbolTable = ast.scope.exportSymbolTable()
+        return memory
     }
 }
 

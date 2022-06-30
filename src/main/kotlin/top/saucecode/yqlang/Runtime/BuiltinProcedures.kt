@@ -228,7 +228,7 @@ fun VirtualMachine.number(): NodeValue {
 }
 
 fun VirtualMachine.string(): NodeValue {
-    return arg(0).printStr.toStringValueReference(memory)
+    return arg(0).printStr(0).toStringValueReference(memory)
 }
 
 fun VirtualMachine.obj(): NodeValue {

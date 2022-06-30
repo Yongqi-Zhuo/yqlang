@@ -25,9 +25,9 @@ sealed class NodeValue : Comparable<NodeValue> {
     fun asObject() = (this as? ReferenceValue)?.asObjectValue()
     fun isObjectReference() = this is ReferenceValue && this.value is ObjectValue
     fun asClosure() = this as? ClosureValue
-    abstract val debugStr: String
-    abstract val printStr: String
-    override fun toString() = debugStr
+    abstract fun debugStr(level: Int): String
+    abstract fun printStr(level: Int): String
+    override fun toString() = debugStr(0)
     open fun exchangeablePlus(that: NodeValue, inverse: Boolean): NodeValue {
         throw OperationRuntimeException("Invalid operation: ${if (!inverse) this else that} + ${if (!inverse) that else this}")
     }
@@ -69,38 +69,44 @@ sealed class NodeValue : Comparable<NodeValue> {
 
 }
 
-interface PrimitiveGCObject {
+interface PrimitivePointingObject {
     fun gcPointeeCollection(): CollectionPoolPointer
     fun gcRepointedTo(newPointee: CollectionPoolPointer): NodeValue
 }
 
-class AccessingUnsolidifiedValueException(subject: Any) : YqlangRuntimeException("Accessing unsolidified value: $subject")
+interface MemoryDependent {
+    fun bindMemory(memory: Memory)
+}
+
 @Serializable
-sealed class CollectionValue : Iterable<NodeValue> {
-    @Transient protected var memory: Memory? = null
+sealed class CollectionValue : Iterable<NodeValue>, MemoryDependent {
+    @Transient protected lateinit var memory: Memory
         private set
     private var address: CollectionPoolPointer? = null
-    private var referenceField: ReferenceValue? = null
-    val reference: ReferenceValue
-        get() = referenceField!!
-    fun bindMemory(memory: Memory) {
+    @Transient lateinit var reference: ReferenceValue
+        private set
+    override fun bindMemory(memory: Memory) {
         this.memory = memory
+        if (address != null) {
+            reference = ReferenceValue(address!!, memory)
+        }
     }
     protected fun solidify(memory: Memory) {
         bindMemory(memory)
         address = memory.putToPool(this)
-        referenceField = ReferenceValue(address!!, memory)
+        reference = ReferenceValue(address!!, memory)
     }
     fun gcMoveThisToNewLocation(newAddress: CollectionPoolPointer) {
         address = newAddress
-        referenceField = ReferenceValue(address!!, memory!!)
+        reference = ReferenceValue(address!!, memory)
     }
     abstract fun gcTransformPointeePrimitives(transform: (Pointer) -> Pointer)
     abstract fun isNotEmpty(): Boolean
-    abstract val debugStr: String
-    abstract val printStr: String
+    abstract fun debugStr(level: Int): String
+    abstract fun printStr(level: Int): String
     abstract operator fun contains(that: NodeValue): Boolean
     open fun exchangeablePlus(that: NodeValue, inverse: Boolean): NodeValue {
+        @Suppress("IMPLICIT_CAST_TO_ANY")
         throw OperationRuntimeException("Invalid operation: ${if (!inverse) this else that} + ${if (!inverse) that else this}")
     }
     open operator fun times(that: NodeValue): NodeValue = throw OperationRuntimeException("Invalid operation: $this * $that")
@@ -110,19 +116,20 @@ sealed class CollectionValue : Iterable<NodeValue> {
 }
 
 @Serializable
-data class ReferenceValue(val address: CollectionPoolPointer) : NodeValue(), PrimitiveGCObject, Iterable<NodeValue> {
-    @Transient private var memory: Memory? = null
+data class ReferenceValue(val address: CollectionPoolPointer) : NodeValue(), PrimitivePointingObject, Iterable<NodeValue>, MemoryDependent {
+    @Transient private lateinit var memory: Memory
+    override fun bindMemory(memory: Memory) {
+        this.memory = memory
+    }
     constructor(address: CollectionPoolPointer, memory: Memory) : this(address) {
         bindMemory(memory)
     }
-    fun bindMemory(memory: Memory) {
-        this.memory = memory
-    }
     val value: CollectionValue
-        get() = memory!!.getFromPool(address)
+        get() = memory.getFromPool(address)
     override fun toBoolean(): Boolean = value.isNotEmpty()
-    override val debugStr: String get() = value.debugStr
-    override val printStr: String get() = value.printStr
+    override fun debugStr(level: Int): String = value.debugStr(level)
+    override fun printStr(level: Int): String = value.printStr(level)
+    override fun toString(): String = debugStr(0) // "Collection(${address.toString(16)})"
     override operator fun contains(that: NodeValue): Boolean = that in value
     override fun exchangeablePlus(that: NodeValue, inverse: Boolean): NodeValue = value.exchangeablePlus(that, inverse)
     override operator fun times(that: NodeValue): NodeValue = value.times(that)
@@ -153,6 +160,6 @@ data class ReferenceValue(val address: CollectionPoolPointer) : NodeValue(), Pri
     override fun iterator(): Iterator<NodeValue> = value.iterator()
     override fun gcPointeeCollection(): CollectionPoolPointer = address
     override fun gcRepointedTo(newPointee: CollectionPoolPointer): ReferenceValue {
-        return ReferenceValue(newPointee, memory!!)
+        return ReferenceValue(newPointee, memory)
     }
 }

@@ -5,10 +5,8 @@ import kotlinx.serialization.Transient
 
 @Serializable
 class RegExValue(private val pattern: String, private val rawFlags: String) : NodeValue() {
-    override val debugStr: String
-        get() = "/$pattern/$rawFlags"
-    override val printStr: String
-        get() = debugStr
+    override fun debugStr(level: Int): String = "/$pattern/$rawFlags"
+    override fun printStr(level: Int): String = debugStr(0)
     enum class Flag(val value: RegexOption?) {
         GLOBAL(null),
         IGNORE_CASE(RegexOption.IGNORE_CASE),

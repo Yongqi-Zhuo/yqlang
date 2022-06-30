@@ -116,8 +116,7 @@ class RestrictedContainer(source: String) {
         val tokens = Tokenizer(source).scan()
         val parser = Parser()
         val ast = parser.parse(tokens)
-        val res = CodeGenerator().generate(ast)
-        memory = res.preloadedMemory
+        memory = CodeGenerator().generate(ast)
     }
 
     // why we need quantum? to avoid sending message too fast.

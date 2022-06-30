@@ -366,7 +366,7 @@ class VirtualMachine(val executionContext: ExecutionContext, val memory: Memory)
                     val actionCode = byteCode.operand
                     val target = memory[pop()]
                     when (ActionCode.fromCode(actionCode)) {
-                        ActionCode.SAY -> executionContext.say(target.printStr)
+                        ActionCode.SAY -> executionContext.say(target.printStr(0))
                         ActionCode.NUDGE -> target.asInteger()?.let { executionContext.nudge(it) } 
                             ?: throw TypeMismatchRuntimeException(listOf(IntegerValue::class), target)
                         ActionCode.PICSAVE -> target.asString()?.value?.let { executionContext.picSave(it) } 

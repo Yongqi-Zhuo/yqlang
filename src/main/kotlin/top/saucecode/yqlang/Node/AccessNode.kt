@@ -203,12 +203,12 @@ class StringAccessView(private val string: StringValue, parent: AccessView?, mem
                 val end = range!!.last + 1
                 val first = if (begin > 0) string.value.substring(0, begin) else ""
                 val second = if (end < string.value.length) string.value.substring(end) else ""
-                string.value = first + memory[src].printStr + second
+                string.value = first + memory[src].printStr(0) + second
             }
             AccessState.INDEX -> {
                 val first = if (index!! > 0) string.value.substring(0, index!!) else ""
                 val second = if (index!! + 1 < string.value.length) string.value.substring(index!! + 1) else ""
-                string.value = first + memory[src].printStr + second
+                string.value = first + memory[src].printStr(0) + second
             }
         }
     }

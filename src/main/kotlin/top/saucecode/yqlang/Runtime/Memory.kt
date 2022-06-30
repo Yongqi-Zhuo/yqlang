@@ -1,6 +1,8 @@
 package top.saucecode.yqlang.Runtime
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
+import net.mamoe.yamlkt.Yaml
 import top.saucecode.yqlang.NodeValue.*
 import top.saucecode.yqlang.SymbolTable
 import java.util.LinkedList
@@ -18,11 +20,11 @@ fun HeapPointer(offset: Int) = offset or (REGION_ID_HEAP shl REGION_SHIFT)
 fun StaticPointer(offset: Int) = offset or (REGION_ID_STATIC shl REGION_SHIFT)
 typealias CollectionPoolPointer = Int
 
-// TODO: GC
 @Serializable
 class Memory {
-    var text: List<ByteCode>? = null
-    var labels: List<Int>? = null
+    @Transient var text: List<ByteCode>? = null
+    @Transient var labels: List<Int>? = null
+    lateinit var symbolTable: SymbolTable
     private val heap: MutableList<NodeValue> = mutableListOf()
     private val collectionPool: MutableList<CollectionValue> = mutableListOf()
     private val statics: MutableList<NodeValue> = mutableListOf()
@@ -75,7 +77,7 @@ class Memory {
         set(dst, get(src))
     }
 
-    fun assemblyText(symbolTable: SymbolTable): String {
+    fun assemblyText(): String {
         var buffer = "text:\n"
         val lineToLabel = MutableList(text!!.size + 1) { mutableListOf<Int>() }
         labels!!.forEachIndexed { index, label ->
@@ -87,6 +89,15 @@ class Memory {
         }
         if (captions.last().isNotEmpty()) {
             buffer += captions.last()
+        }
+        buffer += memoryDump()
+        return buffer
+    }
+
+    fun memoryDump(): String {
+        var buffer = "heap:\n"
+        heap.forEachIndexed { index, value ->
+            buffer += "${index.toString(16).padEnd(5)}\t$value\n"
         }
         buffer += "collectionPool:\n"
         collectionPool.forEachIndexed { index, value ->
@@ -112,25 +123,36 @@ class Memory {
         // bfs in bipartite graph
         fun processPrimitive(pointer: Pointer, newLocation: Pointer) {
             val primitive = get(pointer)
-            val pointee = if (primitive is PrimitiveGCObject) primitive.gcPointeeCollection() else return
+            val pointee = if (primitive is PrimitivePointingObject) primitive.gcPointeeCollection() else return
             if (pointee < 0) return
             val potentialNewPointeeLocation = collectionMap[pointee]
-            if (potentialNewPointeeLocation != null) {
-                // change myself
-                newHeap[newLocation] = (primitive as PrimitiveGCObject).gcRepointedTo(potentialNewPointeeLocation)
-                return
+            val actualNewPointeeLocation = if (potentialNewPointeeLocation == null) {
+                // now move it to new pool
+                val collection = getFromPool(pointee)
+                newCollectionPool.add(collection)
+                val newPointeeLocation = newCollectionPool.lastIndex
+                collectionMap[pointee] = newPointeeLocation
+                collection.gcMoveThisToNewLocation(newPointeeLocation)
+                collectionGCQueue.add(pointee)
+                newPointeeLocation
+            } else {
+                potentialNewPointeeLocation
             }
-            // now move it to new pool
-            val collection = getFromPool(pointee)
-            newCollectionPool.add(collection)
-            val actualNewPointeeLocation = newCollectionPool.lastIndex
-            collectionMap[pointee] = actualNewPointeeLocation
-            collection.gcMoveThisToNewLocation(actualNewPointeeLocation)
-            collectionGCQueue.add(pointee)
+            // change myself
+            val newPointerValue = (primitive as PrimitivePointingObject).gcRepointedTo(actualNewPointeeLocation)
+            if (newLocation.region() == REGION_ID_HEAP) {
+                newHeap[newLocation] = newPointerValue
+            } else if (newLocation.region() == REGION_ID_STATIC) {
+                statics[newLocation.offset()] = newPointerValue
+            } else {
+                throw YqlangRuntimeException("Invalid pointer: $newLocation")
+            }
+            return
         }
         fun processCollection(pointer: CollectionPoolPointer, newLocation: CollectionPoolPointer) {
             val collection = getFromPool(pointer)
             collection.gcTransformPointeePrimitives { pointee ->
+                // have to move!
                 if (pointee.region() != REGION_ID_HEAP) return@gcTransformPointeePrimitives pointee
                 val potentialNewPointeeLocation = heapMap[pointee]
                 if (potentialNewPointeeLocation != null) {
@@ -169,6 +191,24 @@ class Memory {
         heap.addAll(newHeap)
         collectionPool.clear()
         collectionPool.addAll(newCollectionPool)
+    }
+
+    fun serialize(): String {
+        return Yaml.encodeToString(this)
+    }
+
+    companion object {
+        fun updateTo(yaml: String, memory: Memory) {
+            val old = Yaml.decodeFromString(serializer(), yaml)
+            val oldSymbols = old.symbolTable
+            val symbols = memory.symbolTable
+            // TODO: migrate.
+            // closures cannot be migrated. just ignore because they are created at run time.
+            // no special handling is needed for them.
+            old.statics.forEach { (it as? MemoryDependent)?.bindMemory(memory) }
+            old.heap.forEach { (it as? MemoryDependent)?.bindMemory(memory) }
+            old.collectionPool.forEach { (it as? MemoryDependent)?.bindMemory(memory) }
+        }
     }
 
 }

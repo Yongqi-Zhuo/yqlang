@@ -2,7 +2,6 @@ package top.saucecode.yqlang.NodeValue
 
 import kotlinx.serialization.Serializable
 import top.saucecode.yqlang.Runtime.CollectionPoolPointer
-import top.saucecode.yqlang.Runtime.Pointer
 import kotlin.reflect.KClass
 
 @Serializable
@@ -101,11 +100,9 @@ sealed class ArithmeticValue : NodeValue() {
 
 @Serializable
 data class IntegerValue(val value: Long) : ArithmeticValue() {
-    override val debugStr: String
-        get() = value.toString()
-    override val printStr: String
-        get() = debugStr
-    override fun toString(): String = debugStr
+    override fun debugStr(level: Int): String = value.toString()
+    override fun printStr(level: Int): String = debugStr(0)
+    override fun toString(): String = debugStr(0)
     override fun toBoolean(): Boolean = value != 0L
     constructor(what: ArithmeticValue): this(when(what) {
         is IntegerValue -> what.value
@@ -140,12 +137,10 @@ fun Long.toIntegerValue(): NodeValue = IntegerValue(this)
 
 @Serializable
 data class FloatValue(val value: Double) : ArithmeticValue() {
-    override val debugStr: String
-        get() = value.toString()
-    override val printStr: String
-        get() = debugStr
+    override fun debugStr(level: Int): String = value.toString()
+    override fun printStr(level: Int): String = debugStr(0)
 
-    override fun toString(): String = debugStr
+    override fun toString(): String = debugStr(0)
     override fun toBoolean(): Boolean = value != 0.0
 
     constructor(what: ArithmeticValue) : this(
@@ -187,11 +182,9 @@ fun Double.toFloatValue(): NodeValue = FloatValue(this)
 
 @Serializable
 data class BooleanValue(val value: Boolean) : ArithmeticValue() {
-    override val debugStr: String
-        get() = value.toString()
-    override val printStr: String
-        get() = debugStr
-    override fun toString(): String = debugStr
+    override fun debugStr(level: Int): String = value.toString()
+    override fun printStr(level: Int): String = debugStr(0)
+    override fun toString(): String = debugStr(0)
     override fun toBoolean(): Boolean = value
     fun toLong(): Long = if (value) 1L else 0L
     constructor(what: ArithmeticValue): this(what.toBoolean())
@@ -224,8 +217,7 @@ sealed class SubscriptValue : NodeValue()
 
 @Serializable
 data class IntegerSubscriptValue(val begin: Int, val extended: Boolean, val end: Int? = null) : SubscriptValue() {
-    override val debugStr: String
-        get() = if (extended) {
+    override fun debugStr(level: Int): String = if (extended) {
             if (end == null) {
                 "$begin:"
             } else {
@@ -234,29 +226,24 @@ data class IntegerSubscriptValue(val begin: Int, val extended: Boolean, val end:
         } else {
             "$begin"
         }
-    override val printStr: String
-        get() = debugStr
-    override fun toString(): String = debugStr
+    override fun printStr(level: Int): String = debugStr(0)
+    override fun toString(): String = debugStr(0)
     override fun toBoolean(): Boolean = true
 }
 
 @Serializable
 data class KeySubscriptValue(val key: String) : SubscriptValue() {
-    override val debugStr: String
-        get() = key
-    override val printStr: String
-        get() = debugStr
-    override fun toString(): String = debugStr
+    override fun debugStr(level: Int): String = key
+    override fun printStr(level: Int): String = debugStr(0)
+    override fun toString(): String = debugStr(0)
     override fun toBoolean(): Boolean = true
 }
 
 @Serializable
-data class ClosureValue(val captureList: CollectionPoolPointer, val entry: Int) : NodeValue(), PrimitiveGCObject {
+data class ClosureValue(val captureList: CollectionPoolPointer, val entry: Int) : NodeValue(), PrimitivePointingObject {
     override fun toBoolean(): Boolean = true
-    override val debugStr: String
-        get() = "closure($captureList, $entry)"
-    override val printStr: String
-        get() = debugStr
+    override fun debugStr(level: Int): String = "closure($captureList, $entry)"
+    override fun printStr(level: Int): String = debugStr(0)
     override fun gcPointeeCollection(): CollectionPoolPointer = captureList
     override fun gcRepointedTo(newPointee: CollectionPoolPointer): ClosureValue {
         return ClosureValue(newPointee, entry)
@@ -265,10 +252,8 @@ data class ClosureValue(val captureList: CollectionPoolPointer, val entry: Int) 
 
 @Serializable
 object NullValue : NodeValue() {
-    override val debugStr: String
-        get() = "null"
-    override val printStr: String
-        get() = debugStr
-    override fun toString(): String = debugStr
+    override fun debugStr(level: Int): String = "null"
+    override fun printStr(level: Int): String = debugStr(0)
+    override fun toString(): String = debugStr(0)
     override fun toBoolean(): Boolean = false
 }

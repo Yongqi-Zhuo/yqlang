@@ -98,6 +98,7 @@ class NoSuchMethodException(what: Any, method: Any) : YqlangRuntimeException("$w
 
 class Constants {
     companion object {
+        const val printLevelMax = 5
         val whiteSpace: Pattern = Pattern.compile("\\s+")
         val builtinProceduresHelps = mapOf(
             "split" to """

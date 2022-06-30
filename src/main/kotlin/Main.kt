@@ -25,10 +25,9 @@ fun main() {
     val ast = parser.parse(tokens)
 //    println(ast)
     println("Generating...")
-    val res = CodeGenerator().generate(ast)
-    println(res.preloadedMemory.assemblyText(res.symbolTable))
+    val memory = CodeGenerator().generate(ast)
+    println(memory.assemblyText())
     println("Executing...")
-    val memory = res.preloadedMemory
     val context = ConsoleContext()
     val time = measureTimeMillis {
         VirtualMachine(context, memory).execute()
@@ -38,6 +37,10 @@ fun main() {
         memory.gc()
     }
     println("GCed in $gcTime ms. Heap size: ${memory.heapSize}.")
+    println("Memory:")
+    println(memory.memoryDump())
+    println("Serialized memory:")
+    println(memory.serialize())
 
 //    val interpreter = RestrictedInterpreter(input)
 //    val st = SymbolTable.createRoot(mapOf("text" to StringValue("this is a brand-new world the world of parsing")))

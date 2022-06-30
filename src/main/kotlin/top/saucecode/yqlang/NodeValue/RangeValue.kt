@@ -16,15 +16,13 @@ sealed class RangeValue<T : NodeValue> : NodeValue(), Iterable<T> {
 @Serializable
 data class IntegerRangeValue(private val begin: Long, private val end: Long, private val inclusive: Boolean) :
     RangeValue<IntegerValue>() {
-    override val debugStr: String
-        get() = if (inclusive) {
-            "[$begin, $end]"
-        } else {
-            "[$begin, $end)"
-        }
-    override val printStr: String
-        get() = debugStr
-    override fun toString(): String = debugStr
+    override fun debugStr(level: Int): String = if (inclusive) {
+        "[$begin, $end]"
+    } else {
+        "[$begin, $end)"
+    }
+    override fun printStr(level: Int): String = debugStr(0)
+    override fun toString(): String = debugStr(0)
     override fun iterator(): Iterator<IntegerValue> {
         return object : Iterator<IntegerValue> {
             var current = begin
@@ -64,24 +62,22 @@ data class IntegerRangeValue(private val begin: Long, private val end: Long, pri
     }
 }
 
-// TODO: interface: memory bindable
 data class CharRangeValue(private val begin: Char, private val end: Char, private val inclusive: Boolean) :
-    RangeValue<ReferenceValue>() {
+    RangeValue<ReferenceValue>(), MemoryDependent {
+    @Transient lateinit var memory: Memory
+    override fun bindMemory(memory: Memory) {
+        this.memory = memory
+    }
     constructor(begin: Char, end: Char, inclusive: Boolean, memory: Memory) : this(begin, end, inclusive) {
         bindMemory(memory)
     }
-    override val debugStr: String
-        get() = if (inclusive) {
-            "[$begin, $end]"
+    override fun debugStr(level: Int): String = if (inclusive) {
+            "['$begin', '$end']"
         } else {
-            "[$begin, $end)"
+            "['$begin', '$end')"
         }
-    override val printStr: String
-        get() = debugStr
-    @Transient lateinit var memory: Memory
-    fun bindMemory(memory: Memory) {
-        this.memory = memory
-    }
+    override fun printStr(level: Int): String = debugStr(0)
+    override fun toString(): String = debugStr(0)
     override fun iterator(): Iterator<ReferenceValue> {
         return object : Iterator<ReferenceValue> {
             var current = begin
