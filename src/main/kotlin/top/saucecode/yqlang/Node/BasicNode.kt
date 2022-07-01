@@ -13,56 +13,65 @@ class TypeMismatchRuntimeException(expected: List<KClass<*>>, got: Any) :
     }, got ${got.javaClass.simpleName}")
 
 class IdentifierNode(scope: Scope, val name: String) : ExprNode(scope) {
+    lateinit var nameType: NameType
+    lateinit var mangledName: String
     constructor(scope: Scope, token: Token) : this(scope, token.value)
     override fun generateCode(buffer: CodegenContext) {
-        val nameType = scope.queryName(name)
-        if (nameType != NameType.GLOBAL) {
-            val index = if (name.startsWith("$")) {
-                name.substring(1).toIntOrNull()
-            } else null
-            when (codeGenExprType) {
-                CodeGenExprType.PRODUCE_VALUE -> {
-                    if (index != null) {
-                        buffer.add(Op.GET_NTH_ARG, index)
-                    } else {
-                        buffer.add(Op.LOAD_LOCAL_PUSH, scope.getLocalLayout(name))
+        val frame = scope.currentFrame
+        when (codeGenExprType) {
+            CodeGenExprType.PRODUCE_VALUE -> {
+                when (nameType) {
+                    NameType.EXTERNAL -> buffer.add(Op.LOAD_EXTERNAL_PUSH, Event.list.indexOf(mangledName))
+                    NameType.RESERVED -> {
+                        frame.tryGettingReservedArgIndex(mangledName)?.let {
+                            buffer.add(Op.GET_NTH_ARG, it)
+                        } ?: buffer.add(Op.LOAD_LOCAL_PUSH, frame.getReservedMemoryLayout(mangledName))
                     }
-                }
-                CodeGenExprType.PRODUCE_REFERENCE -> {
-                    if (index != null) {
-                        buffer.add(Op.GET_NTH_ARG_REF, index)
-                    } else {
-                        buffer.add(Op.LOAD_LOCAL_PUSH_REF, scope.getLocalLayout(name))
-                    }
-                }
-                CodeGenExprType.CONSUME -> {
-                    if (Frame.isReserved(name)) throw CompileException("Cannot assign to reserved name $name")
-                    buffer.add(Op.POP_SAVE_LOCAL, scope.getLocalLayout(name))
+                    NameType.CAPTURE, NameType.LOCAL -> buffer.add(Op.LOAD_LOCAL_PUSH, frame.getLocalMemoryLayout(mangledName))
+                    NameType.GLOBAL -> buffer.add(Op.LOAD_PUSH, frame.getGlobalMemoryLayout(mangledName))
+                    NameType.BUILTIN -> buffer.add(Op.LOAD_PUSH, buffer.includeLibrary(mangledName))
                 }
             }
-        } else {
-            when (codeGenExprType) {
-                CodeGenExprType.PRODUCE_VALUE -> {
-                    buffer.add(Op.LOAD_PUSH, scope.getGlobalLayout(name)!!)
+            CodeGenExprType.PRODUCE_REFERENCE -> {
+                when (nameType) {
+                    NameType.EXTERNAL -> buffer.add(Op.LOAD_EXTERNAL_PUSH, Event.list.indexOf(mangledName))
+                    NameType.RESERVED -> {
+                        frame.tryGettingReservedArgIndex(mangledName)?.let {
+                            buffer.add(Op.GET_NTH_ARG_REF, it)
+                        } ?: buffer.add(Op.LOAD_LOCAL_PUSH_REF, frame.getReservedMemoryLayout(mangledName))
+                    }
+                    NameType.CAPTURE, NameType.LOCAL -> buffer.add(Op.LOAD_LOCAL_PUSH_REF, frame.getLocalMemoryLayout(mangledName))
+                    NameType.GLOBAL -> buffer.add(Op.LOAD_PUSH_REF, frame.getGlobalMemoryLayout(mangledName))
+                    NameType.BUILTIN -> buffer.add(Op.LOAD_PUSH_REF, buffer.includeLibrary(mangledName))
                 }
-                CodeGenExprType.PRODUCE_REFERENCE -> {
-                    buffer.add(Op.LOAD_PUSH_REF, scope.getGlobalLayout(name)!!)
-                }
-                CodeGenExprType.CONSUME -> {
-                    buffer.add(Op.POP_SAVE, scope.getGlobalLayout(name)!!)
+            }
+            CodeGenExprType.CONSUME -> {
+                when (nameType) {
+                    NameType.CAPTURE, NameType.LOCAL -> buffer.add(Op.POP_SAVE_LOCAL, frame.getLocalMemoryLayout(mangledName))
+                    NameType.GLOBAL -> buffer.add(Op.POP_SAVE, frame.getGlobalMemoryLayout(mangledName))
+                    else -> throw CompileException("Cannot assign to reserved name $name")
                 }
             }
         }
     }
     override fun prepareProduce(isReference: Boolean) {
-        scope.acquireExistingName(name)
+        val res = scope.acquireName(name, considerBuiltin = true)
+            ?: throw CompileException("Undefined name $name")
+        nameType = res.first
+        mangledName = res.second
     }
     override fun prepareConsume(allBinds: Boolean) {
-        if (!allBinds && scope.testName(name)) {
-            scope.acquireExistingName(name)
-        } else {
-            scope.declareLocalName(name)
+        if (!allBinds) {
+            val res = scope.acquireName(name, considerBuiltin = false)
+            if (res != null) {
+                nameType = res.first
+                mangledName = res.second
+                return
+            }
         }
+        val res = scope.declareLocalName(name)
+        nameType = res.first
+        mangledName = res.second
     }
     override fun toString(): String = "id($name)"
 }
@@ -209,7 +218,7 @@ class ClosureNode(scope: Scope, private val params: ListNode, private val body: 
         buffer.putLabel(entry)
         buffer.add(Op.PREPARE_FRAME, scope.currentFrame.locals.size)
         // now assign the parameters
-        buffer.add(Op.LOAD_LOCAL_PUSH_REF, scope.getLocalLayout("\$")) // since list is reference, ref is enough
+        buffer.add(Op.LOAD_LOCAL_PUSH_REF, scope.currentFrame.getLocalMemoryLayout("\$")) // since list is reference, ref is enough
         params.generateCode(buffer)
         // all set. call the function
         body.generateCode(buffer)
@@ -220,7 +229,7 @@ class ClosureNode(scope: Scope, private val params: ListNode, private val body: 
         val captures = scope.currentFrame.captures
         captures.forEach {
             // captures must be passed by reference
-            buffer.add(Op.LOAD_LOCAL_PUSH_REF, scope.currentFrame.getParentLocalLayout(it))
+            buffer.add(Op.LOAD_LOCAL_PUSH_REF, scope.currentFrame.getParentLocalMemoryLayout(it))
         }
         buffer.add(Op.CONS_PUSH, captures.size)
         buffer.add(Op.CREATE_CLOSURE, entry)
@@ -231,16 +240,22 @@ class ClosureNode(scope: Scope, private val params: ListNode, private val body: 
     override fun toString(): String = "closure($params, $body)"
 }
 
-class NamedCallNode(scope: Scope, private val func: String, private val caller: ExprNode, private val args: ListNode) : ValueExprNode(scope) {
+class FunctionCallNodeFactory(private val scope: Scope, private val call: ExprNode, private val args: ListNode) {
+    fun build(): ValueExprNode {
+        return if (call is AttributeAccessNode && scope.acquireName(call.name, considerBuiltin = true) != null) {
+            NamedCallNode(scope, IdentifierNode(scope, call.name), call.parent, args)
+        } else if (call is IdentifierNode && scope.acquireName(call.name, considerBuiltin = true) != null) {
+            NamedCallNode(scope, call, NullNode(scope), args)
+        } else {
+            DynamicCallNode(scope, call, args)
+        }
+    }
+}
+
+class NamedCallNode(scope: Scope, private val func: IdentifierNode, private val caller: ExprNode, private val args: ListNode) : ValueExprNode(scope) {
     override fun generateCode(buffer: CodegenContext) {
         caller.generateCode(buffer)
-        val funcType = scope.queryName(func)
-        if (funcType != NameType.GLOBAL) {
-            buffer.add(Op.LOAD_LOCAL_PUSH, scope.getLocalLayout(func))
-        } else {
-            val globalLayout = scope.getGlobalLayout(func) ?: buffer.includeLibrary(func)
-            buffer.add(Op.LOAD_PUSH, globalLayout)
-        }
+        func.generateCode(buffer)
         args.generateCode(buffer)
         val ret = buffer.requestLabel()
         buffer.add(Op.CALL, ret)
@@ -248,6 +263,7 @@ class NamedCallNode(scope: Scope, private val func: String, private val caller: 
     }
     override fun prepareProduceValue() {
         caller.declareProduce(true) // caller passed by reference
+        func.declareProduce(true) // closure is used by value, so don't copy
         args.declareProduce(false)
     }
     override fun toString(): String = "call($func, $caller, $args)"

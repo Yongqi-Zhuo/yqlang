@@ -23,8 +23,10 @@ typealias CollectionPoolPointer = Int
 
 @Serializable
 class Memory {
-    @Transient var text: List<ByteCode>? = null
-    @Transient var labels: List<Int>? = null
+    @Transient
+    lateinit var text: List<ByteCode>
+    @Transient
+    lateinit var labels: List<Int>
     lateinit var symbolTable: SymbolTable
     private val heap: MutableList<NodeValue> = mutableListOf()
     private val collectionPool: MutableList<CollectionValue> = mutableListOf()
@@ -32,14 +34,17 @@ class Memory {
     fun addStatics(statics: List<NodeValue>) {
         this.statics.addAll(statics)
     }
+
     fun addStatic(static: NodeValue): Pointer {
         statics.add(static)
         return StaticPointer(statics.lastIndex)
     }
+
     fun addStaticValue(value: NodeValue): Pointer {
         statics.add(value)
         return StaticPointer(statics.lastIndex)
     }
+
     fun addStaticString(value: String): Pointer {
         statics.add(StringValue(value, this).reference)
         return StaticPointer(statics.lastIndex)
@@ -54,6 +59,7 @@ class Memory {
             else -> throw YqlangRuntimeException("Invalid pointer: $pointer")
         }
     }
+
     operator fun set(pointer: Pointer, value: NodeValue) {
         val region = pointer.region()
         val offset = pointer.offset()
@@ -63,9 +69,11 @@ class Memory {
             else -> throw YqlangRuntimeException("Invalid pointer: $pointer")
         }
     }
+
     fun getFromPool(pointer: CollectionPoolPointer): CollectionValue {
         return collectionPool[pointer]
     }
+
     fun putToPool(value: CollectionValue): CollectionPoolPointer {
         collectionPool.add(value)
         return collectionPool.lastIndex
@@ -75,9 +83,11 @@ class Memory {
         heap.add(value)
         return HeapPointer(heap.lastIndex)
     }
+
     fun copy(pointer: Pointer): Pointer {
         return allocate(get(pointer))
     }
+
     fun copyTo(src: Pointer, dst: Pointer) {
         set(dst, get(src))
     }
@@ -111,7 +121,8 @@ class Memory {
         buffer += "static:\n"
         statics.forEachIndexed { index, value ->
             val staticPointer = StaticPointer(index)
-            val caption = symbolTable.filter { it.value == staticPointer }.map { it.key }.firstOrNull()?.let { "\t$it" } ?: ""
+            val caption =
+                symbolTable.filter { it.value == staticPointer }.map { it.key }.firstOrNull()?.let { "\t$it" } ?: ""
             buffer += "${staticPointer.toString(16)}\t$value${caption}\n"
         }
         return buffer
@@ -125,6 +136,7 @@ class Memory {
         val newCollectionPool = mutableListOf<CollectionValue>()
         val heapGCQueue = LinkedList<Pointer>()
         val collectionGCQueue = LinkedList<CollectionPoolPointer>()
+
         // bfs in bipartite graph
         fun processPrimitive(pointer: Pointer, newLocation: Pointer) {
             val primitive = get(pointer)
@@ -154,6 +166,7 @@ class Memory {
             }
             return
         }
+
         fun processCollection(pointer: CollectionPoolPointer, newLocation: CollectionPoolPointer) {
             val collection = getFromPool(pointer)
             collection.transformPointeePrimitives { pointee ->
@@ -203,52 +216,54 @@ class Memory {
     }
 
     companion object {
-        fun updateTo(yaml: String, memory: Memory) {
-            val old = Yaml.decodeFromString(serializer(), yaml)
-            val oldSymbols = old.symbolTable
-            val symbols = memory.symbolTable
-            val heapSize = memory.heap.size
-            val poolSize = memory.collectionPool.size
-            val migrationMap = mutableMapOf<Pointer, Pointer>() // static address map
-            fun migrateStatic(static: Pointer): Pointer {
-                assert(static.region() == REGION_ID_STATIC)
-                return migrationMap[static] ?:
-                run {
-                    val staticName = oldSymbols.filter { it.value == static }.map { it.key }.firstOrNull()
-                    val newLoc = if (staticName?.let { symbols.containsKey(it) } == true) {
-                        // substitute
-                        val newLocation = symbols[staticName]!!
-                        memory[newLocation] = old[static]
-                        newLocation
-                    } else {
-                        // append
-                        memory.addStatic(old[static])
-                    }
-                    (memory[newLoc] as? MemoryDependent)?.bindMemory(memory)
-                    migrationMap[static] = newLoc
-                    newLoc
-                }
-            }
-            oldSymbols.values.forEach { migrateStatic(it) }
-            memory.heap.addAll(old.heap.map {
-                (it as? MemoryDependent)?.bindMemory(memory)
-                if (it is PrimitivePointingObject) {
-                    it.repointedTo(it.pointeeCollection() + poolSize)
-                } else it
-            })
-            old.collectionPool.forEachIndexed { index, collection ->
-                collection.bindMemory(memory)
-                collection.moveThisToNewLocation(index + poolSize)
-                collection.transformPointeePrimitives { pointee ->
-                    when (pointee.region()) {
-                        REGION_ID_HEAP -> HeapPointer(pointee + heapSize)
-                        REGION_ID_STATIC -> migrateStatic(pointee)
-                        else -> throw YqlangException("this should not happen")
-                    }
-                }
-            }
-            memory.collectionPool.addAll(old.collectionPool)
+        fun deserialize(text: String): Memory {
+            return Yaml.decodeFromString(serializer(), text)
         }
     }
 
+    fun updateFrom(old: Memory) {
+        val oldSymbols = old.symbolTable
+        val heapSize = heap.size
+        val poolSize = collectionPool.size
+        val migrationMap = mutableMapOf<Pointer, Pointer>() // static address map
+        fun migrateStatic(static: Pointer): Pointer {
+            assert(static.region() == REGION_ID_STATIC)
+            return migrationMap[static] ?: run {
+                val staticName = oldSymbols.filter { it.value == static }.map { it.key }.firstOrNull()
+                val newLoc = if (staticName?.let { symbolTable.containsKey(it) } == true) {
+                    // substitute
+                    val newLocation = symbolTable[staticName]!!
+                    this[newLocation] = old[static]
+                    newLocation
+                } else {
+                    // append
+                    val newLocation = addStatic(old[static])
+                    staticName?.let { symbolTable[it] = newLocation }
+                    newLocation
+                }
+                (this[newLoc] as? MemoryDependent)?.bindMemory(this)
+                migrationMap[static] = newLoc
+                newLoc
+            }
+        }
+        oldSymbols.values.forEach { migrateStatic(it) }
+        heap.addAll(old.heap.map {
+            (it as? MemoryDependent)?.bindMemory(this)
+            if (it is PrimitivePointingObject) {
+                it.repointedTo(it.pointeeCollection() + poolSize)
+            } else it
+        })
+        old.collectionPool.forEachIndexed { index, collection ->
+            collection.bindMemory(this)
+            collection.moveThisToNewLocation(index + poolSize)
+            collection.transformPointeePrimitives { pointee ->
+                when (pointee.region()) {
+                    REGION_ID_HEAP -> HeapPointer(pointee + heapSize)
+                    REGION_ID_STATIC -> migrateStatic(pointee)
+                    else -> throw YqlangException("this should not happen")
+                }
+            }
+        }
+        collectionPool.addAll(old.collectionPool)
+    }
 }

@@ -385,13 +385,7 @@ class Parser {
                 consume(TokenType.PAREN_OPEN)
                 val params = parseExprList(scope)
                 consume(TokenType.PAREN_CLOSE)
-                if (termHead is AttributeAccessNode && scope.testName(termHead.name)) {
-                    NamedCallNode(scope, termHead.name, termHead.parent, params)
-                } else if (termHead is IdentifierNode && scope.testName(termHead.name)) {
-                    NamedCallNode(scope, termHead.name, NullNode(scope), params)
-                } else {
-                    DynamicCallNode(scope, termHead, params)
-                }
+                FunctionCallNodeFactory(scope, termHead, params).build()
             }
             else -> termHead
         }

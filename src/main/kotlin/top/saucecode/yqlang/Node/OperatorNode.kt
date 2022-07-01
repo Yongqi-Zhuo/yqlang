@@ -81,25 +81,18 @@ open class BinaryOperatorNode(scope: Scope, protected val components: List<ExprN
 
 class LogicBinaryOperatorNode(scope: Scope, components: List<ExprNode>, ops: List<TokenType>, private val isAnd: Boolean) : BinaryOperatorNode(scope, components, ops) {
     override fun generateCode(buffer: CodegenContext) {
-        if (components.isEmpty()) buffer.add(Op.PUSH_IMM, ImmediateCode.NULL.code)
-        else if (components.size == 1) {
-            components[0].generateCode(buffer)
-        } else {
-            components[0].generateCode(buffer)
-            val stop = buffer.requestLabel()
-            if (isAnd) {
-                buffer.add(Op.JUMP_ZERO, stop)
-            } else { // isOr
-                buffer.add(Op.JUMP_NOT_ZERO, stop)
-            }
-            for (i in 1 until components.size) {
-                components[i].generateCode(buffer)
-                val op = BinaryOperatorCode.fromToken(ops[i - 1])
-                buffer.add(Op.BINARY_OP, op.value)
-            }
-            buffer.putLabel(stop)
-            buffer.add(Op.TO_BOOL)
+        assert(components.size >= 2)
+        val shortCircuit = buffer.requestLabel()
+        components.forEach {
+            it.generateCode(buffer)
+            buffer.add(if (isAnd) Op.JUMP_ZERO else Op.JUMP_NOT_ZERO, shortCircuit)
         }
+        buffer.add(Op.PUSH_IMM, if (isAnd) ImmediateCode.TRUE.code else ImmediateCode.FALSE.code)
+        val labelEnd = buffer.requestLabel()
+        buffer.add(Op.JUMP, labelEnd)
+        buffer.putLabel(shortCircuit)
+        buffer.add(Op.PUSH_IMM, if (isAnd) ImmediateCode.FALSE.code else ImmediateCode.TRUE.code)
+        buffer.putLabel(labelEnd)
     }
 }
 

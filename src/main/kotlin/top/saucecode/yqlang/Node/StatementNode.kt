@@ -24,8 +24,8 @@ class StmtAssignNode(scope: Scope, private val lvalue: ExprNode, private val exp
         buffer.add(Op.CLEAR_REG)
     }
     init {
-        lvalue.declareConsume(false)
         expr.declareProduce(false)
+        lvalue.declareConsume(false)
     }
     override fun toString(): String {
         return "assign($lvalue, $expr)"

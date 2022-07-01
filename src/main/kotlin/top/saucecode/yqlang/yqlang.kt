@@ -13,7 +13,18 @@ import java.util.concurrent.TimeUnit
 
 open class YqlangException(message: String) : Exception(message)
 
-abstract class ExecutionContext(val firstRun: Boolean, events: Map<String, NodeValue>) {
+sealed class Event(val name: String) {
+    companion object {
+        val list = listOf("text", "sender", "nudged", "clock", "images")
+    }
+}
+class TextEvent(val value: String) : Event("text")
+class SenderEvent(val value: Long) : Event("sender")
+class NudgedEvent(val value: Long) : Event("nudged")
+class ClockEvent(val value: Long) : Event("clock")
+class ImagesEvent(val value: List<String>) : Event("images")
+
+abstract class ExecutionContext(val firstRun: Boolean, val events: List<Event>) {
     var sleepTime: Long = 0
         private set
 
@@ -32,7 +43,7 @@ abstract class ExecutionContext(val firstRun: Boolean, events: Map<String, NodeV
     }
 }
 
-class ConsoleContext(events: Map<String, NodeValue> = mapOf()) : ExecutionContext(true, events) {
+class ConsoleContext(events: List<Event> = listOf()) : ExecutionContext(true, events) {
     override fun say(text: String) {
         println(text)
     }
@@ -73,7 +84,7 @@ sealed class Output {
     }
 }
 
-open class ControlledContext(firstRun: Boolean, events: Map<String, NodeValue>) : ExecutionContext(firstRun, events) {
+open class ControlledContext(firstRun: Boolean, events: List<Event>) : ExecutionContext(firstRun, events) {
     private val record = mutableListOf<Output>()
     override fun say(text: String) {
         synchronized(record) {
@@ -108,8 +119,8 @@ open class ControlledContext(firstRun: Boolean, events: Map<String, NodeValue>) 
     }
 }
 
-class RestrictedContainer(source: String) {
-    private val memory: Memory
+class RestrictedContainer(source: String, oldMemory: Memory) {
+    val memory: Memory
     private var futureTasks: MutableList<CompletableFuture<*>> = mutableListOf()
 
     init {
@@ -117,6 +128,7 @@ class RestrictedContainer(source: String) {
         val parser = Parser()
         val ast = parser.parse(tokens)
         memory = CodeGenerator().generate(ast)
+        memory.updateFrom(oldMemory)
     }
 
     // why we need quantum? to avoid sending message too fast.

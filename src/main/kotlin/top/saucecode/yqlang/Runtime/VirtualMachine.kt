@@ -1,11 +1,10 @@
 package top.saucecode.yqlang.Runtime
 
 import kotlinx.serialization.Serializable
-import top.saucecode.yqlang.ExecutionContext
+import top.saucecode.yqlang.*
 import top.saucecode.yqlang.Node.*
 import top.saucecode.yqlang.NodeValue.*
 import top.saucecode.yqlang.Runtime.Op.*
-import top.saucecode.yqlang.YqlangException
 import java.util.*
 
 enum class Op(val code: Int) {
@@ -178,9 +177,13 @@ enum class Op(val code: Int) {
     // rebinds the name to the value on the top of stack.
     POP_REBIND(44),
 
+    // operand: external id.
+    // load external value and push it to stack.
+    LOAD_EXTERNAL_PUSH(45),
+
     // operand: none
     // exit the program.
-    EXIT(45);
+    EXIT(46);
     companion object {
         val printLength: Int = values().map { it.toString().length }.maxOf { it } + 1
         fun fromCode(code: Int): Op {
@@ -210,8 +213,8 @@ class PatternMatchingConstantUnmatchedException : YqlangRuntimeException("Patter
 class InterruptedException : YqlangRuntimeException("Interrupted")
 
 class VirtualMachine(val executionContext: ExecutionContext, val memory: Memory) {
-    private val text: List<ByteCode> = memory.text!!
-    private val labels = memory.labels!!
+    private val text: List<ByteCode> = memory.text
+    private val labels = memory.labels
     private var pc = 0
     private var register: Pointer? = null
     private val stack: MutableList<Pointer> = mutableListOf(-1, -1, -1, -1)
@@ -489,6 +492,18 @@ class VirtualMachine(val executionContext: ExecutionContext, val memory: Memory)
                 }
                 POP_REBIND_LOCAL -> setLocal(byteCode.operand, pop())
                 POP_REBIND -> {} // TODO: rebind global
+                LOAD_EXTERNAL_PUSH -> {
+                    val external = executionContext.events.firstOrNull { it.name == Event.list[byteCode.operand] }?.let { event ->
+                        when (event) {
+                            is TextEvent -> event.value.toStringValueReference(memory)
+                            is SenderEvent -> event.value.toIntegerValue()
+                            is ClockEvent -> event.value.toIntegerValue()
+                            is NudgedEvent -> event.value.toIntegerValue()
+                            is ImagesEvent -> event.value.toStringListReference(memory)
+                        }
+                    } ?: NullValue
+                    push(memory.allocate(external))
+                }
                 EXIT -> break
             }
             pc++
