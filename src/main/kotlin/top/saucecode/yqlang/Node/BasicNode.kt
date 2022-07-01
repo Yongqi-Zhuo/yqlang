@@ -218,7 +218,7 @@ class ClosureNode(scope: Scope, private val params: ListNode, private val body: 
         buffer.putLabel(entry)
         buffer.add(Op.PREPARE_FRAME, scope.currentFrame.locals.size)
         // now assign the parameters
-        buffer.add(Op.LOAD_LOCAL_PUSH_REF, scope.currentFrame.getLocalMemoryLayout("\$")) // since list is reference, ref is enough
+        buffer.add(Op.LOAD_LOCAL_PUSH_REF, scope.currentFrame.getReservedMemoryLayout("\$")) // since list is reference, ref is enough
         params.generateCode(buffer)
         // all set. call the function
         body.generateCode(buffer)

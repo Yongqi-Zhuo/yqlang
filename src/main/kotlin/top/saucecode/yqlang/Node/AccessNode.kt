@@ -95,7 +95,7 @@ class NullAccessView(private val nullType: NullType, parent: AccessView?, memory
     }
     override fun exec(isReference: Boolean): Pointer {
         return when (nullType) {
-            NullType.NULL -> memory.allocate(NullValue)
+            NullType.NULL -> memory.allocate(NullValue())
             NullType.EMPTY_LIST -> memory.allocate(ListValue(mutableListOf(), memory).reference)
             NullType.EMPTY_STRING -> memory.allocate(StringValue("", memory).reference)
         }
@@ -252,7 +252,7 @@ class ObjectAccessView(private val obj: ObjectValue, parent: AccessView?, memory
     private var accessed: Boolean = false
     private var key: String? = null
     override fun exec(isReference: Boolean): Pointer = if (accessed) {
-        obj[key!!]?.let { if (isReference) it else memory.copy(it) } ?: memory.allocate(NullValue)
+        obj[key!!]?.let { if (isReference) it else memory.copy(it) } ?: memory.allocate(NullValue())
     } else memory.allocate(obj.reference)
 
     override fun assign(src: Pointer) {

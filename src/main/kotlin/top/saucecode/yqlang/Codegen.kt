@@ -17,7 +17,7 @@ class CodeGenerator {
         val memory = buffer.memory
         memory.text = buffer.text
         memory.labels = buffer.labels
-        memory.symbolTable = ast.scope.exportSymbolTable()
+        memory.symbolTable = ast.scope.currentFrame.exportSymbolTable()
         return memory
     }
 }
@@ -64,7 +64,7 @@ class CodegenContext(val memory: Memory = Memory()) {
         if (existing != null) {
             return existing.second
         }
-        val ptr = memory.addStaticValue(NullValue)
+        val ptr = memory.addStaticValue(NullValue())
         linkages.add(name to ptr)
         return ptr
     }

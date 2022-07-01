@@ -313,7 +313,7 @@ fun VirtualMachine.filter(): NodeValue {
     @Suppress("UNCHECKED_CAST")
     val list = caller as? Iterable<NodeValue> ?: throw NoSuchMethodException(caller, "filter")
     val predicate = argPointer(0)
-    val nonExistingCaller = memory.allocate(NullValue)
+    val nonExistingCaller = memory.allocate(NullValue())
     return ListValue(list.map { memory.allocate(it) }
         .filterTo(mutableListOf()) {
             executeClosure(
@@ -327,7 +327,7 @@ fun VirtualMachine.reduce(): NodeValue {
     val list = caller as? Iterable<NodeValue> ?: throw NoSuchMethodException(caller, "reduce")
     var initial = argPointer(0)
     val accumulator = argPointer(1)
-    val nonExistingCaller = memory.allocate(NullValue)
+    val nonExistingCaller = memory.allocate(NullValue())
     list.forEach {
         initial = executeClosure(
             accumulator,
@@ -342,7 +342,7 @@ fun VirtualMachine.map(): NodeValue {
     @Suppress("UNCHECKED_CAST")
     val list = caller as? Iterable<NodeValue> ?: throw NoSuchMethodException(caller, "map")
     val transform = argPointer(0)
-    val nonExistingCaller = memory.allocate(NullValue)
+    val nonExistingCaller = memory.allocate(NullValue())
     return ListValue(list.mapTo(mutableListOf()) { ptr ->
         executeClosure(
             transform,
@@ -413,5 +413,5 @@ fun VirtualMachine.replace(): NodeValue {
 fun VirtualMachine.sleep(): NodeValue {
     val ms = arg(0).asInteger()!!
     executionContext.sleep(ms)
-    return NullValue
+    return NullValue()
 }

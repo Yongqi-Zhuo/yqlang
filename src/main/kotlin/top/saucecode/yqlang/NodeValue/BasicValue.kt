@@ -251,9 +251,13 @@ data class ClosureValue(val captureList: CollectionPoolPointer, val entry: Int) 
 }
 
 @Serializable
-object NullValue : NodeValue() {
+class NullValue : NodeValue() {
     override fun debugStr(level: Int): String = "null"
     override fun printStr(level: Int): String = debugStr(0)
     override fun toString(): String = debugStr(0)
     override fun toBoolean(): Boolean = false
+    override fun equals(other: Any?): Boolean = other is NullValue
+    override fun hashCode(): Int {
+        return javaClass.hashCode()
+    }
 }

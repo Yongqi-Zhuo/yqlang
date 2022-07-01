@@ -2,7 +2,7 @@ package top.saucecode.yqlang.Runtime
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
-import net.mamoe.yamlkt.Yaml
+import kotlinx.serialization.json.Json
 import top.saucecode.yqlang.NodeValue.*
 import top.saucecode.yqlang.SymbolTable
 import top.saucecode.yqlang.YqlangException
@@ -94,12 +94,12 @@ class Memory {
 
     fun assemblyText(): String {
         var buffer = "text:\n"
-        val lineToLabel = MutableList(text!!.size + 1) { mutableListOf<Int>() }
-        labels!!.forEachIndexed { index, label ->
+        val lineToLabel = MutableList(text.size + 1) { mutableListOf<Int>() }
+        labels.forEachIndexed { index, label ->
             lineToLabel[label].add(index)
         }
         val captions = lineToLabel.map { l -> if (l.size > 0) l.joinToString("\n") { "label$it:" } + "\n" else "" }
-        text!!.mapIndexed { line, byteCode ->
+        text.mapIndexed { line, byteCode ->
             buffer += captions[line] + "${line.toString().padEnd(5)}\t$byteCode\n"
         }
         if (captions.last().isNotEmpty()) {
@@ -212,12 +212,12 @@ class Memory {
     }
 
     fun serialize(): String {
-        return Yaml.encodeToString(this)
+        return Json.encodeToString(serializer(), this)
     }
 
     companion object {
         fun deserialize(text: String): Memory {
-            return Yaml.decodeFromString(serializer(), text)
+            return Json.decodeFromString(serializer(), text)
         }
     }
 
@@ -230,18 +230,22 @@ class Memory {
             assert(static.region() == REGION_ID_STATIC)
             return migrationMap[static] ?: run {
                 val staticName = oldSymbols.filter { it.value == static }.map { it.key }.firstOrNull()
+                val newPointer = old[static].apply {
+                    (this as? MemoryDependent)?.bindMemory(this@Memory)
+                }.let {
+                    (it as? PrimitivePointingObject)?.repointedTo(it.pointeeCollection() + poolSize) ?: it
+                }
                 val newLoc = if (staticName?.let { symbolTable.containsKey(it) } == true) {
                     // substitute
                     val newLocation = symbolTable[staticName]!!
-                    this[newLocation] = old[static]
+                    this[newLocation] = newPointer
                     newLocation
                 } else {
                     // append
-                    val newLocation = addStatic(old[static])
+                    val newLocation = addStatic(newPointer)
                     staticName?.let { symbolTable[it] = newLocation }
                     newLocation
                 }
-                (this[newLoc] as? MemoryDependent)?.bindMemory(this)
                 migrationMap[static] = newLoc
                 newLoc
             }

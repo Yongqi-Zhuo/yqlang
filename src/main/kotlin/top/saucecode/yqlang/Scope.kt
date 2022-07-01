@@ -25,6 +25,7 @@ class Frame(private val parent: Frame?) {
     // args are treated as special locals to support pattern matching in function prototypes
     // val arguments: MutableList<String> = mutableListOf() // empty for root
     val locals: MutableList<String> = mutableListOf()
+    val unmangled: MutableList<String> = mutableListOf()
     // only handles: global, local, capture
     fun acquireNonSpecialName(mangledName: String): NameType {
         if (isRoot) {
@@ -47,8 +48,9 @@ class Frame(private val parent: Frame?) {
             }
         }
     }
-    fun declareLocalName(name: String): NameType {
+    fun declareLocalName(name: String, original: String): NameType {
         locals.add(name)
+        unmangled.add(original)
         return if (isRoot) NameType.GLOBAL else NameType.LOCAL
     }
     fun tryGettingReservedArgIndex(name: String): Int? {
@@ -79,7 +81,7 @@ class Frame(private val parent: Frame?) {
         return StaticPointer(index)
     }
     fun reserveGlobals(): List<NodeValue> {
-        return root.locals.map { NullValue }
+        return root.locals.map { NullValue() }
     }
     companion object {
         fun isReserved(name: String): Boolean {
@@ -92,6 +94,11 @@ class Frame(private val parent: Frame?) {
             return name in Event.list
         }
     }
+
+    fun exportSymbolTable(): SymbolTable {
+        return unmangled.mapIndexed { index, s -> s to StaticPointer(index) }.toMap().toMutableMap()
+    }
+
 }
 
 class Scope(private val parent: Scope?, frame: Frame?) {
@@ -109,8 +116,11 @@ class Scope(private val parent: Scope?, frame: Frame?) {
     }
     private fun acquireNonSpecialName(name: String): Pair<NameType, String>? {
         // possibly global, local, capture. go all the way up the scope tree
-        locals[name]?.let { return currentFrame.acquireNonSpecialName(it) to it }
-        parent?.acquireNonSpecialName(name)?.let { return it }
+        var scope: Scope? = this
+        do {
+            scope!!.locals[name]?.let { return currentFrame.acquireNonSpecialName(it) to it }
+            scope = scope.parent
+        } while (scope != null)
         return null
     }
     // returns name type and mangled name
@@ -131,7 +141,7 @@ class Scope(private val parent: Scope?, frame: Frame?) {
         }
         val mangled = "$name@${UniqueID.get()}"
         locals[name] = mangled
-        val nameType = currentFrame.declareLocalName(mangled)
+        val nameType = currentFrame.declareLocalName(mangled, name)
         return nameType to mangled
     }
     // returns mangled name
@@ -139,9 +149,10 @@ class Scope(private val parent: Scope?, frame: Frame?) {
         return currentFrameScope.declareScopeName(name)
     }
 
-    fun exportSymbolTable(): SymbolTable {
-        return locals.map { it.key to currentFrame.getGlobalMemoryLayout(it.value) }.toMap().toMutableMap()
-    }
+//    fun exportSymbolTable(): SymbolTable {
+//        // don't do this!
+////        return locals.map { it.key to currentFrame.getGlobalMemoryLayout(it.value) }.toMap().toMutableMap()
+//    }
 
 }
 

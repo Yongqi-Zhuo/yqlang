@@ -320,7 +320,7 @@ class VirtualMachine(val executionContext: ExecutionContext, val memory: Memory)
                         ?: throw TypeMismatchRuntimeException(listOf(ListValue::class), uncheckedList)
                     val expectedLength = byteCode.operand
                     for (i in list.size until expectedLength) {
-                        push(memory.allocate(NullValue))
+                        push(memory.allocate(NullValue()))
                     }
                     list.take(expectedLength).reversed().forEach { push(it) }
                 }
@@ -351,7 +351,7 @@ class VirtualMachine(val executionContext: ExecutionContext, val memory: Memory)
                 }
                 PUSH_IMM -> {
                     when (ImmediateCode.fromCode(byteCode.operand)) {
-                        ImmediateCode.NULL -> push(memory.allocate(NullValue))
+                        ImmediateCode.NULL -> push(memory.allocate(NullValue()))
                         ImmediateCode.FALSE -> push(memory.allocate(BooleanValue(false)))
                         ImmediateCode.TRUE -> push(memory.allocate(BooleanValue(true)))
                     }
@@ -360,7 +360,7 @@ class VirtualMachine(val executionContext: ExecutionContext, val memory: Memory)
                     val constCode = ImmediateCode.fromCode(byteCode.operand)
                     val value = memory[pop()]
                     when (constCode) {
-                        ImmediateCode.NULL -> if (value != NullValue) throw PatternMatchingConstantUnmatchedException()
+                        ImmediateCode.NULL -> if (value != NullValue()) throw PatternMatchingConstantUnmatchedException()
                         ImmediateCode.FALSE -> if (value != BooleanValue(false)) throw PatternMatchingConstantUnmatchedException()
                         ImmediateCode.TRUE -> if (value != BooleanValue(true)) throw PatternMatchingConstantUnmatchedException()
                     }
@@ -387,10 +387,10 @@ class VirtualMachine(val executionContext: ExecutionContext, val memory: Memory)
                     // now on stack: lastBp, retAddr, caller, args, captures. Now expand captures
                     val captures = memory.getFromPool(pop()) as ListValue
                     captures.value.forEach { push(it) } // pass by reference!
-                    repeat(byteCode.operand) { push(memory.allocate(NullValue)) }
+                    repeat(byteCode.operand) { push(memory.allocate(NullValue())) }
                 }
                 GET_NTH_ARG -> {
-                    val nth = memory.allocate(NullValue)
+                    val nth = memory.allocate(NullValue())
                     val argId = byteCode.operand
                     memory[argsPointer].asList()?.value?.getOrNull(argId)?.let { memory.copyTo(it, nth) }
                         ?: throw YqlangRuntimeException("Failed to get $argId: out of range.")
@@ -425,7 +425,7 @@ class VirtualMachine(val executionContext: ExecutionContext, val memory: Memory)
                 POP -> pop()
                 RETURN -> {
                     val label = popFrame()
-                    push(register ?: memory.allocate(NullValue))
+                    push(register ?: memory.allocate(NullValue()))
                     register = null
                     jump(label)
                 }
@@ -501,7 +501,7 @@ class VirtualMachine(val executionContext: ExecutionContext, val memory: Memory)
                             is NudgedEvent -> event.value.toIntegerValue()
                             is ImagesEvent -> event.value.toStringListReference(memory)
                         }
-                    } ?: NullValue
+                    } ?: NullValue()
                     push(memory.allocate(external))
                 }
                 EXIT -> break

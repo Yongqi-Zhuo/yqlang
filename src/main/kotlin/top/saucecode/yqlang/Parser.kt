@@ -302,7 +302,7 @@ class Parser {
             TokenType.IDENTIFIER -> parseIdentifier(scope)
             TokenType.NUMBER_LITERAL -> parseNumber(scope)
             TokenType.STRING_LITERAL -> StringNode(scope, consume(TokenType.STRING_LITERAL))
-            TokenType.BOOLEAN_LITERAL -> BooleanNode(scope, consume(TokenType.STRING_LITERAL))
+            TokenType.BOOLEAN_LITERAL -> BooleanNode(scope, consume(TokenType.BOOLEAN_LITERAL))
             TokenType.NULL -> NullNode(scope, consume(TokenType.NULL))
             TokenType.PAREN_OPEN -> {
                 consume(TokenType.PAREN_OPEN)

@@ -119,7 +119,7 @@ open class ControlledContext(firstRun: Boolean, events: List<Event>) : Execution
     }
 }
 
-class RestrictedContainer(source: String, oldMemory: Memory) {
+class RestrictedContainer(source: String, oldMemory: Memory?) {
     val memory: Memory
     private var futureTasks: MutableList<CompletableFuture<*>> = mutableListOf()
 
@@ -128,7 +128,7 @@ class RestrictedContainer(source: String, oldMemory: Memory) {
         val parser = Parser()
         val ast = parser.parse(tokens)
         memory = CodeGenerator().generate(ast)
-        memory.updateFrom(oldMemory)
+        oldMemory?.let { memory.updateFrom(it) }
     }
 
     // why we need quantum? to avoid sending message too fast.
@@ -170,6 +170,7 @@ class RestrictedContainer(source: String, oldMemory: Memory) {
         } finally {
             synchronized(futureTasks) {
                 futureTasks.remove(task)
+                if (futureTasks.isEmpty()) memory.gc()
             }
             if (task?.isDone == false) {
                 task.cancel(true)
@@ -181,7 +182,12 @@ class RestrictedContainer(source: String, oldMemory: Memory) {
         synchronized(futureTasks) {
             futureTasks.forEach { it.cancel(true) }
             futureTasks.clear()
+            memory.gc()
         }
+    }
+
+    private fun gc() {
+        memory.gc()
     }
 }
 
