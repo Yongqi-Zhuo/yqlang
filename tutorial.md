@@ -50,7 +50,7 @@ if text && text[:2] == "乘法" {
 
 ## 发送图片
 
-图片是有些复杂的呢~你可以尝试`/yqlang add <下面这段代码>`来尝试一下。具体的讲解请参考[语言手册](manual.md)~
+图片是有些复杂的呢\~你可以尝试`/yqlang add <下面这段代码>`来尝试一下。具体的讲解请参考[语言手册](manual.md)~
 ```
 init arigatou = images[0]
 init picsave arigatou
